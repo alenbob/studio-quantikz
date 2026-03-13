@@ -9,6 +9,8 @@ function makeState(overrides: Partial<EditorState> = {}): EditorState {
     layout: { rowSepCm: 0.9, columnSepCm: 0.7 },
     items: [],
     wireMask: {},
+    wireTypes: Array.from({ length: 4 }, () => "quantum"),
+    autoWireNewGrid: true,
     horizontalSegmentsUnlocked: false,
     wireLabels: Array.from({ length: 4 }, () => ({ left: "", right: "" })),
     selectedItemIds: [],
@@ -35,7 +37,8 @@ describe("clipboard helpers", () => {
         id: "line-1",
         type: "verticalConnector",
         point: { row: 0, col: 2 },
-        length: 1
+        length: 1,
+        wireType: "quantum"
       },
       {
         id: "dot-1",

@@ -1,55 +1,70 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { canPasteClipboardAt, instantiateClipboardItems } from "../clipboard";
 import {
+  type ColumnMetrics,
   GATE_MIN_HEIGHT,
   GATE_MIN_WIDTH,
   GRID_LEFT,
   GRID_TOP,
   LEFT_LABEL_WIDTH,
   RIGHT_LABEL_WIDTH,
-  getColumnWidth,
+  getColumnLeftX,
+  getColumnMetrics,
+  getColumnRightX,
+  getColumnSpanRange,
   getCellCenterX,
   getGridHeight,
   getGridWidth,
   getIncomingSegmentRange,
   getRowHeight,
   getRowY,
-  getWireEndX,
-  getWireStartX
+  getWireEndX
 } from "../layout";
 import {
   DEFAULT_ABSENT_WIRE_COLOR,
   DEFAULT_ITEM_COLOR,
-  DEFAULT_PRESENT_WIRE_COLOR,
   mixHexWithWhite
 } from "../color";
 import { canPlaceCellToolAtRow, getBoardMetrics, placementFromViewportPoint } from "../placement";
 import { isLikelyTexMath, normalizeGateLabel, normalizeLabel, renderGateLabelHtml } from "../tex";
+import {
+  getWireLabelBracket,
+  getWireLabelSpan,
+  hasWireLabelBoundary,
+  isWireLabelGroupStart,
+  type WireLabelSide
+} from "../wireLabels";
 import type {
   BoardMetrics,
   CircuitClipboard,
   CircuitItem,
+  CircuitLayout,
   EditorState,
+  FrameItem,
   GateItem,
   HorizontalSegmentItem,
   ItemType,
-  CircuitLayout,
   MeterItem,
   PlacementTarget,
+  SliceItem,
   ToolType,
-  VerticalConnectorItem
+  VerticalConnectorItem,
+  WireType
 } from "../types";
 
 interface WorkspaceProps {
   state: EditorState;
-  externalDrag: { tool: ItemType; clientX: number; clientY: number } | null;
   isPasteMode: boolean;
   pasteClipboard: CircuitClipboard | null;
-  horizontalSegmentsUnlocked: boolean;
+  selectedWireLabelGroup: { row: number; side: WireLabelSide; span: number; bracket: "none" | "brace" | "bracket" | "paren"; text: string } | null;
   onLayoutSpacingChange: (dimension: "rowSepCm" | "columnSepCm", value: number) => void;
   onWireLabelChange: (row: number, side: "left" | "right", label: string) => void;
+  onSelectWireLabelGroup: (row: number, side: WireLabelSide) => void;
+  onMergeWireLabelGroup: (row: number, side: WireLabelSide) => void;
   onPlaceItem: (tool: ItemType, placement: PlacementTarget) => void;
-  onSelectOrCreateHorizontalSegment: (row: number, col: number, additive: boolean) => void;
+  onDrawGate: (start: { row: number; col: number }, end: { row: number; col: number }) => void;
+  onDrawMeter: (start: { row: number; col: number }, endRow: number) => void;
+  onDrawAnnotation: (start: { row: number; col: number }, end: { row: number; col: number }) => void;
   onPasteAt: (placement: PlacementTarget) => void;
   onMoveItem: (itemId: string, placement: PlacementTarget) => void;
   onSelectionChange: (itemIds: string[]) => void;
@@ -73,12 +88,26 @@ interface MarqueeSelection {
   current: ContentPoint;
 }
 
-function gapKey(row: number, col: number): string {
-  return `${row}:${col}`;
+interface AreaDrawState {
+  tool: "gate" | "meter" | "annotation";
+  start: { row: number; col: number };
+  current: { row: number; col: number };
 }
 
-function isGateItem(item: CircuitItem): item is GateItem | MeterItem {
+interface PencilStrokeState {
+  kind: PlacementTarget["kind"];
+}
+
+function isGateLikeItem(item: CircuitItem): item is GateItem | MeterItem {
   return item.type === "gate" || item.type === "meter";
+}
+
+function isAnnotationBackgroundItem(item: CircuitItem): item is FrameItem {
+  return item.type === "frame";
+}
+
+function isAnnotationOverlayItem(item: CircuitItem): item is SliceItem {
+  return item.type === "slice";
 }
 
 function isWireLayerItem(item: CircuitItem): item is VerticalConnectorItem | HorizontalSegmentItem {
@@ -87,14 +116,6 @@ function isWireLayerItem(item: CircuitItem): item is VerticalConnectorItem | Hor
 
 function isMarkerItem(item: CircuitItem): item is Exclude<CircuitItem, GateItem | MeterItem | VerticalConnectorItem | HorizontalSegmentItem> {
   return item.type === "controlDot" || item.type === "targetPlus" || item.type === "swapX";
-}
-
-function getItemColor(item: CircuitItem): string {
-  if (item.type === "horizontalSegment") {
-    return item.color ?? (item.mode === "present" ? DEFAULT_PRESENT_WIRE_COLOR : DEFAULT_ABSENT_WIRE_COLOR);
-  }
-
-  return item.color ?? DEFAULT_ITEM_COLOR;
 }
 
 function shouldRenderMathLabel(label: string): boolean {
@@ -107,7 +128,9 @@ function getClipboardPlacementTool(clipboard: CircuitClipboard | null): ToolType
     return "gate";
   }
 
-  return clipboard.items.some((item) => item.type === "horizontalSegment") ? "horizontalSegment" : "gate";
+  return clipboard.items.some((item) => item.type === "horizontalSegment" || item.type === "verticalConnector")
+    ? "pencil"
+    : "gate";
 }
 
 function normalizeRect(start: ContentPoint, end: ContentPoint): SelectionRect {
@@ -128,40 +151,109 @@ function rectsIntersect(a: SelectionRect, b: SelectionRect): boolean {
   );
 }
 
-function getItemBounds(item: CircuitItem, steps: number, layout: CircuitLayout): SelectionRect {
+function getItemColor(item: CircuitItem): string {
+  if (item.type === "horizontalSegment") {
+    return item.color ?? (item.mode === "absent" ? DEFAULT_ABSENT_WIRE_COLOR : DEFAULT_ITEM_COLOR);
+  }
+
+  return item.color ?? DEFAULT_ITEM_COLOR;
+}
+
+function controlStateFor(item: Extract<CircuitItem, { type: "controlDot" }>): "filled" | "open" {
+  return item.controlState ?? "filled";
+}
+
+function withPreviewColor<T extends CircuitItem>(item: T): T {
+  return {
+    ...item,
+    color: DEFAULT_ABSENT_WIRE_COLOR
+  };
+}
+
+function getGateRect(item: GateItem, layout: CircuitLayout, columnMetrics: ColumnMetrics): SelectionRect {
+  const rowHeight = getRowHeight(layout);
+  const [blockX, blockRight] = getColumnSpanRange(item.point.col, item.span.cols, layout, columnMetrics);
+  const blockWidth = blockRight - blockX;
+  const width = Math.max(item.width, Math.max(GATE_MIN_WIDTH, blockWidth - 12));
+  const x = blockX + ((blockWidth - width) / 2);
+  const y = getRowY(item.point.row, layout) - (GATE_MIN_HEIGHT / 2);
+  const height = GATE_MIN_HEIGHT + ((item.span.rows - 1) * rowHeight);
+
+  return { x, y, width, height };
+}
+
+function getMeterRect(item: MeterItem, layout: CircuitLayout, columnMetrics: ColumnMetrics): SelectionRect {
+  const x = getCellCenterX(item.point.col, layout, columnMetrics) - (GATE_MIN_WIDTH / 2);
+  const y = getRowY(item.point.row, layout) - (GATE_MIN_HEIGHT / 2);
+  const rows = item.span?.rows ?? 1;
+  const height = GATE_MIN_HEIGHT + ((rows - 1) * getRowHeight(layout));
+
+  return { x, y, width: GATE_MIN_WIDTH, height };
+}
+
+function getFrameRect(item: FrameItem, layout: CircuitLayout, columnMetrics: ColumnMetrics): SelectionRect {
+  const rowHeight = getRowHeight(layout);
+  const [leftX, rightX] = getColumnSpanRange(item.point.col, item.span.cols, layout, columnMetrics);
+  return {
+    x: leftX + 4,
+    y: getRowY(item.point.row, layout) - (rowHeight / 2) + 6,
+    width: Math.max((rightX - leftX) - 8, 18),
+    height: Math.max((item.span.rows * rowHeight) - 12, 18)
+  };
+}
+
+function getSliceRect(
+  item: SliceItem,
+  qubits: number,
+  layout: CircuitLayout,
+  columnMetrics: ColumnMetrics
+): SelectionRect {
+  const x = getColumnRightX(item.point.col, layout, columnMetrics);
+  return {
+    x: x - 12,
+    y: GRID_TOP - 30,
+    width: 24,
+    height: Math.max(getRowY(qubits - 1, layout) - (GRID_TOP - 30) + 20, 30)
+  };
+}
+
+function getItemBounds(
+  item: CircuitItem,
+  steps: number,
+  qubits: number,
+  layout: CircuitLayout,
+  columnMetrics: ColumnMetrics
+): SelectionRect {
   if (item.type === "gate") {
-    const x = getCellCenterX(item.point.col, layout) - (item.width / 2);
-    const y = getRowY(item.point.row, layout) - (GATE_MIN_HEIGHT / 2);
-    return {
-      x,
-      y,
-      width: item.width,
-      height: GATE_MIN_HEIGHT + ((item.span.rows - 1) * getRowHeight(layout))
-    };
+    return getGateRect(item, layout, columnMetrics);
   }
 
   if (item.type === "meter") {
-    return {
-      x: getCellCenterX(item.point.col, layout) - (GATE_MIN_WIDTH / 2),
-      y: getRowY(item.point.row, layout) - (GATE_MIN_HEIGHT / 2),
-      width: GATE_MIN_WIDTH,
-      height: GATE_MIN_HEIGHT
-    };
+    return getMeterRect(item, layout, columnMetrics);
+  }
+
+  if (item.type === "frame") {
+    return getFrameRect(item, layout, columnMetrics);
+  }
+
+  if (item.type === "slice") {
+    return getSliceRect(item, qubits, layout, columnMetrics);
   }
 
   if (item.type === "verticalConnector") {
-    const x = getCellCenterX(item.point.col, layout) - 10;
+    const width = item.wireType === "classical" ? 26 : 20;
+    const x = getCellCenterX(item.point.col, layout, columnMetrics) - (width / 2);
     const y = getRowY(item.point.row, layout);
     return {
       x,
       y,
-      width: 20,
+      width,
       height: Math.max(getRowY(item.point.row + item.length, layout) - y, 4)
     };
   }
 
   if (item.type === "horizontalSegment") {
-    const [x1, x2] = getIncomingSegmentRange(item.point.col, steps, layout);
+    const [x1, x2] = getIncomingSegmentRange(item.point.col, steps, layout, columnMetrics);
     return {
       x: x1,
       y: getRowY(item.point.row, layout) - 10,
@@ -172,7 +264,7 @@ function getItemBounds(item: CircuitItem, steps: number, layout: CircuitLayout):
 
   if (item.type === "controlDot") {
     return {
-      x: getCellCenterX(item.point.col, layout) - 8,
+      x: getCellCenterX(item.point.col, layout, columnMetrics) - 8,
       y: getRowY(item.point.row, layout) - 8,
       width: 16,
       height: 16
@@ -180,7 +272,7 @@ function getItemBounds(item: CircuitItem, steps: number, layout: CircuitLayout):
   }
 
   return {
-    x: getCellCenterX(item.point.col, layout) - 14,
+    x: getCellCenterX(item.point.col, layout, columnMetrics) - 14,
     y: getRowY(item.point.row, layout) - 14,
     width: 28,
     height: 28
@@ -194,9 +286,12 @@ function renderEditableWireLabel(
   x: number,
   y: number,
   width: number,
+  height: number,
   align: "left" | "right",
   isEditing: boolean,
+  isSelected: boolean,
   placeholder: string,
+  onSelect: () => void,
   onStartEditing: () => void,
   onStopEditing: () => void,
   onChange: (value: string) => void
@@ -204,8 +299,9 @@ function renderEditableWireLabel(
   const foreignX = align === "left" ? x - width : x;
   const normalized = normalizeLabel(label);
   const displayLabel = normalized || placeholder;
-  const placeholderClass = !normalized ? "is-placeholder" : "";
+  const placeholderClass = !normalized ? "is-empty" : "";
   const mathHtml = normalized && shouldRenderMathLabel(normalized) ? renderGateLabelHtml(normalized) : null;
+  const objectHeight = Math.max(height, 40);
 
   if (isEditing) {
     return (
@@ -213,7 +309,7 @@ function renderEditableWireLabel(
         x={foreignX}
         y={y - 20}
         width={width}
-        height={40}
+        height={objectHeight}
         className="wire-label-editor-foreign-object"
       >
         <div xmlns="http://www.w3.org/1999/xhtml" className={`wire-label-inline-shell wire-label-inline-${align}`}>
@@ -226,7 +322,10 @@ function renderEditableWireLabel(
             placeholder={placeholder}
             onChange={(event) => onChange(event.target.value)}
             onBlur={onStopEditing}
-            onPointerDown={(event) => event.stopPropagation()}
+            onPointerDown={(event) => {
+              event.stopPropagation();
+              onSelect();
+            }}
             onKeyDown={(event) => {
               if (event.key === "Enter" || event.key === "Escape") {
                 event.preventDefault();
@@ -251,12 +350,16 @@ function renderEditableWireLabel(
         xmlns="http://www.w3.org/1999/xhtml"
         type="button"
         aria-label={`Edit ${side} wire label q${row + 1}`}
-        className={`wire-label-inline-button wire-label-inline-${align} ${placeholderClass}`}
+        className={`wire-label-inline-button wire-label-inline-${align} ${placeholderClass} ${isSelected ? "is-selected" : ""}`}
         onClick={(event) => {
           event.stopPropagation();
+          onSelect();
           onStartEditing();
         }}
-        onPointerDown={(event) => event.stopPropagation()}
+        onPointerDown={(event) => {
+          event.stopPropagation();
+          onSelect();
+        }}
       >
         {mathHtml ? (
           <span
@@ -264,18 +367,113 @@ function renderEditableWireLabel(
             dangerouslySetInnerHTML={{ __html: mathHtml }}
           />
         ) : (
-          <span className="wire-label-inline-text">{displayLabel}</span>
+          <span className="wire-label-inline-text">{displayLabel || "\u00A0"}</span>
         )}
       </button>
     </foreignObject>
   );
 }
 
-function renderGate(item: GateItem, isSelected: boolean, layout: CircuitLayout): JSX.Element {
-  const x = getCellCenterX(item.point.col, layout) - (item.width / 2);
-  const y = getRowY(item.point.row, layout) - (GATE_MIN_HEIGHT / 2);
-  const height = GATE_MIN_HEIGHT + ((item.span.rows - 1) * getRowHeight(layout));
-  const textY = y + (height / 2);
+function wireLabelBracketGlyph(side: WireLabelSide, bracket: "brace" | "bracket" | "paren"): string {
+  if (bracket === "brace") {
+    return side === "left" ? "{" : "}";
+  }
+
+  if (bracket === "bracket") {
+    return side === "left" ? "[" : "]";
+  }
+
+  return side === "left" ? "(" : ")";
+}
+
+function renderWireLabelBracket(
+  side: WireLabelSide,
+  bracket: "brace" | "bracket" | "paren",
+  centerY: number,
+  span: number,
+  wireEndX: number,
+  layout: CircuitLayout
+): JSX.Element {
+  const x =
+    side === "left"
+      ? GRID_LEFT - 12
+      : wireEndX + 12;
+  const fontSize = Math.max(34, span * getRowHeight(layout) * 0.78);
+
+  return (
+    <text
+      x={x}
+      y={centerY}
+      className={`wire-label-bracket wire-label-bracket-${side}`}
+      dominantBaseline="middle"
+      textAnchor={side === "left" ? "end" : "start"}
+      style={{ fontSize }}
+    >
+      {wireLabelBracketGlyph(side, bracket)}
+    </text>
+  );
+}
+
+function renderWireLabelMergeButton(
+  side: WireLabelSide,
+  upperRow: number,
+  centerY: number,
+  wireEndX: number,
+  onMerge: () => void
+): JSX.Element {
+  const x =
+    side === "left"
+      ? GRID_LEFT - 28
+      : wireEndX + 8;
+
+  return (
+    <foreignObject
+      x={x}
+      y={centerY - 10}
+      width={20}
+      height={20}
+      className="wire-label-merge-foreign-object"
+    >
+      <button
+        xmlns="http://www.w3.org/1999/xhtml"
+        type="button"
+        className="wire-label-merge-button"
+        aria-label={`Merge ${side} labels between q${upperRow + 1} and q${upperRow + 2}`}
+        onClick={(event) => {
+          event.stopPropagation();
+          onMerge();
+        }}
+        onPointerDown={(event) => event.stopPropagation()}
+      >
+        +
+      </button>
+    </foreignObject>
+  );
+}
+
+function renderWireStroke(
+  x1: number,
+  x2: number,
+  y: number,
+  wireType: WireType,
+  className: string,
+  style?: CSSProperties
+): JSX.Element {
+  if (wireType === "classical") {
+    return (
+      <g className={className} style={style}>
+        <line x1={x1} x2={x2} y1={y - 3} y2={y - 3} />
+        <line x1={x1} x2={x2} y1={y + 3} y2={y + 3} />
+      </g>
+    );
+  }
+
+  return <line x1={x1} x2={x2} y1={y} y2={y} className={className} style={style} />;
+}
+
+function renderGate(item: GateItem, isSelected: boolean, layout: CircuitLayout, columnMetrics: ColumnMetrics): JSX.Element {
+  const rect = getGateRect(item, layout, columnMetrics);
+  const textY = rect.y + (rect.height / 2);
   const label = normalizeGateLabel(item.label);
   const texHtml = isLikelyTexMath(label) ? renderGateLabelHtml(label) : null;
   const color = getItemColor(item);
@@ -285,10 +483,10 @@ function renderGate(item: GateItem, isSelected: boolean, layout: CircuitLayout):
       <rect
         data-kind="gate-rect"
         data-item-id={item.id}
-        x={x}
-        y={y}
-        width={item.width}
-        height={height}
+        x={rect.x}
+        y={rect.y}
+        width={rect.width}
+        height={rect.height}
         rx={0}
         className={`gate-rect ${isSelected ? "is-selected" : ""}`}
         style={{
@@ -298,10 +496,10 @@ function renderGate(item: GateItem, isSelected: boolean, layout: CircuitLayout):
       />
       {texHtml ? (
         <foreignObject
-          x={x + 4}
-          y={y + 4}
-          width={Math.max(item.width - 8, 24)}
-          height={Math.max(height - 8, 24)}
+          x={rect.x + 4}
+          y={rect.y + 4}
+          width={Math.max(rect.width - 8, 24)}
+          height={Math.max(rect.height - 8, 24)}
           className="gate-label-foreign-object"
         >
           <div
@@ -313,7 +511,7 @@ function renderGate(item: GateItem, isSelected: boolean, layout: CircuitLayout):
         </foreignObject>
       ) : (
         <text
-          x={getCellCenterX(item.point.col, layout)}
+          x={rect.x + (rect.width / 2)}
           y={textY}
           className="gate-label"
           dominantBaseline="middle"
@@ -327,22 +525,21 @@ function renderGate(item: GateItem, isSelected: boolean, layout: CircuitLayout):
   );
 }
 
-function renderMeter(item: MeterItem, isSelected: boolean, layout: CircuitLayout): JSX.Element {
-  const x = getCellCenterX(item.point.col, layout) - (GATE_MIN_WIDTH / 2);
-  const y = getRowY(item.point.row, layout) - (GATE_MIN_HEIGHT / 2);
+function renderMeter(item: MeterItem, isSelected: boolean, layout: CircuitLayout, columnMetrics: ColumnMetrics): JSX.Element {
+  const rect = getMeterRect(item, layout, columnMetrics);
   const color = getItemColor(item);
-  const needleBaseX = x + 11;
-  const needleBaseY = y + 23;
+  const centerY = rect.y + (rect.height / 2);
+  const centerX = rect.x + (rect.width / 2);
 
   return (
     <g>
       <rect
         data-kind="meter-rect"
         data-item-id={item.id}
-        x={x}
-        y={y}
-        width={GATE_MIN_WIDTH}
-        height={GATE_MIN_HEIGHT}
+        x={rect.x}
+        y={rect.y}
+        width={rect.width}
+        height={rect.height}
         rx={0}
         className={`gate-rect ${isSelected ? "is-selected" : ""}`}
         style={{
@@ -351,15 +548,15 @@ function renderMeter(item: MeterItem, isSelected: boolean, layout: CircuitLayout
         }}
       />
       <path
-        d={`M ${x + 10} ${y + 22} Q ${x + 20} ${y + 10} ${x + 30} ${y + 18}`}
+        d={`M ${rect.x + 10} ${centerY + 6} Q ${centerX} ${centerY - 10} ${rect.x + rect.width - 10} ${centerY + 2}`}
         className="meter-glyph"
         style={{ stroke: color }}
       />
       <line
-        x1={needleBaseX + 11}
-        y1={needleBaseY - 7}
-        x2={needleBaseX + 15}
-        y2={needleBaseY - 13}
+        x1={centerX + 4}
+        y1={centerY - 1}
+        x2={centerX + 10}
+        y2={centerY - 10}
         className="meter-glyph"
         style={{ stroke: color }}
       />
@@ -367,36 +564,109 @@ function renderMeter(item: MeterItem, isSelected: boolean, layout: CircuitLayout
   );
 }
 
-function renderVerticalConnector(
-  item: VerticalConnectorItem,
-  isSelected: boolean,
-  layout: CircuitLayout
-): JSX.Element {
+function renderFrame(item: FrameItem, isSelected: boolean, layout: CircuitLayout, columnMetrics: ColumnMetrics): JSX.Element {
+  const rect = getFrameRect(item, layout, columnMetrics);
+  const color = getItemColor(item);
+
   return (
-    <line
-      x1={getCellCenterX(item.point.col, layout)}
-      x2={getCellCenterX(item.point.col, layout)}
-      y1={getRowY(item.point.row, layout)}
-      y2={getRowY(item.point.row + item.length, layout)}
-      className={`vertical-connector ${isSelected ? "is-selected" : ""}`}
-      style={{ stroke: getItemColor(item) }}
-    />
+    <g className={`annotation-frame ${isSelected ? "is-selected" : ""}`}>
+      <rect
+        x={rect.x}
+        y={rect.y}
+        width={rect.width}
+        height={rect.height}
+        rx={item.rounded ? 12 : 0}
+        className="annotation-frame-rect"
+        style={{
+          stroke: color,
+          fill: item.background ? mixHexWithWhite(color, 0.93) : "transparent",
+          strokeDasharray: item.dashed ? "8 6" : undefined
+        }}
+      />
+      <text
+        x={rect.x + (rect.width / 2)}
+        y={rect.y - 8}
+        textAnchor="middle"
+        className="annotation-frame-label"
+        style={{ fill: color }}
+      >
+        {normalizeGateLabel(item.label)}
+      </text>
+    </g>
   );
 }
 
-function renderMarker(item: CircuitItem, isSelected: boolean, layout: CircuitLayout): JSX.Element {
-  const cx = getCellCenterX(item.point.col, layout);
+function renderSlice(
+  item: SliceItem,
+  isSelected: boolean,
+  qubits: number,
+  layout: CircuitLayout,
+  columnMetrics: ColumnMetrics
+): JSX.Element {
+  const x = getColumnRightX(item.point.col, layout, columnMetrics);
+  return (
+    <g className={`slice-annotation ${isSelected ? "is-selected" : ""}`}>
+      <line
+        x1={x}
+        x2={x}
+        y1={GRID_TOP - 16}
+        y2={getRowY(qubits - 1, layout) + 18}
+        className="slice-line"
+        style={{ stroke: getItemColor(item) }}
+      />
+      <text
+        x={x + 4}
+        y={GRID_TOP - 24}
+        className="slice-label"
+        style={{ fill: getItemColor(item) }}
+      >
+        {normalizeGateLabel(item.label)}
+      </text>
+    </g>
+  );
+}
+
+function renderVerticalConnector(
+  item: VerticalConnectorItem,
+  isSelected: boolean,
+  layout: CircuitLayout,
+  columnMetrics: ColumnMetrics
+): JSX.Element {
+  const x = getCellCenterX(item.point.col, layout, columnMetrics);
+  const y1 = getRowY(item.point.row, layout);
+  const y2 = getRowY(item.point.row + item.length, layout);
+  const className = `vertical-connector ${isSelected ? "is-selected" : ""}`;
+  const style = { stroke: getItemColor(item) };
+
+  if (item.wireType === "classical") {
+    return (
+      <g className={className} style={style}>
+        <line x1={x - 3} x2={x - 3} y1={y1} y2={y2} />
+        <line x1={x + 3} x2={x + 3} y1={y1} y2={y2} />
+      </g>
+    );
+  }
+
+  return <line x1={x} x2={x} y1={y1} y2={y2} className={className} style={style} />;
+}
+
+function renderMarker(item: CircuitItem, isSelected: boolean, layout: CircuitLayout, columnMetrics: ColumnMetrics): JSX.Element {
+  const cx = getCellCenterX(item.point.col, layout, columnMetrics);
   const cy = getRowY(item.point.row, layout);
   const color = getItemColor(item);
 
   if (item.type === "controlDot") {
+    const controlState = controlStateFor(item);
     return (
       <circle
         cx={cx}
         cy={cy}
         r={7}
-        className={`control-dot ${isSelected ? "is-selected" : ""}`}
-        style={{ fill: color }}
+        className={`control-dot control-dot-${controlState} ${isSelected ? "is-selected" : ""}`}
+        style={{
+          fill: controlState === "open" ? "#FFF8EF" : color,
+          stroke: controlState === "open" ? color : "none"
+        }}
       />
     );
   }
@@ -419,33 +689,29 @@ function renderMarker(item: CircuitItem, isSelected: boolean, layout: CircuitLay
   );
 }
 
-function renderHorizontalOverride(
+function renderHorizontalSegment(
   item: HorizontalSegmentItem,
   isSelected: boolean,
   steps: number,
-  layout: CircuitLayout
+  layout: CircuitLayout,
+  columnMetrics: ColumnMetrics
 ): JSX.Element {
-  const [x1, x2] = getIncomingSegmentRange(item.point.col, steps, layout);
+  const [x1, x2] = getIncomingSegmentRange(item.point.col, steps, layout, columnMetrics);
   const y = getRowY(item.point.row, layout);
   const color = getItemColor(item);
 
   if (item.mode === "present") {
     return (
-      <line
-        x1={x1}
-        x2={x2}
-        y1={y}
-        y2={y}
-        className={`present-override ${isSelected ? "is-selected" : ""}`}
-        style={{ stroke: color }}
-      />
+      <g className={`horizontal-segment ${isSelected ? "is-selected" : ""}`}>
+        {renderWireStroke(x1, x2, y, item.wireType, "horizontal-segment-stroke", { stroke: color })}
+      </g>
     );
   }
 
   return (
     <g className={`absent-override ${isSelected ? "is-selected" : ""}`} style={{ stroke: color }}>
-      <line x1={x1} x2={x2} y1={y} y2={y} />
-      <circle cx={(x1 + x2) / 2} cy={y} r={4} style={{ fill: color }} />
+      <line x1={x1} x2={x2} y1={y} y2={y} className="absent-override-hit" />
+      {isSelected && <line x1={x1} x2={x2} y1={y} y2={y} className="absent-override-selection" />}
     </g>
   );
 }
@@ -455,6 +721,7 @@ function renderVerticalHover(
   col: number,
   qubits: number,
   layout: CircuitLayout,
+  columnMetrics: ColumnMetrics,
   length = 1,
   invalid = false
 ): JSX.Element | null {
@@ -462,7 +729,7 @@ function renderVerticalHover(
     return null;
   }
 
-  const x = getCellCenterX(col, layout);
+  const x = getCellCenterX(col, layout, columnMetrics);
   const topY = getRowY(row, layout);
   const bottomY = getRowY(Math.min(row + length, qubits - 1), layout);
   const previewTop = topY + 4;
@@ -491,14 +758,17 @@ function renderVerticalHover(
 
 export function Workspace({
   state,
-  externalDrag,
   isPasteMode,
   pasteClipboard,
-  horizontalSegmentsUnlocked,
+  selectedWireLabelGroup,
   onLayoutSpacingChange,
   onWireLabelChange,
+  onSelectWireLabelGroup,
+  onMergeWireLabelGroup,
   onPlaceItem,
-  onSelectOrCreateHorizontalSegment,
+  onDrawGate,
+  onDrawMeter,
+  onDrawAnnotation,
   onPasteAt,
   onMoveItem,
   onSelectionChange,
@@ -509,12 +779,19 @@ export function Workspace({
   const [hoverPlacement, setHoverPlacement] = useState<PlacementTarget | null>(null);
   const [marquee, setMarquee] = useState<MarqueeSelection | null>(null);
   const [editingWireLabel, setEditingWireLabel] = useState<{ row: number; side: "left" | "right" } | null>(null);
+  const [areaDraw, setAreaDraw] = useState<AreaDrawState | null>(null);
+  const [pencilStroke, setPencilStroke] = useState<PencilStrokeState | null>(null);
+  const pencilVisitedRef = useRef<Set<string>>(new Set());
 
   const layout = state.layout;
-  const columnWidth = getColumnWidth(layout);
+  const columnMetrics = useMemo(
+    () => getColumnMetrics(state.steps, state.items, layout),
+    [layout, state.items, state.steps]
+  );
   const rowHeight = getRowHeight(layout);
-  const width = getGridWidth(state.steps, layout);
+  const width = getGridWidth(state.steps, layout, columnMetrics);
   const height = getGridHeight(state.qubits, layout);
+  const wireEndX = getWireEndX(state.steps, layout, columnMetrics);
   const selectionSet = useMemo(() => new Set(state.selectedItemIds), [state.selectedItemIds]);
   const draggingItem = useMemo(
     () => state.items.find((item) => item.id === draggingItemId) ?? null,
@@ -522,18 +799,9 @@ export function Workspace({
   );
   const hoverTool = draggingItem
     ? draggingItem.type
-    : externalDrag?.tool ?? (isPasteMode ? getClipboardPlacementTool(pasteClipboard) : state.activeTool);
-
-  const hiddenSegments = useMemo(() => {
-    const absent = new Set<string>();
-    for (const [key, value] of Object.entries(state.wireMask)) {
-      if (value === "absent") {
-        absent.add(key);
-      }
-    }
-    return absent;
-  }, [state.wireMask]);
-
+    : isPasteMode
+      ? getClipboardPlacementTool(pasteClipboard)
+      : state.activeTool;
   const verticalHoverLength = draggingItem?.type === "verticalConnector" ? draggingItem.length : 1;
   const pasteAnchor = hoverPlacement ? { row: hoverPlacement.row, col: hoverPlacement.col } : null;
   const pastePreviewValid =
@@ -547,12 +815,107 @@ export function Workspace({
       : [];
   const marqueeRect = marquee ? normalizeRect(marquee.start, marquee.current) : null;
   const wireLayerItems = useMemo(() => state.items.filter(isWireLayerItem), [state.items]);
-  const gateLayerItems = useMemo(() => state.items.filter(isGateItem), [state.items]);
+  const gateLayerItems = useMemo(() => state.items.filter(isGateLikeItem), [state.items]);
+  const annotationBackgroundItems = useMemo(() => state.items.filter(isAnnotationBackgroundItem), [state.items]);
+  const annotationOverlayItems = useMemo(() => state.items.filter(isAnnotationOverlayItem), [state.items]);
   const markerLayerItems = useMemo(() => state.items.filter(isMarkerItem), [state.items]);
   const previewWireItems = useMemo(() => pastePreviewItems.filter(isWireLayerItem), [pastePreviewItems]);
-  const previewGateItems = useMemo(() => pastePreviewItems.filter(isGateItem), [pastePreviewItems]);
+  const previewGateItems = useMemo(() => pastePreviewItems.filter(isGateLikeItem), [pastePreviewItems]);
+  const previewAnnotationBackgroundItems = useMemo(() => pastePreviewItems.filter(isAnnotationBackgroundItem), [pastePreviewItems]);
+  const previewAnnotationOverlayItems = useMemo(() => pastePreviewItems.filter(isAnnotationOverlayItem), [pastePreviewItems]);
   const previewMarkerItems = useMemo(() => pastePreviewItems.filter(isMarkerItem), [pastePreviewItems]);
   const pastePlacementTool = getClipboardPlacementTool(pasteClipboard);
+  const hoverProjectionItems = useMemo(() => {
+    if (!hoverPlacement || areaDraw || isPasteMode || hoverTool === "select" || hoverTool === "pencil") {
+      return [];
+    }
+
+    if (draggingItem) {
+      if (draggingItem.type === "horizontalSegment") {
+        if (hoverPlacement.kind !== "segment") {
+          return [];
+        }
+
+        return [withPreviewColor({ ...draggingItem, point: { row: hoverPlacement.row, col: hoverPlacement.col } })];
+      }
+
+      if (hoverPlacement.kind !== "cell") {
+        return [];
+      }
+
+      if (draggingItem.type === "gate" || draggingItem.type === "meter" || draggingItem.type === "frame" || draggingItem.type === "slice") {
+        return [withPreviewColor({ ...draggingItem, point: { row: hoverPlacement.row, col: hoverPlacement.col } })];
+      }
+
+      if (draggingItem.type === "verticalConnector") {
+        return [withPreviewColor({ ...draggingItem, point: { row: hoverPlacement.row, col: hoverPlacement.col } })];
+      }
+
+      return [withPreviewColor({ ...draggingItem, point: { row: hoverPlacement.row, col: hoverPlacement.col } })];
+    }
+
+    if (hoverPlacement.kind !== "cell") {
+      return [];
+    }
+
+    switch (state.activeTool) {
+      case "gate":
+        return [withPreviewColor({
+          id: "hover-preview-gate",
+          type: "gate",
+          point: { row: hoverPlacement.row, col: hoverPlacement.col },
+          span: { rows: 1, cols: 1 },
+          label: "U",
+          width: GATE_MIN_WIDTH,
+          color: DEFAULT_ABSENT_WIRE_COLOR
+        })];
+      case "meter":
+        return [withPreviewColor({
+          id: "hover-preview-meter",
+          type: "meter",
+          point: { row: hoverPlacement.row, col: hoverPlacement.col },
+          span: { rows: 1, cols: 1 },
+          color: DEFAULT_ABSENT_WIRE_COLOR
+        })];
+      case "annotation":
+        return [withPreviewColor({
+          id: "hover-preview-slice",
+          type: "slice",
+          point: { row: hoverPlacement.row, col: hoverPlacement.col },
+          label: "slice",
+          color: DEFAULT_ABSENT_WIRE_COLOR
+        })];
+      case "controlDot":
+        return [withPreviewColor({
+          id: "hover-preview-control",
+          type: "controlDot",
+          point: { row: hoverPlacement.row, col: hoverPlacement.col },
+          controlState: "filled",
+          color: DEFAULT_ABSENT_WIRE_COLOR
+        })];
+      case "targetPlus":
+        return [withPreviewColor({
+          id: "hover-preview-target",
+          type: "targetPlus",
+          point: { row: hoverPlacement.row, col: hoverPlacement.col },
+          color: DEFAULT_ABSENT_WIRE_COLOR
+        })];
+      case "swapX":
+        return [withPreviewColor({
+          id: "hover-preview-swap",
+          type: "swapX",
+          point: { row: hoverPlacement.row, col: hoverPlacement.col },
+          color: DEFAULT_ABSENT_WIRE_COLOR
+        })];
+      default:
+        return [];
+    }
+  }, [areaDraw, draggingItem, hoverPlacement, hoverTool, isPasteMode, state.activeTool]);
+  const hoverProjectionWireItems = useMemo(() => hoverProjectionItems.filter(isWireLayerItem), [hoverProjectionItems]);
+  const hoverProjectionGateItems = useMemo(() => hoverProjectionItems.filter(isGateLikeItem), [hoverProjectionItems]);
+  const hoverProjectionAnnotationBackgroundItems = useMemo(() => hoverProjectionItems.filter(isAnnotationBackgroundItem), [hoverProjectionItems]);
+  const hoverProjectionAnnotationOverlayItems = useMemo(() => hoverProjectionItems.filter(isAnnotationOverlayItem), [hoverProjectionItems]);
+  const hoverProjectionMarkerItems = useMemo(() => hoverProjectionItems.filter(isMarkerItem), [hoverProjectionItems]);
 
   useEffect(() => {
     if (editingWireLabel && editingWireLabel.row >= state.qubits) {
@@ -560,7 +923,7 @@ export function Workspace({
     }
   }, [editingWireLabel, state.qubits]);
 
-  function resolvePlacement(clientX: number, clientY: number, tool: ToolType): PlacementTarget | null {
+  function resolvePlacement(clientX: number, clientY: number, tool: ToolType | ItemType): PlacementTarget | null {
     const board = boardRef.current;
     if (!board) {
       return null;
@@ -574,7 +937,23 @@ export function Workspace({
     if (draggingItem.type === "gate") {
       return {
         ...placement,
+        row: Math.min(placement.row, state.qubits - draggingItem.span.rows),
+        col: Math.min(placement.col, state.steps - draggingItem.span.cols)
+      };
+    }
+
+    if (draggingItem.type === "meter") {
+      return {
+        ...placement,
         row: Math.min(placement.row, state.qubits - draggingItem.span.rows)
+      };
+    }
+
+    if (draggingItem.type === "frame") {
+      return {
+        ...placement,
+        row: Math.min(placement.row, state.qubits - draggingItem.span.rows),
+        col: Math.min(placement.col, state.steps - draggingItem.span.cols)
       };
     }
 
@@ -604,7 +983,7 @@ export function Workspace({
     };
   }
 
-  function updateHoverFromPointer(clientX: number, clientY: number, tool: ToolType): void {
+  function updateHoverFromPointer(clientX: number, clientY: number, tool: ToolType | ItemType): void {
     setHoverPlacement(resolvePlacement(clientX, clientY, tool));
   }
 
@@ -612,7 +991,39 @@ export function Workspace({
     if (!placement) {
       return;
     }
+
     onPlaceItem(tool, placement);
+  }
+
+  function placementKey(placement: PlacementTarget): string {
+    return `${placement.kind}:${placement.row}:${placement.col}`;
+  }
+
+  function applyPencilPlacement(placement: PlacementTarget | null, expectedKind: PlacementTarget["kind"]): void {
+    if (!placement || placement.kind !== expectedKind) {
+      return;
+    }
+
+    const key = placementKey(placement);
+    if (pencilVisitedRef.current.has(key)) {
+      return;
+    }
+    pencilVisitedRef.current.add(key);
+
+    if (placement.kind === "segment") {
+      placeWithTool("horizontalSegment", placement);
+      return;
+    }
+
+    if (canPlaceCellToolAtRow("pencil", placement.row, state.qubits)) {
+      placeWithTool("verticalConnector", placement);
+    }
+  }
+
+  function beginPencilStroke(placement: PlacementTarget): void {
+    pencilVisitedRef.current = new Set();
+    setPencilStroke({ kind: placement.kind });
+    applyPencilPlacement(placement, placement.kind);
   }
 
   function placePastedClipboardFromPointer(clientX: number, clientY: number): void {
@@ -628,22 +1039,70 @@ export function Workspace({
     onPasteAt(placement);
   }
 
-  function isSelectableItem(item: CircuitItem): boolean {
-    return horizontalSegmentsUnlocked || item.type !== "horizontalSegment";
+  function startAreaDraw(tool: "gate" | "meter" | "annotation", placement: PlacementTarget | null): void {
+    if (!placement || placement.kind !== "cell") {
+      return;
+    }
+
+    setAreaDraw({
+      tool,
+      start: { row: placement.row, col: placement.col },
+      current: { row: placement.row, col: placement.col }
+    });
+    setHoverPlacement(placement);
+  }
+
+  function handleToolPointerDown(clientX: number, clientY: number): void {
+    if (state.activeTool === "select") {
+      return;
+    }
+
+    const placement = resolvePlacement(clientX, clientY, state.activeTool);
+    if (!placement) {
+      return;
+    }
+
+    if (state.activeTool === "gate") {
+      startAreaDraw("gate", placement);
+      return;
+    }
+
+    if (state.activeTool === "meter") {
+      startAreaDraw("meter", placement);
+      return;
+    }
+
+    if (state.activeTool === "annotation") {
+      startAreaDraw("annotation", placement);
+      return;
+    }
+
+    if (state.activeTool === "pencil") {
+      beginPencilStroke(placement);
+      return;
+    }
+
+    if (placement.kind === "cell" && canPlaceCellToolAtRow(state.activeTool, placement.row, state.qubits)) {
+      placeWithTool(state.activeTool, placement);
+    }
   }
 
   function renderInteractiveItem(item: CircuitItem): JSX.Element {
     const selected = selectionSet.has(item.id);
     const rendered =
       item.type === "gate"
-        ? renderGate(item, selected, layout)
+        ? renderGate(item, selected, layout, columnMetrics)
         : item.type === "meter"
-          ? renderMeter(item, selected, layout)
-        : item.type === "verticalConnector"
-          ? renderVerticalConnector(item, selected, layout)
-          : item.type === "horizontalSegment"
-            ? renderHorizontalOverride(item, selected, state.steps, layout)
-            : renderMarker(item, selected, layout);
+          ? renderMeter(item, selected, layout, columnMetrics)
+          : item.type === "frame"
+            ? renderFrame(item, selected, layout, columnMetrics)
+            : item.type === "slice"
+              ? renderSlice(item, selected, state.qubits, layout, columnMetrics)
+          : item.type === "verticalConnector"
+            ? renderVerticalConnector(item, selected, layout, columnMetrics)
+            : item.type === "horizontalSegment"
+              ? renderHorizontalSegment(item, selected, state.steps, layout, columnMetrics)
+              : renderMarker(item, selected, layout, columnMetrics);
 
     return (
       <g
@@ -652,23 +1111,20 @@ export function Workspace({
         data-testid={`item-${item.id}`}
         className="item-group"
         onPointerDown={(event) => {
-          if (!isPasteMode && state.activeTool === "select" && !isSelectableItem(item)) {
-            return;
-          }
-
           event.preventDefault();
           event.stopPropagation();
 
           if (isPasteMode) {
-            onPasteAt(
-              item.type === "horizontalSegment"
-                ? { kind: "segment", row: item.point.row, col: item.point.col }
-                : { kind: "cell", row: item.point.row, col: item.point.col }
-            );
+            placePastedClipboardFromPointer(event.clientX, event.clientY);
             return;
           }
 
-          if (state.activeTool === "select" && event.altKey) {
+          if (state.activeTool !== "select") {
+            handleToolPointerDown(event.clientX, event.clientY);
+            return;
+          }
+
+          if (event.altKey) {
             const point = getClampedContentPoint(event.clientX, event.clientY);
             if (point) {
               setMarquee({ start: point, current: point });
@@ -693,10 +1149,8 @@ export function Workspace({
             return;
           }
 
-          if (state.activeTool === "select") {
-            setDraggingItemId(item.id);
-            updateHoverFromPointer(event.clientX, event.clientY, item.type);
-          }
+          setDraggingItemId(item.id);
+          updateHoverFromPointer(event.clientX, event.clientY, item.type);
         }}
       >
         {rendered}
@@ -708,14 +1162,18 @@ export function Workspace({
     const key = `paste-preview-${item.type}-${index}`;
     const rendered =
       item.type === "gate"
-        ? renderGate(item, false, layout)
+        ? renderGate(item, false, layout, columnMetrics)
         : item.type === "meter"
-          ? renderMeter(item, false, layout)
-        : item.type === "verticalConnector"
-          ? renderVerticalConnector(item, false, layout)
-          : item.type === "horizontalSegment"
-            ? renderHorizontalOverride(item, false, state.steps, layout)
-            : renderMarker(item, false, layout);
+          ? renderMeter(item, false, layout, columnMetrics)
+          : item.type === "frame"
+            ? renderFrame(item, false, layout, columnMetrics)
+            : item.type === "slice"
+              ? renderSlice(item, false, state.qubits, layout, columnMetrics)
+          : item.type === "verticalConnector"
+            ? renderVerticalConnector(item, false, layout, columnMetrics)
+            : item.type === "horizontalSegment"
+              ? renderHorizontalSegment(item, false, state.steps, layout, columnMetrics)
+              : renderMarker(item, false, layout, columnMetrics);
 
     return (
       <g key={key} className="paste-preview-item">
@@ -749,7 +1207,7 @@ export function Workspace({
       window.removeEventListener("resize", updateMetrics);
       onBoardMetricsChange(null);
     };
-  }, [onBoardMetricsChange, state.qubits, state.steps, state.layout.columnSepCm, state.layout.rowSepCm]);
+  }, [onBoardMetricsChange, state.items, state.qubits, state.steps, state.layout.columnSepCm, state.layout.rowSepCm]);
 
   useEffect(() => {
     if (!draggingItemId || !draggingItem) {
@@ -781,37 +1239,32 @@ export function Workspace({
       window.removeEventListener("pointerup", finishDrag);
       window.removeEventListener("pointercancel", finishDrag);
     };
-  }, [draggingItem, draggingItemId, onMoveItem, state]);
+  }, [draggingItem, draggingItemId, onMoveItem]);
 
   useEffect(() => {
     if (!marquee) {
       return;
     }
 
-    const updateSelection = (point: ContentPoint) => {
-      setMarquee((current) => (current ? { ...current, current: point } : current));
-    };
-
     const handlePointerMove = (event: PointerEvent) => {
       const point = getClampedContentPoint(event.clientX, event.clientY);
       if (point) {
-        updateSelection(point);
+        setMarquee((current) => (current ? { ...current, current: point } : current));
       }
     };
 
     const finishSelection = (event: PointerEvent) => {
       const point = getClampedContentPoint(event.clientX, event.clientY) ?? marquee.current;
-        const rect = normalizeRect(marquee.start, point);
-        if (rect.width < 4 && rect.height < 4) {
-          onSelectionChange([]);
-        } else {
-          onSelectionChange(
-            state.items
-              .filter(isSelectableItem)
-              .filter((item) => rectsIntersect(getItemBounds(item, state.steps, layout), rect))
-              .map((item) => item.id)
+      const rect = normalizeRect(marquee.start, point);
+      if (rect.width < 4 && rect.height < 4) {
+        onSelectionChange([]);
+      } else {
+        onSelectionChange(
+          state.items
+            .filter((item) => rectsIntersect(getItemBounds(item, state.steps, state.qubits, layout, columnMetrics), rect))
+            .map((item) => item.id)
         );
-        }
+      }
       setMarquee(null);
       setHoverPlacement(null);
     };
@@ -825,18 +1278,165 @@ export function Workspace({
       window.removeEventListener("pointerup", finishSelection);
       window.removeEventListener("pointercancel", finishSelection);
     };
-  }, [layout, marquee, onSelectionChange, state.items, state.steps]);
+  }, [columnMetrics, layout, marquee, onSelectionChange, state.items, state.qubits, state.steps]);
 
   useEffect(() => {
-    if (!externalDrag) {
-      if (!draggingItemId && !isPasteMode && !marquee) {
-        setHoverPlacement(null);
-      }
+    if (!pencilStroke) {
       return;
     }
 
-    updateHoverFromPointer(externalDrag.clientX, externalDrag.clientY, externalDrag.tool);
-  }, [draggingItemId, externalDrag, isPasteMode, marquee, state]);
+    const handlePointerMove = (event: PointerEvent) => {
+      const placement = resolvePlacement(event.clientX, event.clientY, "pencil");
+      setHoverPlacement(placement);
+      applyPencilPlacement(placement, pencilStroke.kind);
+    };
+
+    const finishStroke = () => {
+      pencilVisitedRef.current = new Set();
+      setPencilStroke(null);
+      setHoverPlacement(null);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", finishStroke);
+    window.addEventListener("pointercancel", finishStroke);
+
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", finishStroke);
+      window.removeEventListener("pointercancel", finishStroke);
+    };
+  }, [pencilStroke, state.activeTool, state.qubits]);
+
+  useEffect(() => {
+    if (!areaDraw) {
+      return;
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const placement = resolvePlacement(event.clientX, event.clientY, areaDraw.tool);
+      if (!placement || placement.kind !== "cell") {
+        return;
+      }
+
+      setAreaDraw((current) => {
+        if (!current) {
+          return current;
+        }
+
+        return {
+          ...current,
+          current: {
+            row: placement.row,
+            col: current.tool === "meter" ? current.start.col : placement.col
+          }
+        };
+      });
+      setHoverPlacement(placement);
+    };
+
+    const finishAreaDraw = (event: PointerEvent) => {
+      const placement = resolvePlacement(event.clientX, event.clientY, areaDraw.tool);
+      const finalCell =
+        placement && placement.kind === "cell"
+          ? placement
+          : { kind: "cell" as const, row: areaDraw.current.row, col: areaDraw.current.col };
+
+      if (areaDraw.tool === "gate") {
+        onDrawGate(areaDraw.start, { row: finalCell.row, col: finalCell.col });
+      } else if (areaDraw.tool === "annotation") {
+        onDrawAnnotation(areaDraw.start, { row: finalCell.row, col: finalCell.col });
+      } else {
+        onDrawMeter(areaDraw.start, finalCell.row);
+      }
+
+      setAreaDraw(null);
+      setHoverPlacement(null);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", finishAreaDraw);
+    window.addEventListener("pointercancel", finishAreaDraw);
+
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", finishAreaDraw);
+      window.removeEventListener("pointercancel", finishAreaDraw);
+    };
+  }, [areaDraw, onDrawAnnotation, onDrawGate, onDrawMeter]);
+
+  function renderAreaPreview(): JSX.Element | null {
+    if (!areaDraw) {
+      return null;
+    }
+
+    const topRow = Math.min(areaDraw.start.row, areaDraw.current.row);
+    const leftCol = Math.min(areaDraw.start.col, areaDraw.current.col);
+    const rows = Math.abs(areaDraw.current.row - areaDraw.start.row) + 1;
+    const cols = Math.abs(areaDraw.current.col - areaDraw.start.col) + 1;
+
+    if (areaDraw.tool === "gate") {
+      return renderPreviewItem(
+        {
+          id: "area-preview-gate",
+          type: "gate",
+          point: { row: topRow, col: leftCol },
+          span: { rows, cols },
+          label: "U",
+          width: GATE_MIN_WIDTH,
+          color: null
+        },
+        0
+      );
+    }
+
+    if (areaDraw.tool === "annotation") {
+      const topRow = Math.min(areaDraw.start.row, areaDraw.current.row);
+      const leftCol = Math.min(areaDraw.start.col, areaDraw.current.col);
+      const rows = Math.abs(areaDraw.current.row - areaDraw.start.row) + 1;
+      const cols = Math.abs(areaDraw.current.col - areaDraw.start.col) + 1;
+
+      if (rows === 1 && cols === 1) {
+        return renderPreviewItem(
+          {
+            id: "area-preview-slice",
+            type: "slice",
+            point: { row: areaDraw.start.row, col: areaDraw.start.col },
+            label: "slice",
+            color: null
+          },
+          0
+        );
+      }
+
+      return renderPreviewItem(
+        {
+          id: "area-preview-frame",
+          type: "frame",
+          point: { row: topRow, col: leftCol },
+          span: { rows, cols },
+          label: "Group",
+          rounded: true,
+          dashed: true,
+          background: true,
+          innerXSepPt: 2,
+          color: null
+        },
+        0
+      );
+    }
+
+    return renderPreviewItem(
+      {
+        id: "area-preview-meter",
+        type: "meter",
+        point: { row: topRow, col: areaDraw.start.col },
+        span: { rows, cols: 1 },
+        color: null
+      },
+      0
+    );
+  }
 
   return (
     <section className="panel workspace-panel">
@@ -890,7 +1490,17 @@ export function Workspace({
           event.stopPropagation();
         }}
         onPointerDown={(event) => {
-          if (event.button !== 0 || state.activeTool !== "select" || isPasteMode) {
+          if (event.button !== 0 || isPasteMode) {
+            return;
+          }
+
+          if (state.activeTool !== "select") {
+            const target = event.target;
+            if (target instanceof Element && target.closest(".item-group, .grid-hit-cell, .grid-hit-segment")) {
+              return;
+            }
+
+            handleToolPointerDown(event.clientX, event.clientY);
             return;
           }
 
@@ -902,62 +1512,37 @@ export function Workspace({
           setMarquee({ start: point, current: point });
         }}
         onPointerMove={(event) => {
-          if (!isPasteMode || externalDrag || draggingItemId || marquee) {
+          if (draggingItemId || marquee || areaDraw || pencilStroke) {
             return;
           }
 
-          updateHoverFromPointer(event.clientX, event.clientY, pastePlacementTool);
+          if (isPasteMode) {
+            updateHoverFromPointer(event.clientX, event.clientY, pastePlacementTool);
+            return;
+          }
+
+          if (state.activeTool !== "select") {
+            updateHoverFromPointer(event.clientX, event.clientY, state.activeTool);
+          }
         }}
         onPointerLeave={() => {
-          if (!externalDrag && !draggingItemId && !marquee) {
+          if (!draggingItemId && !marquee && !areaDraw && !pencilStroke) {
             setHoverPlacement(null);
           }
         }}
       >
         <svg width={width} height={height} className="workspace-svg" aria-label="Circuit workbench">
-          {Array.from({ length: state.qubits }, (_, row) => {
-            const y = getRowY(row, layout);
-            return (
-              <g key={`wire-${row}`}>
-                <line
-                  x1={getWireStartX()}
-                  x2={getWireEndX(state.steps, layout)}
-                  y1={y}
-                  y2={y}
-                  className="wire-line"
-                />
-                {Array.from({ length: state.steps + 1 }, (_, col) => {
-                  if (!hiddenSegments.has(gapKey(row, col))) {
-                    return null;
-                  }
-
-                  const [x1, x2] = getIncomingSegmentRange(col, state.steps, layout);
-                  return (
-                    <line
-                      key={`gap-${row}-${col}`}
-                      x1={x1}
-                      x2={x2}
-                      y1={y}
-                      y2={y}
-                      className="wire-gap"
-                    />
-                  );
-                })}
-              </g>
-            );
-          })}
-
           {Array.from({ length: state.steps }, (_, col) => (
             <g key={`grid-col-${col}`}>
               <line
-                x1={GRID_LEFT + (col * columnWidth)}
-                x2={GRID_LEFT + (col * columnWidth)}
+                x1={getColumnLeftX(col, layout, columnMetrics)}
+                x2={getColumnLeftX(col, layout, columnMetrics)}
                 y1={GRID_TOP - 34}
-                y2={getRowY(state.qubits - 1, layout) + 34}
+                y2={getRowY(state.qubits - 1, layout) + 18}
                 className="grid-guide"
               />
               <text
-                x={getCellCenterX(col, layout)}
+                x={getCellCenterX(col, layout, columnMetrics)}
                 y={GRID_TOP - 38}
                 className="grid-label"
                 textAnchor="middle"
@@ -968,69 +1553,206 @@ export function Workspace({
           ))}
 
           {Array.from({ length: state.qubits }, (_, row) => {
+            const y = getRowY(row, layout);
             const leftLabel = state.wireLabels[row]?.left ?? "";
             const rightLabel = state.wireLabels[row]?.right ?? "";
-            const y = getRowY(row, layout);
+            const leftSpan = getWireLabelSpan(state.wireLabels[row], "left");
+            const rightSpan = getWireLabelSpan(state.wireLabels[row], "right");
+            const leftBracket = getWireLabelBracket(state.wireLabels[row], "left");
+            const rightBracket = getWireLabelBracket(state.wireLabels[row], "right");
+            const leftCenterY = y + (((leftSpan - 1) * rowHeight) / 2);
+            const rightCenterY = y + (((rightSpan - 1) * rowHeight) / 2);
+            const leftLabelX = GRID_LEFT - 18 - (leftSpan > 1 && leftBracket !== "none" ? 26 : 0);
+            const rightLabelX = wireEndX + 18 + (rightSpan > 1 && rightBracket !== "none" ? 26 : 0);
+            const leftSelected =
+              selectedWireLabelGroup?.side === "left" && selectedWireLabelGroup.row === row;
+            const rightSelected =
+              selectedWireLabelGroup?.side === "right" && selectedWireLabelGroup.row === row;
 
             return (
               <g key={`row-label-${row}`}>
-                {renderEditableWireLabel(
-                  row,
-                  "left",
-                  leftLabel,
-                  GRID_LEFT - 16,
-                  y,
-                  LEFT_LABEL_WIDTH,
-                  "left",
-                  editingWireLabel?.row === row && editingWireLabel.side === "left",
-                  `q${row + 1}`,
-                  () => setEditingWireLabel({ row, side: "left" }),
-                  () => setEditingWireLabel((current) =>
-                    current?.row === row && current.side === "left" ? null : current
-                  ),
-                  (label) => onWireLabelChange(row, "left", label)
+                <text
+                  x={16}
+                  y={y}
+                  className="grid-label grid-row-label"
+                  dominantBaseline="middle"
+                  textAnchor="start"
+                >
+                  {row + 1}
+                </text>
+                {isWireLabelGroupStart(state.wireLabels, row, "left") && (
+                  <>
+                    {leftSpan > 1 && leftBracket !== "none" &&
+                      renderWireLabelBracket("left", leftBracket as "brace" | "bracket" | "paren", leftCenterY, leftSpan, wireEndX, layout)}
+                    {renderEditableWireLabel(
+                      row,
+                      "left",
+                      leftLabel,
+                      leftLabelX,
+                      leftCenterY,
+                      LEFT_LABEL_WIDTH,
+                      Math.max(40, leftSpan * rowHeight),
+                      "left",
+                      editingWireLabel?.row === row && editingWireLabel.side === "left",
+                      leftSelected,
+                      "",
+                      () => onSelectWireLabelGroup(row, "left"),
+                      () => {
+                        onSelectWireLabelGroup(row, "left");
+                        setEditingWireLabel({ row, side: "left" });
+                      },
+                      () => setEditingWireLabel((current) =>
+                        current?.row === row && current.side === "left" ? null : current
+                      ),
+                      (label) => onWireLabelChange(row, "left", label)
+                    )}
+                  </>
                 )}
-                {renderEditableWireLabel(
-                  row,
-                  "right",
-                  rightLabel,
-                  getWireEndX(state.steps, layout) + 16,
-                  y,
-                  RIGHT_LABEL_WIDTH,
-                  "right",
-                  editingWireLabel?.row === row && editingWireLabel.side === "right",
-                  "",
-                  () => setEditingWireLabel({ row, side: "right" }),
-                  () => setEditingWireLabel((current) =>
-                    current?.row === row && current.side === "right" ? null : current
-                  ),
-                  (label) => onWireLabelChange(row, "right", label)
+                {isWireLabelGroupStart(state.wireLabels, row, "right") && (
+                  <>
+                    {rightSpan > 1 && rightBracket !== "none" &&
+                      renderWireLabelBracket("right", rightBracket as "brace" | "bracket" | "paren", rightCenterY, rightSpan, wireEndX, layout)}
+                    {renderEditableWireLabel(
+                      row,
+                      "right",
+                      rightLabel,
+                      rightLabelX,
+                      rightCenterY,
+                      RIGHT_LABEL_WIDTH,
+                      Math.max(40, rightSpan * rowHeight),
+                      "right",
+                      editingWireLabel?.row === row && editingWireLabel.side === "right",
+                      rightSelected,
+                      "",
+                      () => onSelectWireLabelGroup(row, "right"),
+                      () => {
+                        onSelectWireLabelGroup(row, "right");
+                        setEditingWireLabel({ row, side: "right" });
+                      },
+                      () => setEditingWireLabel((current) =>
+                        current?.row === row && current.side === "right" ? null : current
+                      ),
+                      (label) => onWireLabelChange(row, "right", label)
+                    )}
+                  </>
                 )}
               </g>
             );
           })}
+
+          {Array.from({ length: Math.max(state.qubits - 1, 0) }, (_, row) => {
+            const centerY = getRowY(row, layout) + (rowHeight / 2);
+            return (
+              <g key={`merge-buttons-${row}`}>
+                {hasWireLabelBoundary(state.wireLabels, row, "left") &&
+                  renderWireLabelMergeButton("left", row, centerY, wireEndX, () =>
+                    onMergeWireLabelGroup(row, "left")
+                  )}
+                {hasWireLabelBoundary(state.wireLabels, row, "right") &&
+                  renderWireLabelMergeButton("right", row, centerY, wireEndX, () =>
+                    onMergeWireLabelGroup(row, "right")
+                  )}
+              </g>
+            );
+          })}
+
+          {state.activeTool === "pencil" && !isPasteMode && (
+            <g className="pencil-guide-layer" aria-hidden="true">
+              {Array.from({ length: state.qubits }, (_, row) =>
+                Array.from({ length: state.steps + 1 }, (_, col) => {
+                  const [x1, x2] = getIncomingSegmentRange(col, state.steps, layout, columnMetrics);
+                  const y = getRowY(row, layout);
+                  return (
+                    <line
+                      key={`pencil-guide-h-${row}-${col}`}
+                      x1={x1}
+                      x2={x2}
+                      y1={y}
+                      y2={y}
+                      className="pencil-guide pencil-guide-horizontal"
+                    />
+                  );
+                })
+              )}
+              {Array.from({ length: Math.max(state.qubits - 1, 0) }, (_, row) =>
+                Array.from({ length: state.steps }, (_, col) => {
+                  const x = getCellCenterX(col, layout, columnMetrics);
+                  return (
+                    <line
+                      key={`pencil-guide-v-${row}-${col}`}
+                      x1={x}
+                      x2={x}
+                      y1={getRowY(row, layout)}
+                      y2={getRowY(row + 1, layout)}
+                      className="pencil-guide pencil-guide-vertical"
+                    />
+                  );
+                })
+              )}
+            </g>
+          )}
 
           {Array.from({ length: state.qubits }, (_, row) =>
             Array.from({ length: state.steps }, (_, col) => (
               <rect
                 key={`hit-cell-${row}-${col}`}
                 data-testid={`grid-cell-${row}-${col}`}
-                x={GRID_LEFT + (col * columnWidth)}
+                x={getColumnLeftX(col, layout, columnMetrics)}
                 y={getRowY(row, layout) - (rowHeight / 2)}
-                width={columnWidth}
+                width={getColumnRightX(col, layout, columnMetrics) - getColumnLeftX(col, layout, columnMetrics)}
                 height={rowHeight}
                 className="grid-hit-cell"
-                onClick={() => {
+                onPointerEnter={() => {
+                  if (state.activeTool !== "pencil" || isPasteMode) {
+                    return;
+                  }
+
+                  const placement = { kind: "cell" as const, row, col };
+                  setHoverPlacement(placement);
+                  if (pencilStroke?.kind === "cell") {
+                    applyPencilPlacement(placement, "cell");
+                  }
+                }}
+                onPointerDown={(event) => {
+                  if (event.button !== 0) {
+                    return;
+                  }
+
                   if (isPasteMode) {
+                    event.preventDefault();
+                    event.stopPropagation();
                     onPasteAt({ kind: "cell", row, col });
                     return;
                   }
 
-                  if (state.activeTool === "select" || state.activeTool === "horizontalSegment") {
+                  if (state.activeTool === "select") {
                     return;
                   }
 
                   if (!canPlaceCellToolAtRow(state.activeTool, row, state.qubits)) {
+                    return;
+                  }
+
+                  event.preventDefault();
+                  event.stopPropagation();
+
+                  if (state.activeTool === "gate") {
+                    startAreaDraw("gate", { kind: "cell", row, col });
+                    return;
+                  }
+
+                  if (state.activeTool === "meter") {
+                    startAreaDraw("meter", { kind: "cell", row, col });
+                    return;
+                  }
+
+                  if (state.activeTool === "annotation") {
+                    startAreaDraw("annotation", { kind: "cell", row, col });
+                    return;
+                  }
+
+                  if (state.activeTool === "pencil") {
+                    beginPencilStroke({ kind: "cell", row, col });
                     return;
                   }
 
@@ -1042,67 +1764,77 @@ export function Workspace({
 
           {Array.from({ length: state.qubits }, (_, row) =>
             Array.from({ length: state.steps + 1 }, (_, col) => {
-              const [x1, x2] = getIncomingSegmentRange(col, state.steps, layout);
+              const [x1, x2] = getIncomingSegmentRange(col, state.steps, layout, columnMetrics);
               return (
                 <rect
                   key={`hit-segment-${row}-${col}`}
                   data-testid={`segment-slot-${row}-${col}`}
-                  x={x1}
-                  y={getRowY(row, layout) - 14}
-                  width={Math.max(x2 - x1, 12)}
-                  height={28}
-                  className="grid-hit-segment"
-                  onPointerDown={(event) => {
-                    if (
-                      isPasteMode ||
-                      state.activeTool === "horizontalSegment" ||
-                      (state.activeTool === "select" && horizontalSegmentsUnlocked)
-                    ) {
-                      event.stopPropagation();
-                    }
-                  }}
-                  onClick={(event) => {
+                x={x1}
+                y={getRowY(row, layout) - 14}
+                width={Math.max(x2 - x1, 12)}
+                height={28}
+                className="grid-hit-segment"
+                onPointerEnter={() => {
+                  if (state.activeTool !== "pencil" || isPasteMode) {
+                    return;
+                  }
+
+                  const placement = { kind: "segment" as const, row, col };
+                  setHoverPlacement(placement);
+                  if (pencilStroke?.kind === "segment") {
+                    applyPencilPlacement(placement, "segment");
+                  }
+                }}
+                onPointerDown={(event) => {
+                  if (event.button !== 0) {
+                    return;
+                  }
+
                     if (isPasteMode) {
+                      event.preventDefault();
+                      event.stopPropagation();
                       onPasteAt({ kind: "segment", row, col });
                       return;
                     }
 
-                    if (state.activeTool === "select" && horizontalSegmentsUnlocked) {
-                      onSelectOrCreateHorizontalSegment(row, col, event.shiftKey || event.metaKey || event.ctrlKey);
+                    if (state.activeTool !== "pencil") {
                       return;
                     }
 
-                    if (state.activeTool !== "horizontalSegment") {
-                      return;
-                    }
-                    placeWithTool("horizontalSegment", { kind: "segment", row, col });
+                    event.preventDefault();
+                    event.stopPropagation();
+                    beginPencilStroke({ kind: "segment", row, col });
                   }}
                 />
               );
             })
           )}
 
-          {hoverPlacement && hoverTool !== "select" && (
-            hoverPlacement.kind === "cell" && hoverTool === "verticalConnector" ? (
+          {hoverPlacement && !areaDraw && hoverTool !== "select" && (
+            hoverPlacement.kind === "cell" && hoverTool === "pencil" ? (
               renderVerticalHover(
                 hoverPlacement.row,
                 hoverPlacement.col,
                 state.qubits,
                 layout,
+                columnMetrics,
                 verticalHoverLength,
                 isPasteMode && !pastePreviewValid
               )
             ) : hoverPlacement.kind === "cell" ? (
               <rect
-                x={GRID_LEFT + (hoverPlacement.col * columnWidth)}
+                x={getColumnLeftX(hoverPlacement.col, layout, columnMetrics)}
                 y={getRowY(hoverPlacement.row, layout) - (rowHeight / 2)}
-                width={columnWidth}
+                width={
+                  getColumnRightX(hoverPlacement.col, layout, columnMetrics) -
+                  getColumnLeftX(hoverPlacement.col, layout, columnMetrics)
+                }
                 height={rowHeight}
                 className={`hover-indicator ${isPasteMode && !pastePreviewValid ? "is-invalid" : ""}`}
               />
             ) : (
               (() => {
-                const [x1, x2] = getIncomingSegmentRange(hoverPlacement.col, state.steps, layout);
+                const [x1, x2] = getIncomingSegmentRange(hoverPlacement.col, state.steps, layout, columnMetrics);
                 return (
                   <line
                     x1={x1}
@@ -1116,12 +1848,42 @@ export function Workspace({
             )
           )}
 
+          {annotationBackgroundItems.map(renderInteractiveItem)}
+          {previewAnnotationBackgroundItems.map(renderPreviewItem)}
+          {hoverProjectionAnnotationBackgroundItems.map((item, index) => (
+            <g key={`hover-projection-bg-${index}`} className="hover-projection-item">
+              {renderPreviewItem(item, index)}
+            </g>
+          ))}
           {wireLayerItems.map(renderInteractiveItem)}
           {previewWireItems.map(renderPreviewItem)}
+          {hoverProjectionWireItems.map((item, index) => (
+            <g key={`hover-projection-wire-${index}`} className="hover-projection-item">
+              {renderPreviewItem(item, index)}
+            </g>
+          ))}
           {gateLayerItems.map(renderInteractiveItem)}
           {previewGateItems.map(renderPreviewItem)}
+          {hoverProjectionGateItems.map((item, index) => (
+            <g key={`hover-projection-gate-${index}`} className="hover-projection-item">
+              {renderPreviewItem(item, index)}
+            </g>
+          ))}
+          {annotationOverlayItems.map(renderInteractiveItem)}
+          {previewAnnotationOverlayItems.map(renderPreviewItem)}
+          {hoverProjectionAnnotationOverlayItems.map((item, index) => (
+            <g key={`hover-projection-overlay-${index}`} className="hover-projection-item">
+              {renderPreviewItem(item, index)}
+            </g>
+          ))}
           {markerLayerItems.map(renderInteractiveItem)}
           {previewMarkerItems.map(renderPreviewItem)}
+          {hoverProjectionMarkerItems.map((item, index) => (
+            <g key={`hover-projection-marker-${index}`} className="hover-projection-item">
+              {renderPreviewItem(item, index)}
+            </g>
+          ))}
+          {renderAreaPreview()}
 
           {marqueeRect && (
             <rect

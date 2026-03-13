@@ -1,12 +1,13 @@
-import type { ItemType, ToolType } from "../types";
+import calygraphicPenIcon from "../assets/calygraphic_pen.svg";
+import type { ToolType } from "../types";
 
 const TOOL_LABELS: Array<{ tool: ToolType; label: string; shortLabel: string; description: string }> = [
   { tool: "select", label: "Select/Move", shortLabel: "Sel", description: "Select and drag existing items." },
+  { tool: "pencil", label: "Pencil", shortLabel: "Pen", description: "Paint horizontal or vertical wires." },
   { tool: "gate", label: "Gate", shortLabel: "Gate", description: "Place an auto-sized gate box." },
   { tool: "meter", label: "Meter", shortLabel: "Meas", description: "Place a measurement box." },
-  { tool: "verticalConnector", label: "Vertical line", shortLabel: "Vert", description: "Connect items on one column." },
-  { tool: "horizontalSegment", label: "Horizontal line", shortLabel: "Horiz", description: "Edit a wire segment on a row." },
-  { tool: "controlDot", label: "Control dot", shortLabel: "Ctrl", description: "Place a filled control dot." },
+  { tool: "annotation", label: "Frame/Slice", shortLabel: "Mark", description: "Drag for a frame or click for a slice." },
+  { tool: "controlDot", label: "Control dot", shortLabel: "Ctrl", description: "Place a filled or open control dot." },
   { tool: "targetPlus", label: "Target plus", shortLabel: "Targ", description: "Place a target plus sign." },
   { tool: "swapX", label: "Swap X", shortLabel: "Swap", description: "Place a swap endpoint marker." }
 ];
@@ -14,9 +15,6 @@ const TOOL_LABELS: Array<{ tool: ToolType; label: string; shortLabel: string; de
 interface PaletteProps {
   activeTool: ToolType;
   onSelectTool: (tool: ToolType) => void;
-  onStartDrag: (tool: ItemType, clientX: number, clientY: number) => void;
-  onDragMove: (clientX: number, clientY: number) => void;
-  onEndDrag: (tool: ItemType, clientX: number, clientY: number) => void;
 }
 
 function ToolPreview({ tool }: { tool: ToolType }): JSX.Element {
@@ -55,21 +53,24 @@ function ToolPreview({ tool }: { tool: ToolType }): JSX.Element {
     );
   }
 
-  if (tool === "verticalConnector") {
+  if (tool === "annotation") {
     return (
       <svg className="palette-preview-svg" viewBox="0 0 40 40" aria-hidden="true">
-        <line x1="8" y1="12" x2="32" y2="12" className="palette-preview-wire" />
-        <line x1="8" y1="28" x2="32" y2="28" className="palette-preview-wire" />
-        <line x1="20" y1="12" x2="20" y2="28" className="palette-preview-stroke" />
+        <rect x="7" y="10" width="18" height="16" rx="3" className="palette-preview-dashed" />
+        <line x1="30" y1="7" x2="30" y2="33" className="palette-preview-stroke palette-preview-soft" />
+        <text x="30" y="11" textAnchor="middle" className="palette-preview-text palette-preview-mini">S</text>
       </svg>
     );
   }
 
-  if (tool === "horizontalSegment") {
+  if (tool === "pencil") {
     return (
-      <svg className="palette-preview-svg" viewBox="0 0 40 40" aria-hidden="true">
-        <line x1="7" y1="20" x2="33" y2="20" className="palette-preview-stroke palette-preview-strong" />
-      </svg>
+      <img
+        src={calygraphicPenIcon}
+        className="palette-preview-svg palette-preview-image"
+        alt=""
+        aria-hidden="true"
+      />
     );
   }
 
@@ -104,35 +105,8 @@ function ToolPreview({ tool }: { tool: ToolType }): JSX.Element {
 
 export function Palette({
   activeTool,
-  onSelectTool,
-  onStartDrag,
-  onDragMove,
-  onEndDrag
+  onSelectTool
 }: PaletteProps): JSX.Element {
-  function beginToolDrag(tool: ToolType, clientX: number, clientY: number): void {
-    onSelectTool(tool);
-    if (tool === "select") {
-      return;
-    }
-
-    onStartDrag(tool, clientX, clientY);
-
-    const handlePointerMove = (event: PointerEvent) => {
-      onDragMove(event.clientX, event.clientY);
-    };
-
-    const finishDrag = (event: PointerEvent) => {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", finishDrag);
-      window.removeEventListener("pointercancel", finishDrag);
-      onEndDrag(tool, event.clientX, event.clientY);
-    };
-
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", finishDrag);
-    window.addEventListener("pointercancel", finishDrag);
-  }
-
   return (
     <aside className="panel palette-panel" aria-label="Palette">
       <div className="panel-heading">
@@ -145,20 +119,12 @@ export function Palette({
             key={tool}
             type="button"
             onClick={() => onSelectTool(tool)}
-            onPointerDown={(event) => {
-              if (event.button !== 0) {
-                return;
-              }
-
-              event.preventDefault();
-              beginToolDrag(tool, event.clientX, event.clientY);
-            }}
             className={`palette-button ${activeTool === tool ? "is-active" : ""}`}
             aria-pressed={activeTool === tool}
             aria-label={label}
             title={`${label} — ${description}`}
           >
-            <span className="palette-preview" aria-hidden="true">
+            <span className={`palette-preview palette-preview-${tool}`} aria-hidden="true">
               <ToolPreview tool={tool} />
             </span>
             <span className="palette-label">{shortLabel}</span>

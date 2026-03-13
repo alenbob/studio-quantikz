@@ -1,14 +1,23 @@
 export type ToolType =
   | "select"
+  | "pencil"
   | "gate"
   | "meter"
+  | "annotation"
+  | "controlDot"
+  | "targetPlus"
+  | "swapX";
+
+export type ItemType =
+  | "gate"
+  | "meter"
+  | "frame"
+  | "slice"
   | "verticalConnector"
   | "horizontalSegment"
   | "controlDot"
   | "targetPlus"
   | "swapX";
-
-export type ItemType = Exclude<ToolType, "select">;
 
 export interface GridPoint {
   row: number;
@@ -41,9 +50,15 @@ interface BaseItem {
   color?: string | null;
 }
 
+export type WireLabelBracket = "none" | "brace" | "bracket" | "paren";
+
 export interface WireLabel {
   left: string;
   right: string;
+  leftSpan?: number;
+  rightSpan?: number;
+  leftBracket?: WireLabelBracket;
+  rightBracket?: WireLabelBracket;
 }
 
 export interface CircuitLayout {
@@ -62,25 +77,48 @@ export interface GateItem extends BaseItem {
 export interface MeterItem extends BaseItem {
   type: "meter";
   point: GridPoint;
+  span: Span;
+}
+
+export interface FrameItem extends BaseItem {
+  type: "frame";
+  point: GridPoint;
+  span: Span;
+  label: string;
+  rounded: boolean;
+  dashed: boolean;
+  background: boolean;
+  innerXSepPt: number;
+}
+
+export interface SliceItem extends BaseItem {
+  type: "slice";
+  point: GridPoint;
+  label: string;
 }
 
 export interface VerticalConnectorItem extends BaseItem {
   type: "verticalConnector";
   point: GridPoint;
   length: number;
+  wireType: WireType;
 }
 
 export type HorizontalSegmentMode = "present" | "absent";
+export type WireType = "quantum" | "classical";
+export type ControlState = "filled" | "open";
 
 export interface HorizontalSegmentItem extends BaseItem {
   type: "horizontalSegment";
   point: GridPoint;
   mode: HorizontalSegmentMode;
+  wireType: WireType;
 }
 
 export interface ControlDotItem extends BaseItem {
   type: "controlDot";
   point: GridPoint;
+  controlState?: ControlState;
 }
 
 export interface TargetPlusItem extends BaseItem {
@@ -96,6 +134,8 @@ export interface SwapXItem extends BaseItem {
 export type CircuitItem =
   | GateItem
   | MeterItem
+  | FrameItem
+  | SliceItem
   | VerticalConnectorItem
   | HorizontalSegmentItem
   | ControlDotItem
@@ -125,20 +165,39 @@ export interface ClipboardGateItem extends ClipboardBaseItem {
 
 export interface ClipboardMeterItem extends ClipboardBaseItem {
   type: "meter";
+  span: Span;
+}
+
+export interface ClipboardFrameItem extends ClipboardBaseItem {
+  type: "frame";
+  span: Span;
+  label: string;
+  rounded: boolean;
+  dashed: boolean;
+  background: boolean;
+  innerXSepPt: number;
+}
+
+export interface ClipboardSliceItem extends ClipboardBaseItem {
+  type: "slice";
+  label: string;
 }
 
 export interface ClipboardVerticalConnectorItem extends ClipboardBaseItem {
   type: "verticalConnector";
   length: number;
+  wireType: WireType;
 }
 
 export interface ClipboardHorizontalSegmentItem extends ClipboardBaseItem {
   type: "horizontalSegment";
   mode: HorizontalSegmentMode;
+  wireType: WireType;
 }
 
 export interface ClipboardControlDotItem extends ClipboardBaseItem {
   type: "controlDot";
+  controlState?: ControlState;
 }
 
 export interface ClipboardTargetPlusItem extends ClipboardBaseItem {
@@ -152,6 +211,8 @@ export interface ClipboardSwapXItem extends ClipboardBaseItem {
 export type ClipboardItem =
   | ClipboardGateItem
   | ClipboardMeterItem
+  | ClipboardFrameItem
+  | ClipboardSliceItem
   | ClipboardVerticalConnectorItem
   | ClipboardHorizontalSegmentItem
   | ClipboardControlDotItem
@@ -169,6 +230,8 @@ export interface EditorState {
   layout: CircuitLayout;
   items: CircuitItem[];
   wireMask: WireMask;
+  wireTypes: WireType[];
+  autoWireNewGrid: boolean;
   horizontalSegmentsUnlocked: boolean;
   wireLabels: WireLabel[];
   selectedItemIds: string[];
@@ -188,5 +251,6 @@ export interface ImportedCircuit {
   steps: number;
   layout: CircuitLayout;
   items: CircuitItem[];
+  wireTypes: WireType[];
   wireLabels: WireLabel[];
 }

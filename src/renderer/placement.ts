@@ -1,8 +1,17 @@
-import { DEFAULT_CIRCUIT_LAYOUT, getColumnWidth, getRowHeight, GRID_LEFT, GRID_TOP } from "./layout";
-import type { BoardMetrics, EditorState, PlacementTarget, ToolType } from "./types";
+import {
+  DEFAULT_CIRCUIT_LAYOUT,
+  getColumnMetrics,
+  getColumnRightX,
+  getIncomingSegmentRange,
+  getRowHeight,
+  getRowY,
+  GRID_LEFT,
+  GRID_TOP
+} from "./layout";
+import type { BoardMetrics, EditorState, ItemType, PlacementTarget, ToolType } from "./types";
 
-export function canPlaceCellToolAtRow(tool: ToolType, row: number, qubits: number): boolean {
-  if (tool === "verticalConnector") {
+export function canPlaceCellToolAtRow(tool: ToolType | ItemType, row: number, qubits: number): boolean {
+  if (tool === "verticalConnector" || tool === "pencil") {
     return row >= 0 && row < qubits - 1;
   }
 
@@ -16,23 +25,48 @@ export function segmentColumnFromX(contentX: number, steps: number): number {
 export function segmentColumnFromXWithLayout(
   contentX: number,
   steps: number,
-  layout: EditorState["layout"]
+  layout: EditorState["layout"],
+  metrics = getColumnMetrics(steps, [], layout)
 ): number {
-  const columnWidth = getColumnWidth(layout);
+  for (let col = 0; col <= steps; col += 1) {
+    const [x1, x2] = getIncomingSegmentRange(col, steps, layout, metrics);
+    if (contentX >= x1 && contentX <= x2) {
+      return col;
+    }
+  }
 
-  if (contentX <= GRID_LEFT + (columnWidth / 2)) {
+  if (contentX <= GRID_LEFT) {
     return 0;
   }
 
-  const segment = Math.floor((contentX - (GRID_LEFT + (columnWidth / 2))) / columnWidth) + 1;
-  return Math.max(0, Math.min(steps, segment));
+  return steps;
+}
+
+function cellColumnFromXWithLayout(
+  contentX: number,
+  steps: number,
+  layout: EditorState["layout"],
+  metrics = getColumnMetrics(steps, [], layout)
+): number | null {
+  if (steps <= 0 || contentX < GRID_LEFT) {
+    return null;
+  }
+
+  for (let col = 0; col < steps; col += 1) {
+    const rightX = getColumnRightX(col, layout, metrics);
+    if (contentX <= rightX) {
+      return col;
+    }
+  }
+
+  return null;
 }
 
 export function placementFromViewportPoint(
   clientX: number,
   clientY: number,
   metrics: BoardMetrics,
-  tool: ToolType,
+  tool: ToolType | ItemType,
   state: EditorState
 ): PlacementTarget | null {
   const isInsideBoard =
@@ -48,8 +82,26 @@ export function placementFromViewportPoint(
   const contentX = clientX - metrics.left + metrics.scrollLeft;
   const contentY = clientY - metrics.top + metrics.scrollTop;
   const rowHeight = getRowHeight(state.layout);
-  const columnWidth = getColumnWidth(state.layout);
+  const columnMetrics = getColumnMetrics(state.steps, state.items, state.layout);
   const row = Math.floor((contentY - (GRID_TOP - (rowHeight / 2))) / rowHeight);
+
+  if (tool === "pencil") {
+    const nearestRow = Math.round((contentY - GRID_TOP) / rowHeight);
+    const nearestWireY = getRowY(Math.max(0, Math.min(state.qubits - 1, nearestRow)), state.layout);
+    const distanceToNearestWire = Math.abs(contentY - nearestWireY);
+
+    if (distanceToNearestWire <= 14) {
+      if (nearestRow < 0 || nearestRow >= state.qubits) {
+        return null;
+      }
+
+      return {
+        kind: "segment",
+        row: nearestRow,
+        col: segmentColumnFromXWithLayout(contentX, state.steps, state.layout, columnMetrics)
+      };
+    }
+  }
 
   if (!canPlaceCellToolAtRow(tool, row, state.qubits) && tool !== "horizontalSegment") {
     return null;
@@ -60,11 +112,15 @@ export function placementFromViewportPoint(
       return null;
     }
 
-    return { kind: "segment", row, col: segmentColumnFromXWithLayout(contentX, state.steps, state.layout) };
+    return {
+      kind: "segment",
+      row,
+      col: segmentColumnFromXWithLayout(contentX, state.steps, state.layout, columnMetrics)
+    };
   }
 
-  const col = Math.floor((contentX - GRID_LEFT) / columnWidth);
-  if (col < 0 || col >= state.steps) {
+  const col = cellColumnFromXWithLayout(contentX, state.steps, state.layout, columnMetrics);
+  if (col === null || col < 0 || col >= state.steps) {
     return null;
   }
 

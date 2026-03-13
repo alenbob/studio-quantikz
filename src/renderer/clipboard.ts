@@ -47,24 +47,45 @@ export function buildClipboard(items: CircuitItem[]): CircuitClipboard | null {
       case "meter":
         return {
           ...base,
-          type: "meter"
+          type: "meter",
+          span: item.span
+        };
+      case "frame":
+        return {
+          ...base,
+          type: "frame",
+          span: item.span,
+          label: item.label,
+          rounded: item.rounded,
+          dashed: item.dashed,
+          background: item.background,
+          innerXSepPt: item.innerXSepPt
+        };
+      case "slice":
+        return {
+          ...base,
+          type: "slice",
+          label: item.label
         };
       case "verticalConnector":
         return {
           ...base,
           type: "verticalConnector",
-          length: item.length
+          length: item.length,
+          wireType: item.wireType
         };
       case "horizontalSegment":
         return {
           ...base,
           type: "horizontalSegment",
-          mode: item.mode
+          mode: item.mode,
+          wireType: item.wireType
         };
       case "controlDot":
         return {
           ...base,
-          type: "controlDot"
+          type: "controlDot",
+          controlState: item.controlState ?? "filled"
         };
       case "targetPlus":
         return {
@@ -113,6 +134,26 @@ export function instantiateClipboardItems(
         return {
           type: "meter",
           point,
+          span: item.span,
+          color: item.color ?? null
+        };
+      case "frame":
+        return {
+          type: "frame",
+          point,
+          span: item.span,
+          label: item.label,
+          rounded: item.rounded,
+          dashed: item.dashed,
+          background: item.background,
+          innerXSepPt: item.innerXSepPt,
+          color: item.color ?? null
+        };
+      case "slice":
+        return {
+          type: "slice",
+          point,
+          label: item.label,
           color: item.color ?? null
         };
       case "verticalConnector":
@@ -120,6 +161,7 @@ export function instantiateClipboardItems(
           type: "verticalConnector",
           point,
           length: item.length,
+          wireType: item.wireType,
           color: item.color ?? null
         };
       case "horizontalSegment":
@@ -127,12 +169,14 @@ export function instantiateClipboardItems(
           type: "horizontalSegment",
           point,
           mode: item.mode,
+          wireType: item.wireType,
           color: item.color ?? null
         };
       case "controlDot":
         return {
           type: "controlDot",
           point,
+          controlState: item.controlState ?? "filled",
           color: item.color ?? null
         };
       case "targetPlus":
@@ -168,7 +212,22 @@ function fitsGrid(item: InstantiatedItem, state: EditorState): boolean {
       return (
         item.point.row >= 0 &&
         item.point.col >= 0 &&
+        item.point.col < state.steps &&
+        item.point.row + item.span.rows <= state.qubits
+      );
+    case "frame":
+      return (
+        item.point.row >= 0 &&
+        item.point.col >= 0 &&
+        item.point.col < state.steps &&
+        item.point.row + item.span.rows <= state.qubits &&
+        item.point.col + item.span.cols <= state.steps
+      );
+    case "slice":
+      return (
+        item.point.row >= 0 &&
         item.point.row < state.qubits &&
+        item.point.col >= 0 &&
         item.point.col < state.steps
       );
     case "verticalConnector":

@@ -10,6 +10,8 @@ function makeState(overrides: Partial<EditorState>): EditorState {
     layout: { rowSepCm: 0.9, columnSepCm: 0.7 },
     items: [],
     wireMask: {},
+    wireTypes: Array.from({ length: 3 }, () => "quantum"),
+    autoWireNewGrid: true,
     horizontalSegmentsUnlocked: false,
     wireLabels: Array.from({ length: 3 }, () => ({ left: "", right: "" })),
     selectedItemIds: [],
@@ -42,7 +44,7 @@ describe("validateCircuit", () => {
     expect(issues.some((entry) => entry.message.includes("share a cell"))).toBe(true);
   });
 
-  it("rejects grid shrink when items would fall outside bounds", () => {
+  it("allows grid shrink and removes objects that no longer fit", () => {
     const state = {
       ...initialState,
       qubits: 3,
@@ -65,8 +67,9 @@ describe("validateCircuit", () => {
       value: 3
     });
 
-    expect(next.steps).toBe(4);
-    expect(next.uiMessage).toContain("Cannot reduce steps");
+    expect(next.steps).toBe(3);
+    expect(next.items.some((item) => item.id === "gate-1")).toBe(false);
+    expect(next.uiMessage).toContain("removed 1 out-of-bounds object");
   });
 
   it("reports an invalid swap pair", () => {
@@ -74,7 +77,7 @@ describe("validateCircuit", () => {
       makeState({
         items: [
           { id: "swap-1", type: "swapX", point: { row: 0, col: 1 } },
-          { id: "line-1", type: "verticalConnector", point: { row: 0, col: 1 }, length: 2 }
+          { id: "line-1", type: "verticalConnector", point: { row: 0, col: 1 }, length: 2, wireType: "quantum" }
         ]
       })
     );
@@ -100,5 +103,21 @@ describe("validateCircuit", () => {
 
     expect(issues.some((entry) => entry.message.includes("unmatched $"))).toBe(true);
     expect(issues.some((entry) => entry.message.includes("unbalanced braces"))).toBe(true);
+  });
+
+  it("allows consecutive connector pieces in one column so stacked controls can export", () => {
+    const issues = validateCircuit(
+      makeState({
+        items: [
+          { id: "dot-1", type: "controlDot", point: { row: 0, col: 1 } },
+          { id: "dot-2", type: "controlDot", point: { row: 1, col: 1 } },
+          { id: "line-1", type: "verticalConnector", point: { row: 0, col: 1 }, length: 1, wireType: "quantum" },
+          { id: "line-2", type: "verticalConnector", point: { row: 1, col: 1 }, length: 1, wireType: "quantum" },
+          { id: "plus-1", type: "targetPlus", point: { row: 2, col: 1 } }
+        ]
+      })
+    );
+
+    expect(issues).toEqual([]);
   });
 });

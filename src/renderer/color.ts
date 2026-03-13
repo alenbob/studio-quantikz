@@ -3,14 +3,10 @@ export const DEFAULT_PRESENT_WIRE_COLOR = "#0F6A6D";
 export const DEFAULT_ABSENT_WIRE_COLOR = "#C85D2D";
 
 export const COLOR_SWATCHES = [
-  "#1F1B17",
-  "#C85D2D",
-  "#0F6A6D",
-  "#234E70",
-  "#3C6E47",
-  "#8E4A7C",
-  "#B33939",
-  "#D7A33C"
+  "#000000",
+  "#FF0000",
+  "#0000FF",
+  "#00FF00"
 ];
 
 export function normalizeHexColor(color: string | null | undefined): string | null {
