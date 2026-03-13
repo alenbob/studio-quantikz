@@ -235,6 +235,22 @@ describe("importFromQuantikz", () => {
     expect(imported.items.some((item) => item.type === "gate" && item.point.row === 0 && item.point.col === 0)).toBe(true);
   });
 
+  it("imports a right label with a matrix phantom and math delimiters", () => {
+    const code = String.raw`\begin{quantikz}[row sep={0.9cm,between origins}, column sep=0.7cm]
+ & \qw & \qw & \qw & \qw & \qw & \rstick[wires=2,braces=none]{$\left[\vphantom{\begin{matrix}.\\.\end{matrix}}\right.$} \\
+ & \qw & \qw & \qw & \qw & \qw & \\
+ & \qw & \qw & \qw & \qw & \qw &
+\end{quantikz}`;
+
+    const imported = importFromQuantikz(code);
+
+    expect(imported.qubits).toBe(3);
+    expect(imported.steps).toBe(5);
+    expect(imported.wireLabels[0].right).toBe("\\left[\\vphantom{\\begin{matrix}.\\\\.\\end{matrix}}\\right.");
+    expect(imported.wireLabels[0].rightSpan).toBe(2);
+    expect(imported.wireLabels[0].rightBracket).toBe("none");
+  });
+
   it("preserves the logical step count when a trailing wire override needs an auxiliary quantikz cell", () => {
     const exported = exportToQuantikz(
       makeState({

@@ -274,15 +274,6 @@ function meterSpanRows(meter: MeterItem): number {
   return meter.span?.rows ?? 1;
 }
 
-function labelMetadataComment(
-  side: WireLabelSide,
-  row: number,
-  span: number,
-  bracket: "none" | "brace" | "bracket" | "paren"
-): string {
-  return `% quantikzz-wirelabel:${side}:${row}:${span}:${bracket}`;
-}
-
 function bracketDelimiter(side: WireLabelSide, bracket: "bracket" | "paren"): string {
   if (bracket === "bracket") {
     return side === "left" ? "]" : "[";
@@ -673,26 +664,7 @@ export function exportToQuantikz(state: EditorState): string {
     `column sep=${formatSpacingCm(state.layout.columnSepCm)}`
   ];
 
-  const metadata = [`% quantikzz-steps: ${state.steps}`];
-
-  for (let row = 0; row < state.qubits; row += 1) {
-    for (const side of ["left", "right"] as const) {
-      if (!isWireLabelGroupStart(state.wireLabels, row, side)) {
-        continue;
-      }
-      metadata.push(
-        labelMetadataComment(
-          side,
-          row,
-          getWireLabelSpan(state.wireLabels[row], side),
-          getWireLabelBracket(state.wireLabels[row], side)
-        )
-      );
-    }
-  }
-
   return [
-    ...metadata,
     `\\begin{quantikz}[${quantikzOptions.join(", ")}]`,
     exportedRows.join(" \\\\\n"),
     "\\end{quantikz}"

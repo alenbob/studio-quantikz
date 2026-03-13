@@ -101,9 +101,9 @@ function splitTopLevel(source: string, delimiter: "&" | "\\\\"): string[] {
         braceDepth += 1;
       } else if (char === "}") {
         braceDepth = Math.max(0, braceDepth - 1);
-      } else if (char === "[") {
+      } else if (char === "[" && braceDepth === 0) {
         bracketDepth += 1;
-      } else if (char === "]") {
+      } else if (char === "]" && braceDepth === 0) {
         bracketDepth = Math.max(0, bracketDepth - 1);
       }
     }
@@ -143,9 +143,9 @@ function splitOptions(optionText: string): string[] {
         braceDepth += 1;
       } else if (char === "}") {
         braceDepth = Math.max(0, braceDepth - 1);
-      } else if (char === "[") {
+      } else if (char === "[" && braceDepth === 0) {
         bracketDepth += 1;
-      } else if (char === "]") {
+      } else if (char === "]" && braceDepth === 0) {
         bracketDepth = Math.max(0, bracketDepth - 1);
       }
     }
@@ -675,6 +675,8 @@ export function importFromQuantikz(code: string): ImportedCircuit {
   const connectorMap = new Map<string, ConnectorRef>();
   const idCounter = { value: 0 };
   let steps = 0;
+  const helperColumns: boolean[] = [];
+  const substantiveColumns: boolean[] = [];
 
   rawRows.forEach((rawRow, rowIndex) => {
     const rowCells = splitTopLevel(rawRow, "&").map((cell) => cell.trim());
@@ -716,6 +718,33 @@ export function importFromQuantikz(code: string): ImportedCircuit {
       }
 
       const commands = parseCommandSequence(cell);
+      const hasHelperCommand = commands.some((entry) => {
+        if (entry.name === "wireoverride") {
+          return true;
+        }
+
+        return entry.name === "wire" && ["l", "r"].includes(entry.options[0]?.trim() ?? "");
+      });
+      const hasSubstantiveCommand = commands.some((entry) => {
+        if (entry.name === "qw" || entry.name === "wireoverride") {
+          return false;
+        }
+
+        if (entry.name === "wire") {
+          const direction = entry.options[0]?.trim();
+          return direction !== "l" && direction !== "r";
+        }
+
+        return true;
+      });
+
+      if (hasHelperCommand) {
+        helperColumns[colIndex] = true;
+      }
+      if (hasSubstantiveCommand) {
+        substantiveColumns[colIndex] = true;
+      }
+
       const hasHorizontalWireCommand = commands.some((entry) =>
         entry.name === "wire" &&
         (entry.options[0]?.trim() === "l" || entry.options[0]?.trim() === "r")
@@ -998,9 +1027,14 @@ export function importFromQuantikz(code: string): ImportedCircuit {
     });
   });
 
+  let inferredSteps = Math.max(steps, 1);
+  while (inferredSteps > 1 && helperColumns[inferredSteps - 1] && !substantiveColumns[inferredSteps - 1]) {
+    inferredSteps -= 1;
+  }
+
   return {
     qubits: rawRows.length,
-    steps: editorStepCount ?? Math.max(steps, 1),
+    steps: editorStepCount ?? inferredSteps,
     layout,
     items,
     wireTypes,

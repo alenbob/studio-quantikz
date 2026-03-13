@@ -151,7 +151,7 @@ describe("exportToQuantikz", () => {
     expect(code).toContain("\\rstick{$\\ket{+}$}");
   });
 
-  it("exports merged wire labels with explicit span metadata", () => {
+  it("exports merged wire labels without comments", () => {
     const code = exportToQuantikz(
       makeState({
         qubits: 3,
@@ -163,7 +163,7 @@ describe("exportToQuantikz", () => {
       })
     );
 
-    expect(code).toContain("% quantikzz-wirelabel:left:0:2:brace");
+    expect(code).not.toContain("%");
     expect(code).toContain("\\lstick[wires=2,braces=right]{input}");
   });
 
