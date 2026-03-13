@@ -10,6 +10,7 @@ import type {
 
 const ITEM_LABELS: Record<CircuitItem["type"], string> = {
   gate: "Gate",
+  meter: "Meter",
   verticalConnector: "Vertical line",
   horizontalSegment: "Horizontal line",
   controlDot: "Control dot",

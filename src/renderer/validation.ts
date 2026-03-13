@@ -2,7 +2,6 @@ import type {
   CircuitItem,
   EditorState,
   ExportIssue,
-  GateItem,
   HorizontalSegmentItem,
   SwapXItem,
   VerticalConnectorItem
@@ -32,10 +31,14 @@ function swapEndpointCount(item: SwapXItem, connectors: VerticalConnectorItem[])
   }).length;
 }
 
+function gateLikeSpanRows(item: CircuitItem): number {
+  return item.type === "gate" ? item.span.rows : 1;
+}
+
 export function validateCircuit(state: EditorState): ExportIssue[] {
   const issues: ExportIssue[] = [];
   const anchors = new Map<string, CircuitItem[]>();
-  const gates = state.items.filter((item): item is GateItem => item.type === "gate");
+  const gateLikes = state.items.filter((item) => item.type === "gate" || item.type === "meter");
   const connectors = state.items.filter(
     (item): item is VerticalConnectorItem => item.type === "verticalConnector"
   );
@@ -92,17 +95,17 @@ export function validateCircuit(state: EditorState): ExportIssue[] {
   }
 
   for (const [key, items] of anchors.entries()) {
-    const gateCount = items.filter((item) => item.type === "gate").length;
+    const gateCount = items.filter((item) => item.type === "gate" || item.type === "meter").length;
     const controlCount = items.filter((item) => item.type === "controlDot").length;
     const targetCount = items.filter((item) => item.type === "targetPlus").length;
     const swapCount = items.filter((item) => item.type === "swapX").length;
 
     if (gateCount > 1) {
-      issues.push(issue(`gate-overlap-${key}`, "Only one gate can anchor in a cell."));
+      issues.push(issue(`gate-overlap-${key}`, "Only one gate-like object can anchor in a cell."));
     }
 
     if (gateCount === 1 && (controlCount > 0 || targetCount > 0 || swapCount > 0)) {
-      issues.push(issue(`mixed-anchor-${key}`, "Gates cannot share a cell with dots, targets, or swaps."));
+      issues.push(issue(`mixed-anchor-${key}`, "Gate-like objects cannot share a cell with dots, targets, or swaps."));
     }
 
     if (controlCount > 1 || targetCount > 1 || swapCount > 1) {
@@ -114,20 +117,20 @@ export function validateCircuit(state: EditorState): ExportIssue[] {
     }
   }
 
-  for (const gate of gates) {
-    for (const other of gates) {
-      if (gate.id === other.id || gate.point.col !== other.point.col) {
+  for (const gateLike of gateLikes) {
+    for (const other of gateLikes) {
+      if (gateLike.id === other.id || gateLike.point.col !== other.point.col) {
         continue;
       }
 
-      const gateStart = gate.point.row;
-      const gateEnd = gate.point.row + gate.span.rows - 1;
+      const gateStart = gateLike.point.row;
+      const gateEnd = gateLike.point.row + gateLikeSpanRows(gateLike) - 1;
       const otherStart = other.point.row;
-      const otherEnd = other.point.row + other.span.rows - 1;
+      const otherEnd = other.point.row + gateLikeSpanRows(other) - 1;
 
       const overlaps = !(gateEnd < otherStart || otherEnd < gateStart);
       if (overlaps) {
-        issues.push(issue(`gate-span-${gate.id}-${other.id}`, "Multi-qubit gate spans overlap."));
+        issues.push(issue(`gate-span-${gateLike.id}-${other.id}`, "Gate-like spans overlap in one column."));
       }
     }
   }

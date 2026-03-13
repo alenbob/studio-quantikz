@@ -10,6 +10,7 @@ function makeState(overrides: Partial<EditorState>): EditorState {
     layout: { rowSepCm: 0.9, columnSepCm: 0.7 },
     items: [],
     wireMask: {},
+    horizontalSegmentsUnlocked: false,
     wireLabels: Array.from({ length: 3 }, () => ({ left: "", right: "" })),
     selectedItemIds: [],
     activeTool: "select",
@@ -104,5 +105,18 @@ describe("importFromQuantikz", () => {
     expect(selectGate && selectGate.type === "gate" ? selectGate.label : "").toBe("\\mathrm{SELECT}");
     expect(selectGate && selectGate.type === "gate" ? selectGate.span.rows : 0).toBe(2);
     expect(imported.items.some((item) => item.type === "controlDot" && item.point.row === 0 && item.point.col === 1)).toBe(true);
+  });
+
+  it("imports a measurement object and its controlling connector", () => {
+    const code = String.raw`\begin{quantikz}
+\lstick{$\ket{0}$} & \ctrl{1} \\
+\lstick{$\ket{\psi}$} & \meter{}
+\end{quantikz}`;
+
+    const imported = importFromQuantikz(code);
+
+    expect(imported.items.some((item) => item.type === "meter" && item.point.row === 1 && item.point.col === 0)).toBe(true);
+    expect(imported.items.some((item) => item.type === "controlDot" && item.point.row === 0 && item.point.col === 0)).toBe(true);
+    expect(imported.items.some((item) => item.type === "verticalConnector" && item.point.row === 0 && item.point.col === 0 && item.length === 1)).toBe(true);
   });
 });

@@ -1,6 +1,7 @@
 export type ToolType =
   | "select"
   | "gate"
+  | "meter"
   | "verticalConnector"
   | "horizontalSegment"
   | "controlDot"
@@ -58,6 +59,11 @@ export interface GateItem extends BaseItem {
   width: number;
 }
 
+export interface MeterItem extends BaseItem {
+  type: "meter";
+  point: GridPoint;
+}
+
 export interface VerticalConnectorItem extends BaseItem {
   type: "verticalConnector";
   point: GridPoint;
@@ -89,6 +95,7 @@ export interface SwapXItem extends BaseItem {
 
 export type CircuitItem =
   | GateItem
+  | MeterItem
   | VerticalConnectorItem
   | HorizontalSegmentItem
   | ControlDotItem
@@ -116,6 +123,10 @@ export interface ClipboardGateItem extends ClipboardBaseItem {
   label: string;
 }
 
+export interface ClipboardMeterItem extends ClipboardBaseItem {
+  type: "meter";
+}
+
 export interface ClipboardVerticalConnectorItem extends ClipboardBaseItem {
   type: "verticalConnector";
   length: number;
@@ -140,6 +151,7 @@ export interface ClipboardSwapXItem extends ClipboardBaseItem {
 
 export type ClipboardItem =
   | ClipboardGateItem
+  | ClipboardMeterItem
   | ClipboardVerticalConnectorItem
   | ClipboardHorizontalSegmentItem
   | ClipboardControlDotItem
@@ -157,6 +169,7 @@ export interface EditorState {
   layout: CircuitLayout;
   items: CircuitItem[];
   wireMask: WireMask;
+  horizontalSegmentsUnlocked: boolean;
   wireLabels: WireLabel[];
   selectedItemIds: string[];
   activeTool: ToolType;

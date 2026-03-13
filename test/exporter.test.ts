@@ -9,6 +9,7 @@ function makeState(overrides: Partial<EditorState>): EditorState {
     layout: { rowSepCm: 0.9, columnSepCm: 0.7 },
     items: [],
     wireMask: {},
+    horizontalSegmentsUnlocked: false,
     wireLabels: Array.from({ length: 3 }, () => ({ left: "", right: "" })),
     selectedItemIds: [],
     activeTool: "select",
@@ -57,6 +58,22 @@ describe("exportToQuantikz", () => {
     );
 
     expect(code).toContain("\\gate[wires=2]{U}");
+  });
+
+  it("exports a measurement object", () => {
+    const code = exportToQuantikz(
+      makeState({
+        items: [
+          {
+            id: "meter-1",
+            type: "meter",
+            point: { row: 1, col: 2 }
+          }
+        ]
+      })
+    );
+
+    expect(code).toContain("\\meter{}");
   });
 
   it("exports TeX-style gate labels without forcing extra math delimiters", () => {
@@ -177,6 +194,22 @@ describe("exportToQuantikz", () => {
     expect(code).toContain("\\targ{}");
   });
 
+  it("treats a meter as a valid connector target", () => {
+    const code = exportToQuantikz(
+      makeState({
+        items: [
+          { id: "dot-1", type: "controlDot", point: { row: 0, col: 1 } },
+          { id: "line-1", type: "verticalConnector", point: { row: 0, col: 1 }, length: 1 },
+          { id: "meter-1", type: "meter", point: { row: 1, col: 1 } }
+        ]
+      })
+    );
+
+    expect(code).toContain("\\ctrl{1}");
+    expect(code).toContain("\\meter{}");
+    expect(code).not.toContain("\\wire[d][1]{q}");
+  });
+
   it("exports a swap from paired X markers", () => {
     const code = exportToQuantikz(
       makeState({
@@ -202,6 +235,36 @@ describe("exportToQuantikz", () => {
     );
 
     expect(code).toContain("\\wire[d][2]{q}");
+  });
+
+  it("keeps a raw vertical connector between gate cells", () => {
+    const code = exportToQuantikz(
+      makeState({
+        items: [
+          {
+            id: "gate-top",
+            type: "gate",
+            point: { row: 0, col: 1 },
+            span: { rows: 1, cols: 1 },
+            label: "A",
+            width: 40
+          },
+          {
+            id: "gate-bottom",
+            type: "gate",
+            point: { row: 1, col: 1 },
+            span: { rows: 1, cols: 1 },
+            label: "B",
+            width: 40
+          },
+          { id: "line-1", type: "verticalConnector", point: { row: 0, col: 1 }, length: 1 }
+        ]
+      })
+    );
+
+    expect(code).toContain("\\gate{A}");
+    expect(code).toContain("\\gate{B}");
+    expect(code).toContain("\\wire[d][1]{q}");
   });
 
   it("exports right and left corner shorthand through wire overrides", () => {

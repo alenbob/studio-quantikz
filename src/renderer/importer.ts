@@ -6,6 +6,7 @@ import type {
   GateItem,
   HorizontalSegmentItem,
   ImportedCircuit,
+  MeterItem,
   WireLabel
 } from "./types";
 
@@ -205,13 +206,13 @@ function parseCommandSequence(source: string): ParsedCommand[] {
       args.push(arg);
       cursor = skipWhitespace(source, nextCursor);
 
-      if (name !== "wire" && name !== "gate" && name !== "ctrl" && name !== "swap" &&
+      if (name !== "wire" && name !== "gate" && name !== "meter" && name !== "ctrl" && name !== "swap" &&
           name !== "lstick" && name !== "rstick" && name !== "control" && name !== "targ" &&
           name !== "targX" && name !== "wireoverride") {
         break;
       }
 
-      if ((name === "gate" || name === "ctrl" || name === "swap" || name === "lstick" || name === "rstick" ||
+      if ((name === "gate" || name === "meter" || name === "ctrl" || name === "swap" || name === "lstick" || name === "rstick" ||
           name === "wireoverride") && args.length >= 1) {
         break;
       }
@@ -424,6 +425,16 @@ export function importFromQuantikz(code: string): ImportedCircuit {
             items.push(gate);
             break;
           }
+          case "meter": {
+            const meter: MeterItem = {
+              id: nextId("meter", idCounter),
+              type: "meter",
+              point: { row: rowIndex, col: colIndex },
+              color
+            };
+            items.push(meter);
+            break;
+          }
           case "ctrl": {
             const offset = Number(command.args[0] ?? "0");
             if (!Number.isFinite(offset)) {
@@ -524,7 +535,7 @@ export function importFromQuantikz(code: string): ImportedCircuit {
 
   const gateTargetsByColumn = new Map<number, Set<number>>();
   for (const item of items) {
-    if (item.type !== "gate" && item.type !== "targetPlus") {
+    if (item.type !== "gate" && item.type !== "meter" && item.type !== "targetPlus") {
       continue;
     }
 

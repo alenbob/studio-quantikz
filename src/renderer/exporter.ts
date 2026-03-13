@@ -4,6 +4,7 @@ import type {
   EditorState,
   GateItem,
   HorizontalSegmentItem,
+  MeterItem,
   SwapXItem,
   TargetPlusItem,
   VerticalConnectorItem
@@ -58,6 +59,16 @@ function gateStyleOptions(color?: string | null): string {
   return wrapOptionBlock(options);
 }
 
+function meterStyleOptions(color?: string | null): string {
+  if (!color) {
+    return "";
+  }
+
+  const tikzColor = toTikzRgb(color);
+  const fillColor = toTikzRgb(mixHexWithWhite(color, 0.9));
+  return `style={draw=${tikzColor},text=${tikzColor},fill=${fillColor}}`;
+}
+
 function commandColorOptions(
   color?: string | null,
   options: { fill?: boolean; wire?: boolean } = {}
@@ -108,6 +119,8 @@ export function exportToQuantikz(state: EditorState): string {
   const suppressedCells = new Set<string>();
 
   const gates = state.items.filter((item): item is GateItem => item.type === "gate");
+  const meters = state.items.filter((item): item is MeterItem => item.type === "meter");
+  const gateLikes = [...gates, ...meters];
   const controls = state.items.filter((item): item is ControlDotItem => item.type === "controlDot");
   const targets = state.items.filter((item): item is TargetPlusItem => item.type === "targetPlus");
   const swaps = state.items.filter((item): item is SwapXItem => item.type === "swapX");
@@ -139,6 +152,14 @@ export function exportToQuantikz(state: EditorState): string {
     }
   }
 
+  for (const meter of meters) {
+    const optionBlock = meterStyleOptions(meter.color);
+    cells[meter.point.row][meter.point.col].push(
+      optionBlock ? `\\meter[${optionBlock}]{}`
+        : "\\meter{}"
+    );
+  }
+
   for (const connector of connectors) {
     const [start, end] = rangeForConnector(connector);
     const column = connector.point.col;
@@ -156,9 +177,9 @@ export function exportToQuantikz(state: EditorState): string {
       .filter((item) => item.point.row === start || item.point.row === end)
       .sort((left, right) => left.point.row - right.point.row);
 
-    const connectorGateTargets = gates.filter(
+    const connectorGateTargets = gateLikes.filter(
       (gate) => gate.point.col === column && gate.point.row >= start && gate.point.row <= end
-    );
+    ).sort((left, right) => left.point.row - right.point.row);
 
     if (connectorSwaps.length === 2) {
       const swapStartOptions = commandColorOptions(connectorSwaps[0].color ?? connector.color, { wire: true });
@@ -174,7 +195,9 @@ export function exportToQuantikz(state: EditorState): string {
       continue;
     }
 
-    const targetRow = connectorTargets[0]?.point.row ?? connectorGateTargets[0]?.point.row;
+    const targetRow =
+      connectorTargets[0]?.point.row ??
+      (connectorControls.length > 0 ? connectorGateTargets[0]?.point.row : undefined);
     if (typeof targetRow === "number") {
       for (const control of connectorControls) {
         const controlOptions = commandColorOptions(control.color ?? connector.color, {

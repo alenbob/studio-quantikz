@@ -393,6 +393,7 @@ select {
 .grid-hit-segment {
   fill: transparent;
   cursor: crosshair;
+  pointer-events: all;
 }
 
 .hover-indicator {
@@ -490,6 +491,14 @@ select {
 .gate-label-math .katex {
   font-size: 1.05rem;
   line-height: 1;
+}
+
+.meter-glyph {
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
 }
 
 .wire-side-label {

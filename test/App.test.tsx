@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import App from "../src/renderer/App";
+import { DEFAULT_CIRCUIT_LAYOUT, getCellCenterX, getGridHeight, getGridWidth, getRowY } from "../src/renderer/layout";
 
 describe("App smoke tests", () => {
   it("places a gate onto the snapped grid and exports it", async () => {
@@ -40,6 +41,20 @@ describe("App smoke tests", () => {
 
     expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain(
       "\\gate[wires=2]{LongerLabel}"
+    );
+  });
+
+  it("places a meter onto the snapped grid and exports it", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+
+    await user.click(screen.getByRole("button", { name: /meter/i }));
+    await user.click(screen.getByTestId("grid-cell-1-1"));
+    await user.click(screen.getByRole("button", { name: /convert to quantikz/i }));
+
+    expect(container.querySelector('rect[data-kind="meter-rect"]')).toBeTruthy();
+    expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain(
+      "\\meter{}"
     );
   });
 
@@ -134,7 +149,7 @@ describe("App smoke tests", () => {
     await user.click(screen.getByRole("button", { name: /gate/i }));
     await user.click(screen.getByTestId("grid-cell-0-0"));
     await user.click(screen.getByRole("button", { name: /back to tools/i }));
-    await user.click(screen.getByRole("button", { name: /horizontal line/i }));
+    await user.click(screen.getByRole("button", { name: /^Horizontal line$/i }));
     await user.click(screen.getByTestId("segment-slot-0-0"));
     fireEvent.change(screen.getByLabelText(/segment mode/i), { target: { value: "present" } });
 
@@ -183,5 +198,64 @@ describe("App smoke tests", () => {
     fireEvent.pointerDown(existingGate, { button: 0 });
 
     expect(container.querySelectorAll('rect[data-kind="gate-rect"]')).toHaveLength(2);
+  });
+
+  it("pastes onto an empty area of the workspace when clicking the board", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+    const board = container.querySelector(".workspace-board") as HTMLDivElement;
+    const workbench = screen.getByLabelText(/circuit workbench/i);
+    const width = getGridWidth(5, DEFAULT_CIRCUIT_LAYOUT);
+    const height = getGridHeight(3, DEFAULT_CIRCUIT_LAYOUT);
+
+    vi.spyOn(board, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: width,
+      bottom: height,
+      width,
+      height,
+      toJSON: () => ({})
+    } as DOMRect);
+
+    await user.click(screen.getByRole("button", { name: /gate/i }));
+    await user.click(screen.getByTestId("grid-cell-0-0"));
+    await user.click(screen.getByRole("button", { name: /copy selected/i }));
+    await user.click(screen.getByRole("button", { name: /^paste$/i }));
+
+    fireEvent.pointerMove(workbench, {
+      clientX: getCellCenterX(2, DEFAULT_CIRCUIT_LAYOUT),
+      clientY: getRowY(1, DEFAULT_CIRCUIT_LAYOUT)
+    });
+    fireEvent.click(workbench, {
+      clientX: getCellCenterX(2, DEFAULT_CIRCUIT_LAYOUT),
+      clientY: getRowY(1, DEFAULT_CIRCUIT_LAYOUT)
+    });
+
+    expect(container.querySelectorAll('rect[data-kind="gate-rect"]')).toHaveLength(2);
+  });
+
+  it("turns deleted unlocked horizontal lines into wire overrides", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+
+    await user.click(screen.getByRole("button", { name: /unlock horizontal lines/i }));
+    await user.click(screen.getByRole("button", { name: /select\/move/i }));
+    await user.click(screen.getByTestId("segment-slot-0-0"));
+
+    const horizontalLine = container.querySelector(".present-override") as SVGLineElement;
+    expect(horizontalLine).toBeTruthy();
+    expect(screen.getByLabelText(/segment mode/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /copy selected/i })).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: /delete selected/i }));
+    await user.click(screen.getByRole("button", { name: /convert to quantikz/i }));
+
+    expect(container.querySelector(".absent-override")).toBeTruthy();
+    expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain(
+      "\\wireoverride{n}"
+    );
   });
 });

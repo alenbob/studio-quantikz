@@ -23,7 +23,9 @@ import type {
 
 type Action =
   | { type: "setTool"; tool: ToolType }
+  | { type: "setHorizontalSegmentsUnlocked"; unlocked: boolean }
   | { type: "setSelectedIds"; itemIds: string[] }
+  | { type: "selectOrCreateHorizontalSegment"; row: number; col: number; additive?: boolean }
   | { type: "addItem"; tool: ItemType; placement: PlacementTarget }
   | { type: "moveItem"; itemId: string; placement: PlacementTarget }
   | { type: "pasteClipboard"; clipboard: CircuitClipboard; anchor: { row: number; col: number } }
@@ -64,6 +66,15 @@ function deriveWireMask(items: CircuitItem[]): EditorState["wireMask"] {
   }
 
   return mask;
+}
+
+function getHorizontalSegmentAt(items: CircuitItem[], row: number, col: number): HorizontalSegmentItem | null {
+  return items.find(
+    (item): item is HorizontalSegmentItem =>
+      item.type === "horizontalSegment" &&
+      item.point.row === row &&
+      item.point.col === col
+  ) ?? null;
 }
 
 function resetExport(state: EditorState): EditorState {
@@ -122,6 +133,13 @@ function createItem(tool: ItemType, placement: PlacementTarget): CircuitItem | n
         span: { rows: 1, cols: 1 },
         label: "U",
         width: measureGateWidth("U"),
+        color: null
+      };
+    case "meter":
+      return {
+        id: createId(tool),
+        type: "meter",
+        point,
         color: null
       };
     case "verticalConnector":
@@ -191,6 +209,16 @@ function moveItemToPlacement(item: CircuitItem, placement: PlacementTarget, stat
     };
   }
 
+  if (item.type === "meter") {
+    return {
+      ...item,
+      point: {
+        row: clamp(placement.row, 0, state.qubits - 1),
+        col: clamp(placement.col, 0, state.steps - 1)
+      }
+    };
+  }
+
   if (item.type === "verticalConnector") {
     return {
       ...item,
@@ -218,6 +246,10 @@ function computeOccupiedExtents(items: CircuitItem[]): { maxRow: number; maxStep
     switch (item.type) {
       case "gate":
         maxRow = Math.max(maxRow, item.point.row + item.span.rows - 1);
+        maxStep = Math.max(maxStep, item.point.col + 1);
+        break;
+      case "meter":
+        maxRow = Math.max(maxRow, item.point.row);
         maxStep = Math.max(maxStep, item.point.col + 1);
         break;
       case "verticalConnector":
@@ -256,6 +288,7 @@ export const initialState: EditorState = {
   layout: DEFAULT_CIRCUIT_LAYOUT,
   items: [],
   wireMask: {},
+  horizontalSegmentsUnlocked: false,
   wireLabels: createWireLabels(3),
   selectedItemIds: [],
   activeTool: "select",
@@ -272,11 +305,60 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
         activeTool: action.tool,
         uiMessage: null
       };
+    case "setHorizontalSegmentsUnlocked": {
+      const horizontalSegmentIds = new Set(
+        state.items
+          .filter((item) => item.type === "horizontalSegment")
+          .map((item) => item.id)
+      );
+
+      return {
+        ...state,
+        horizontalSegmentsUnlocked: action.unlocked,
+        selectedItemIds: action.unlocked
+          ? state.selectedItemIds
+          : state.selectedItemIds.filter((itemId) => !horizontalSegmentIds.has(itemId)),
+        uiMessage: null
+      };
+    }
     case "setSelectedIds":
       return {
         ...state,
         selectedItemIds: [...new Set(action.itemIds)]
       };
+    case "selectOrCreateHorizontalSegment": {
+      const existing = getHorizontalSegmentAt(state.items, action.row, action.col);
+      const nextSelectedIds = action.additive
+        ? [...new Set([...(state.selectedItemIds ?? []), existing?.id].filter(Boolean) as string[])]
+        : existing
+          ? [existing.id]
+          : [];
+
+      if (existing) {
+        return {
+          ...state,
+          selectedItemIds: nextSelectedIds,
+          uiMessage: null
+        };
+      }
+
+      const newItem: HorizontalSegmentItem = {
+        id: createId("horizontalSegment"),
+        type: "horizontalSegment",
+        point: { row: action.row, col: action.col },
+        mode: "present",
+        color: null
+      };
+
+      return withItems(
+        {
+          ...state,
+          uiMessage: null
+        },
+        [...state.items, newItem],
+        action.additive ? [...new Set([...state.selectedItemIds, newItem.id])] : [newItem.id]
+      );
+    }
     case "addItem": {
       const newItem = createItem(action.tool, action.placement);
       if (!newItem) {
@@ -484,12 +566,28 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
       }
 
       const selectedIds = new Set(state.selectedItemIds);
+      const items = state.items.flatMap((item) => {
+        if (!selectedIds.has(item.id)) {
+          return [item];
+        }
+
+        if (item.type === "horizontalSegment") {
+          return [{
+            ...item,
+            mode: "absent",
+            color: null
+          }];
+        }
+
+        return [];
+      });
+
       return withItems(
         {
           ...state,
           uiMessage: null
         },
-        state.items.filter((item) => !selectedIds.has(item.id)),
+        items,
         []
       );
     }
@@ -524,6 +622,7 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
         layout: action.imported.layout,
         items: action.imported.items,
         wireMask: deriveWireMask(action.imported.items),
+        horizontalSegmentsUnlocked: false,
         wireLabels: resizeWireLabels(action.imported.wireLabels, action.imported.qubits),
         selectedItemIds: [],
         activeTool: "select",

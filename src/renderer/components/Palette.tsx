@@ -3,6 +3,7 @@ import type { ItemType, ToolType } from "../types";
 const TOOL_LABELS: Array<{ tool: ToolType; label: string; shortLabel: string; description: string }> = [
   { tool: "select", label: "Select/Move", shortLabel: "Sel", description: "Select and drag existing items." },
   { tool: "gate", label: "Gate", shortLabel: "Gate", description: "Place an auto-sized gate box." },
+  { tool: "meter", label: "Meter", shortLabel: "Meas", description: "Place a measurement box." },
   { tool: "verticalConnector", label: "Vertical line", shortLabel: "Vert", description: "Connect items on one column." },
   { tool: "horizontalSegment", label: "Horizontal line", shortLabel: "Horiz", description: "Edit a wire segment on a row." },
   { tool: "controlDot", label: "Control dot", shortLabel: "Ctrl", description: "Place a filled control dot." },
@@ -37,6 +38,18 @@ function ToolPreview({ tool }: { tool: ToolType }): JSX.Element {
         <line x1="4" y1="20" x2="11" y2="20" className="palette-preview-wire" />
         <rect x="11" y="11" width="18" height="18" className="palette-preview-box" />
         <text x="20" y="24" textAnchor="middle" className="palette-preview-text">U</text>
+        <line x1="29" y1="20" x2="36" y2="20" className="palette-preview-wire" />
+      </svg>
+    );
+  }
+
+  if (tool === "meter") {
+    return (
+      <svg className="palette-preview-svg" viewBox="0 0 40 40" aria-hidden="true">
+        <line x1="4" y1="20" x2="11" y2="20" className="palette-preview-wire" />
+        <rect x="11" y="11" width="18" height="18" className="palette-preview-box" />
+        <path d="M15 23Q20 15 25 19" className="palette-preview-stroke" />
+        <line x1="24" y1="16" x2="27" y2="13" className="palette-preview-stroke" />
         <line x1="29" y1="20" x2="36" y2="20" className="palette-preview-wire" />
       </svg>
     );

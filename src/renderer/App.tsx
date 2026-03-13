@@ -317,6 +317,19 @@ export default function App(): JSX.Element {
           <button
             type="button"
             className="secondary-button"
+            aria-pressed={state.horizontalSegmentsUnlocked}
+            onClick={() =>
+              dispatch({
+                type: "setHorizontalSegmentsUnlocked",
+                unlocked: !state.horizontalSegmentsUnlocked
+              })
+            }
+          >
+            {state.horizontalSegmentsUnlocked ? "Lock horizontal lines" : "Unlock horizontal lines"}
+          </button>
+          <button
+            type="button"
+            className="secondary-button"
             onClick={handleCopySelection}
             disabled={state.selectedItemIds.length === 0}
           >
@@ -387,6 +400,7 @@ export default function App(): JSX.Element {
           externalDrag={paletteDrag}
           isPasteMode={isPasteMode}
           pasteClipboard={clipboard}
+          horizontalSegmentsUnlocked={state.horizontalSegmentsUnlocked}
           onLayoutSpacingChange={(dimension, value) =>
             dispatch({ type: "updateLayoutSpacing", dimension, value })
           }
@@ -395,6 +409,9 @@ export default function App(): JSX.Element {
           }
           onPlaceItem={(tool: ItemType, placement: PlacementTarget) =>
             dispatch({ type: "addItem", tool, placement })
+          }
+          onSelectOrCreateHorizontalSegment={(row, col, additive) =>
+            dispatch({ type: "selectOrCreateHorizontalSegment", row, col, additive })
           }
           onPasteAt={handlePastePlacement}
           onMoveItem={(itemId: string, placement: PlacementTarget) =>

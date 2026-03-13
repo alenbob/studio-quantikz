@@ -10,6 +10,7 @@ function makeState(overrides: Partial<EditorState>): EditorState {
     layout: { rowSepCm: 0.9, columnSepCm: 0.7 },
     items: [],
     wireMask: {},
+    horizontalSegmentsUnlocked: false,
     wireLabels: Array.from({ length: 3 }, () => ({ left: "", right: "" })),
     selectedItemIds: [],
     activeTool: "select",

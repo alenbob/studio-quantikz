@@ -44,6 +44,11 @@ export function buildClipboard(items: CircuitItem[]): CircuitClipboard | null {
           span: item.span,
           label: item.label
         };
+      case "meter":
+        return {
+          ...base,
+          type: "meter"
+        };
       case "verticalConnector":
         return {
           ...base,
@@ -104,6 +109,12 @@ export function instantiateClipboardItems(
           width: measureGateWidth(item.label),
           color: item.color ?? null
         };
+      case "meter":
+        return {
+          type: "meter",
+          point,
+          color: item.color ?? null
+        };
       case "verticalConnector":
         return {
           type: "verticalConnector",
@@ -153,6 +164,13 @@ function fitsGrid(item: InstantiatedItem, state: EditorState): boolean {
         item.point.col < state.steps &&
         item.point.row + item.span.rows <= state.qubits
       );
+    case "meter":
+      return (
+        item.point.row >= 0 &&
+        item.point.col >= 0 &&
+        item.point.row < state.qubits &&
+        item.point.col < state.steps
+      );
     case "verticalConnector":
       return (
         item.point.row >= 0 &&
@@ -184,4 +202,3 @@ export function canPasteClipboardAt(
 ): boolean {
   return instantiateClipboardItems(clipboard, anchor).every((item) => fitsGrid(item, state));
 }
-

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { canPasteClipboardAt, instantiateClipboardItems } from "../clipboard";
 import {
   GATE_MIN_HEIGHT,
+  GATE_MIN_WIDTH,
   GRID_LEFT,
   GRID_TOP,
   LEFT_LABEL_WIDTH,
@@ -33,6 +34,7 @@ import type {
   HorizontalSegmentItem,
   ItemType,
   CircuitLayout,
+  MeterItem,
   PlacementTarget,
   ToolType,
   VerticalConnectorItem
@@ -43,9 +45,11 @@ interface WorkspaceProps {
   externalDrag: { tool: ItemType; clientX: number; clientY: number } | null;
   isPasteMode: boolean;
   pasteClipboard: CircuitClipboard | null;
+  horizontalSegmentsUnlocked: boolean;
   onLayoutSpacingChange: (dimension: "rowSepCm" | "columnSepCm", value: number) => void;
   onWireLabelChange: (row: number, side: "left" | "right", label: string) => void;
   onPlaceItem: (tool: ItemType, placement: PlacementTarget) => void;
+  onSelectOrCreateHorizontalSegment: (row: number, col: number, additive: boolean) => void;
   onPasteAt: (placement: PlacementTarget) => void;
   onMoveItem: (itemId: string, placement: PlacementTarget) => void;
   onSelectionChange: (itemIds: string[]) => void;
@@ -73,15 +77,15 @@ function gapKey(row: number, col: number): string {
   return `${row}:${col}`;
 }
 
-function isGateItem(item: CircuitItem): item is GateItem {
-  return item.type === "gate";
+function isGateItem(item: CircuitItem): item is GateItem | MeterItem {
+  return item.type === "gate" || item.type === "meter";
 }
 
 function isWireLayerItem(item: CircuitItem): item is VerticalConnectorItem | HorizontalSegmentItem {
   return item.type === "verticalConnector" || item.type === "horizontalSegment";
 }
 
-function isMarkerItem(item: CircuitItem): item is Exclude<CircuitItem, GateItem | VerticalConnectorItem | HorizontalSegmentItem> {
+function isMarkerItem(item: CircuitItem): item is Exclude<CircuitItem, GateItem | MeterItem | VerticalConnectorItem | HorizontalSegmentItem> {
   return item.type === "controlDot" || item.type === "targetPlus" || item.type === "swapX";
 }
 
@@ -133,6 +137,15 @@ function getItemBounds(item: CircuitItem, steps: number, layout: CircuitLayout):
       y,
       width: item.width,
       height: GATE_MIN_HEIGHT + ((item.span.rows - 1) * getRowHeight(layout))
+    };
+  }
+
+  if (item.type === "meter") {
+    return {
+      x: getCellCenterX(item.point.col, layout) - (GATE_MIN_WIDTH / 2),
+      y: getRowY(item.point.row, layout) - (GATE_MIN_HEIGHT / 2),
+      width: GATE_MIN_WIDTH,
+      height: GATE_MIN_HEIGHT
     };
   }
 
@@ -314,6 +327,46 @@ function renderGate(item: GateItem, isSelected: boolean, layout: CircuitLayout):
   );
 }
 
+function renderMeter(item: MeterItem, isSelected: boolean, layout: CircuitLayout): JSX.Element {
+  const x = getCellCenterX(item.point.col, layout) - (GATE_MIN_WIDTH / 2);
+  const y = getRowY(item.point.row, layout) - (GATE_MIN_HEIGHT / 2);
+  const color = getItemColor(item);
+  const needleBaseX = x + 11;
+  const needleBaseY = y + 23;
+
+  return (
+    <g>
+      <rect
+        data-kind="meter-rect"
+        data-item-id={item.id}
+        x={x}
+        y={y}
+        width={GATE_MIN_WIDTH}
+        height={GATE_MIN_HEIGHT}
+        rx={0}
+        className={`gate-rect ${isSelected ? "is-selected" : ""}`}
+        style={{
+          stroke: color,
+          fill: item.color ? mixHexWithWhite(color, 0.9) : "rgba(255, 254, 250, 1)"
+        }}
+      />
+      <path
+        d={`M ${x + 10} ${y + 22} Q ${x + 20} ${y + 10} ${x + 30} ${y + 18}`}
+        className="meter-glyph"
+        style={{ stroke: color }}
+      />
+      <line
+        x1={needleBaseX + 11}
+        y1={needleBaseY - 7}
+        x2={needleBaseX + 15}
+        y2={needleBaseY - 13}
+        className="meter-glyph"
+        style={{ stroke: color }}
+      />
+    </g>
+  );
+}
+
 function renderVerticalConnector(
   item: VerticalConnectorItem,
   isSelected: boolean,
@@ -441,9 +494,11 @@ export function Workspace({
   externalDrag,
   isPasteMode,
   pasteClipboard,
+  horizontalSegmentsUnlocked,
   onLayoutSpacingChange,
   onWireLabelChange,
   onPlaceItem,
+  onSelectOrCreateHorizontalSegment,
   onPasteAt,
   onMoveItem,
   onSelectionChange,
@@ -497,6 +552,7 @@ export function Workspace({
   const previewWireItems = useMemo(() => pastePreviewItems.filter(isWireLayerItem), [pastePreviewItems]);
   const previewGateItems = useMemo(() => pastePreviewItems.filter(isGateItem), [pastePreviewItems]);
   const previewMarkerItems = useMemo(() => pastePreviewItems.filter(isMarkerItem), [pastePreviewItems]);
+  const pastePlacementTool = getClipboardPlacementTool(pasteClipboard);
 
   useEffect(() => {
     if (editingWireLabel && editingWireLabel.row >= state.qubits) {
@@ -559,11 +615,30 @@ export function Workspace({
     onPlaceItem(tool, placement);
   }
 
+  function placePastedClipboardFromPointer(clientX: number, clientY: number): void {
+    if (!isPasteMode || !pasteClipboard) {
+      return;
+    }
+
+    const placement = hoverPlacement ?? resolvePlacement(clientX, clientY, pastePlacementTool);
+    if (!placement) {
+      return;
+    }
+
+    onPasteAt(placement);
+  }
+
+  function isSelectableItem(item: CircuitItem): boolean {
+    return horizontalSegmentsUnlocked || item.type !== "horizontalSegment";
+  }
+
   function renderInteractiveItem(item: CircuitItem): JSX.Element {
     const selected = selectionSet.has(item.id);
     const rendered =
       item.type === "gate"
         ? renderGate(item, selected, layout)
+        : item.type === "meter"
+          ? renderMeter(item, selected, layout)
         : item.type === "verticalConnector"
           ? renderVerticalConnector(item, selected, layout)
           : item.type === "horizontalSegment"
@@ -577,6 +652,10 @@ export function Workspace({
         data-testid={`item-${item.id}`}
         className="item-group"
         onPointerDown={(event) => {
+          if (!isPasteMode && state.activeTool === "select" && !isSelectableItem(item)) {
+            return;
+          }
+
           event.preventDefault();
           event.stopPropagation();
 
@@ -630,6 +709,8 @@ export function Workspace({
     const rendered =
       item.type === "gate"
         ? renderGate(item, false, layout)
+        : item.type === "meter"
+          ? renderMeter(item, false, layout)
         : item.type === "verticalConnector"
           ? renderVerticalConnector(item, false, layout)
           : item.type === "horizontalSegment"
@@ -720,16 +801,17 @@ export function Workspace({
 
     const finishSelection = (event: PointerEvent) => {
       const point = getClampedContentPoint(event.clientX, event.clientY) ?? marquee.current;
-      const rect = normalizeRect(marquee.start, point);
-      if (rect.width < 4 && rect.height < 4) {
-        onSelectionChange([]);
-      } else {
-        onSelectionChange(
-          state.items
-            .filter((item) => rectsIntersect(getItemBounds(item, state.steps, layout), rect))
-            .map((item) => item.id)
+        const rect = normalizeRect(marquee.start, point);
+        if (rect.width < 4 && rect.height < 4) {
+          onSelectionChange([]);
+        } else {
+          onSelectionChange(
+            state.items
+              .filter(isSelectableItem)
+              .filter((item) => rectsIntersect(getItemBounds(item, state.steps, layout), rect))
+              .map((item) => item.id)
         );
-      }
+        }
       setMarquee(null);
       setHoverPlacement(null);
     };
@@ -793,6 +875,20 @@ export function Workspace({
       <div
         ref={boardRef}
         className="workspace-board"
+        onClickCapture={(event) => {
+          if (!isPasteMode) {
+            return;
+          }
+
+          const target = event.target;
+          if (target instanceof Element && target.closest(".item-group")) {
+            return;
+          }
+
+          placePastedClipboardFromPointer(event.clientX, event.clientY);
+          event.preventDefault();
+          event.stopPropagation();
+        }}
         onPointerDown={(event) => {
           if (event.button !== 0 || state.activeTool !== "select" || isPasteMode) {
             return;
@@ -810,7 +906,7 @@ export function Workspace({
             return;
           }
 
-          updateHoverFromPointer(event.clientX, event.clientY, getClipboardPlacementTool(pasteClipboard));
+          updateHoverFromPointer(event.clientX, event.clientY, pastePlacementTool);
         }}
         onPointerLeave={() => {
           if (!externalDrag && !draggingItemId && !marquee) {
@@ -956,9 +1052,23 @@ export function Workspace({
                   width={Math.max(x2 - x1, 12)}
                   height={28}
                   className="grid-hit-segment"
-                  onClick={() => {
+                  onPointerDown={(event) => {
+                    if (
+                      isPasteMode ||
+                      state.activeTool === "horizontalSegment" ||
+                      (state.activeTool === "select" && horizontalSegmentsUnlocked)
+                    ) {
+                      event.stopPropagation();
+                    }
+                  }}
+                  onClick={(event) => {
                     if (isPasteMode) {
                       onPasteAt({ kind: "segment", row, col });
+                      return;
+                    }
+
+                    if (state.activeTool === "select" && horizontalSegmentsUnlocked) {
+                      onSelectOrCreateHorizontalSegment(row, col, event.shiftKey || event.metaKey || event.ctrlKey);
                       return;
                     }
 
