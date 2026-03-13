@@ -69,8 +69,12 @@ function toQuantikzWireType(wireType: WireType): "q" | "c" {
   return wireType === "classical" ? "c" : "q";
 }
 
+function isHorizontalSegmentAbsent(item: HorizontalSegmentItem): boolean {
+  return item.mode === "absent" || item.autoSuppressed === true;
+}
+
 function horizontalSegmentNeedsCommand(item: HorizontalSegmentItem): boolean {
-  if (item.mode === "absent") {
+  if (isHorizontalSegmentAbsent(item)) {
     return true;
   }
 
@@ -586,7 +590,7 @@ export function exportToQuantikz(state: EditorState): string {
       continue;
     }
 
-    if (horizontal.mode === "absent") {
+    if (isHorizontalSegmentAbsent(horizontal)) {
       rowCells[horizontal.point.col].unshift("\\wireoverride{n}");
       continue;
     }

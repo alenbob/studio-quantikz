@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useReducer, useRef, useState, type FocusEvent } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState, type FocusEvent, type JSX } from "react";
 import { buildClipboard, canPasteClipboardAt } from "./clipboard";
-import { Palette } from "./components/Palette";
+import cmdIcon from "./assets/cmd.svg";
+import { Palette, TOOL_LABELS } from "./components/Palette";
 import { Inspector } from "./components/Inspector";
 import { Workspace } from "./components/Workspace";
 import { exportToQuantikz } from "./exporter";
@@ -23,6 +24,26 @@ interface HistoryState {
 }
 
 type HistoryAction = EditorAction | { type: "undo" } | { type: "redo" };
+
+const TOAST_DURATION_MS = 4000;
+
+const TOOL_SHORTCUTS = TOOL_LABELS.filter((entry): entry is (typeof TOOL_LABELS)[number] & { shortcutKey: string } =>
+  Boolean(entry.shortcutKey)
+);
+
+const TOOL_SHORTCUTS_BY_KEY = new Map<string, ToolType>(
+  TOOL_SHORTCUTS.map(({ shortcutKey, tool }) => [shortcutKey.toLowerCase(), tool])
+);
+
+const GENERAL_SHORTCUTS: Array<{ key: string; description: string }> = [
+  { key: "Cmd/Ctrl + A", description: "Select every drawable item in the circuit." },
+  { key: "Cmd/Ctrl + C", description: "Copy the current selection." },
+  { key: "Cmd/Ctrl + V", description: "Enter paste mode for the copied selection." },
+  { key: "Cmd/Ctrl + Z", description: "Undo the last circuit change." },
+  { key: "Cmd/Ctrl + Shift + Z", description: "Redo the last undone change." },
+  { key: "Delete / Backspace", description: "Delete the current selection or wire label." },
+  { key: "Escape", description: "Close the shortcuts sheet, leave paste mode, and return to select." }
+];
 
 function isUndoableAction(action: EditorAction): boolean {
   return ![
@@ -101,11 +122,18 @@ export default function App(): JSX.Element {
     future: []
   });
   const state = history.present;
+  const [gridDrafts, setGridDrafts] = useState({
+    qubits: String(initialState.qubits),
+    steps: String(initialState.steps)
+  });
   const [clipboard, setClipboard] = useState<CircuitClipboard | null>(null);
   const [isPasteMode, setPasteMode] = useState(false);
+  const [isShortcutSheetOpen, setShortcutSheetOpen] = useState(false);
+  const [toastAnimationKey, setToastAnimationKey] = useState(0);
   const [selectedWireLabel, setSelectedWireLabel] = useState<{ row: number; side: WireLabelSide } | null>(null);
   const stateRef = useRef(state);
   const clipboardRef = useRef<CircuitClipboard | null>(null);
+  const shortcutSheetOpenRef = useRef(isShortcutSheetOpen);
   const selectedWireLabelRef = useRef(selectedWireLabel);
 
   const selectedItems = useMemo<CircuitItem[]>(
@@ -127,8 +155,25 @@ export default function App(): JSX.Element {
   }, [state]);
 
   useEffect(() => {
+    setGridDrafts((currentDrafts) => {
+      const nextDrafts = {
+        qubits: String(state.qubits),
+        steps: String(state.steps)
+      };
+
+      return currentDrafts.qubits === nextDrafts.qubits && currentDrafts.steps === nextDrafts.steps
+        ? currentDrafts
+        : nextDrafts;
+    });
+  }, [state.qubits, state.steps]);
+
+  useEffect(() => {
     clipboardRef.current = clipboard;
   }, [clipboard]);
+
+  useEffect(() => {
+    shortcutSheetOpenRef.current = isShortcutSheetOpen;
+  }, [isShortcutSheetOpen]);
 
   useEffect(() => {
     selectedWireLabelRef.current = selectedWireLabel;
@@ -147,6 +192,19 @@ export default function App(): JSX.Element {
   }, [selectedWireLabel, state.qubits]);
 
   useEffect(() => {
+    if (!state.uiMessage) {
+      return;
+    }
+
+    setToastAnimationKey((currentKey) => currentKey + 1);
+    const timeoutId = window.setTimeout(() => {
+      dispatch({ type: "clearMessage" });
+    }, TOAST_DURATION_MS);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [state.uiMessage]);
+
+  useEffect(() => {
     function isEditableTarget(target: EventTarget | null): boolean {
       return (
         target instanceof HTMLInputElement ||
@@ -161,8 +219,32 @@ export default function App(): JSX.Element {
       const selectedLabel = selectedWireLabelRef.current;
       const hasSelection = hasItemSelection || selectedLabel !== null;
       const isFormElement = isEditableTarget(event.target);
+      const normalizedKey = event.key.toLowerCase();
 
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
+      if (shortcutSheetOpenRef.current) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          setShortcutSheetOpen(false);
+        }
+
+        return;
+      }
+
+      if ((event.metaKey || event.ctrlKey) && normalizedKey === "a" && !isFormElement) {
+        event.preventDefault();
+        setPasteMode(false);
+        setSelectedWireLabel(null);
+        dispatch({
+          type: "setSelectedIds",
+          itemIds: stateRef.current.items
+            .filter((item) => stateRef.current.horizontalSegmentsUnlocked || item.type !== "horizontalSegment")
+            .map((item) => item.id)
+        });
+        dispatch({ type: "setTool", tool: "select" });
+        return;
+      }
+
+      if ((event.metaKey || event.ctrlKey) && normalizedKey === "z") {
         event.preventDefault();
         dispatch({ type: event.shiftKey ? "redo" : "undo" });
         setPasteMode(false);
@@ -185,7 +267,7 @@ export default function App(): JSX.Element {
         }
       }
 
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "c" && hasSelection && !isFormElement) {
+      if ((event.metaKey || event.ctrlKey) && normalizedKey === "c" && hasSelection && !isFormElement) {
         event.preventDefault();
         const nextClipboard = buildClipboard(
           stateRef.current.items.filter((item) => stateRef.current.selectedItemIds.includes(item.id))
@@ -199,7 +281,7 @@ export default function App(): JSX.Element {
         dispatch({ type: "setMessage", message: "Selection copied. Press Cmd/Ctrl+V and click a destination." });
       }
 
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "v" && !isFormElement) {
+      if ((event.metaKey || event.ctrlKey) && normalizedKey === "v" && !isFormElement) {
         if (!clipboardRef.current) {
           return;
         }
@@ -208,6 +290,20 @@ export default function App(): JSX.Element {
         setPasteMode(true);
         dispatch({ type: "setTool", tool: "select" });
         dispatch({ type: "setMessage", message: "Click on the grid to place the copied group." });
+      }
+
+      if (!isFormElement && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        const shortcutTool = TOOL_SHORTCUTS_BY_KEY.get(normalizedKey);
+        if (shortcutTool) {
+          event.preventDefault();
+          setPasteMode(false);
+          setSelectedWireLabel(null);
+          if (shortcutTool !== "select") {
+            dispatch({ type: "setSelectedIds", itemIds: [] });
+          }
+          dispatch({ type: "setTool", tool: shortcutTool });
+          return;
+        }
       }
 
       if (event.key === "Escape") {
@@ -287,6 +383,37 @@ export default function App(): JSX.Element {
     });
   }
 
+  function updateGridDraft(dimension: "qubits" | "steps", value: string): void {
+    if (!/^\d*$/.test(value)) {
+      return;
+    }
+
+    setGridDrafts((currentDrafts) => ({
+      ...currentDrafts,
+      [dimension]: value
+    }));
+
+    const parsedValue = parsePositiveInteger(value);
+    if (parsedValue !== null) {
+      resizeGrid(dimension, parsedValue);
+    }
+  }
+
+  function commitGridDraft(dimension: "qubits" | "steps"): void {
+    const parsedValue = parsePositiveInteger(gridDrafts[dimension]);
+    const fallbackValue = dimension === "qubits" ? state.qubits : state.steps;
+    const committedValue = parsedValue ?? fallbackValue;
+
+    setGridDrafts((currentDrafts) => ({
+      ...currentDrafts,
+      [dimension]: String(committedValue)
+    }));
+
+    if (parsedValue !== null && parsedValue !== fallbackValue) {
+      resizeGrid(dimension, parsedValue);
+    }
+  }
+
   function adjustGrid(dimension: "qubits" | "steps", delta: number): void {
     const current = dimension === "qubits" ? state.qubits : state.steps;
     resizeGrid(dimension, Math.max(1, current + delta));
@@ -308,17 +435,38 @@ export default function App(): JSX.Element {
     setPasteMode(false);
   }
 
+  function handleToolSelection(tool: ToolType): void {
+    setPasteMode(false);
+    setSelectedWireLabel(null);
+    if (tool !== "select") {
+      dispatch({ type: "setSelectedIds", itemIds: [] });
+    }
+    dispatch({ type: "setTool", tool });
+  }
+
   return (
     <div className="app-shell">
       <header className="top-bar">
         <div className="title-block">
           <p className="eyebrow">Quantikz Studio</p>
-          <h1>Visual circuit to Quantikz</h1>
+          <div className="title-row">
+            <h1>Circuit drawer</h1>
+            <button
+              type="button"
+              className="shortcut-launcher"
+              aria-label="Show keyboard shortcuts"
+              title="Show keyboard shortcuts"
+              onClick={() => setShortcutSheetOpen(true)}
+            >
+              <span className="shortcut-chip" aria-hidden="true">Cmd</span>
+              <img src={cmdIcon} alt="" className="shortcut-help-icon" aria-hidden="true" />
+            </button>
+          </div>
         </div>
         <div className="toolbar-controls">
-          <label className="toolbar-field toolbar-stepper">
-            <span>Qubits</span>
+          <div className="toolbar-stepper" aria-label="Qubits control group">
             <div className="stepper-control">
+              <span className="stepper-title" aria-hidden="true">Qubits</span>
               <button
                 type="button"
                 className="stepper-button"
@@ -332,16 +480,10 @@ export default function App(): JSX.Element {
                 type="text"
                 inputMode="numeric"
                 pattern="[0-9]*"
-                value={state.qubits}
+                value={gridDrafts.qubits}
                 onFocus={selectNumericField}
-                onChange={(event) => {
-                  const value = parsePositiveInteger(event.target.value);
-                  if (value === null) {
-                    return;
-                  }
-
-                  resizeGrid("qubits", value);
-                }}
+                onChange={(event) => updateGridDraft("qubits", event.target.value)}
+                onBlur={() => commitGridDraft("qubits")}
               />
               <button
                 type="button"
@@ -352,10 +494,10 @@ export default function App(): JSX.Element {
                 +
               </button>
             </div>
-          </label>
-          <label className="toolbar-field toolbar-stepper">
-            <span>Steps</span>
+          </div>
+          <div className="toolbar-stepper" aria-label="Steps control group">
             <div className="stepper-control">
+              <span className="stepper-title" aria-hidden="true">Steps</span>
               <button
                 type="button"
                 className="stepper-button"
@@ -369,16 +511,10 @@ export default function App(): JSX.Element {
                 type="text"
                 inputMode="numeric"
                 pattern="[0-9]*"
-                value={state.steps}
+                value={gridDrafts.steps}
                 onFocus={selectNumericField}
-                onChange={(event) => {
-                  const value = parsePositiveInteger(event.target.value);
-                  if (value === null) {
-                    return;
-                  }
-
-                  resizeGrid("steps", value);
-                }}
+                onChange={(event) => updateGridDraft("steps", event.target.value)}
+                onBlur={() => commitGridDraft("steps")}
               />
               <button
                 type="button"
@@ -389,10 +525,7 @@ export default function App(): JSX.Element {
                 +
               </button>
             </div>
-          </label>
-          <button type="button" className="primary-button" onClick={() => dispatch({ type: "convert" })}>
-            Convert to Quantikz
-          </button>
+          </div>
           <button
             type="button"
             className="secondary-button"
@@ -417,10 +550,84 @@ export default function App(): JSX.Element {
           >
             Reset
           </button>
+          <button
+            type="button"
+            className="primary-button toolbar-convert-button"
+            onClick={() => dispatch({ type: "convert" })}
+          >
+            Convert to Quantikz
+          </button>
         </div>
       </header>
 
-      {state.uiMessage && <div className="message-toast">{state.uiMessage}</div>}
+      {state.uiMessage && (
+        <div className="message-toast" role="status" aria-live="polite">
+          <span className="message-toast-text">{state.uiMessage}</span>
+          <span
+            key={toastAnimationKey}
+            className="message-toast-timer"
+            aria-hidden="true"
+            style={{ animationDuration: `${TOAST_DURATION_MS}ms` }}
+          />
+        </div>
+      )}
+
+      {isShortcutSheetOpen && (
+        <div className="shortcut-sheet-backdrop" onClick={() => setShortcutSheetOpen(false)}>
+          <section
+            className="shortcut-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="shortcut-sheet-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="shortcut-sheet-header">
+              <div>
+                <p className="eyebrow">Keyboard</p>
+                <h2 id="shortcut-sheet-title">Shortcuts</h2>
+              </div>
+              <button
+                type="button"
+                className="secondary-button shortcut-sheet-close"
+                onClick={() => setShortcutSheetOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="shortcut-sheet-grid">
+              <section className="shortcut-section" aria-label="Tool shortcuts">
+                <h3>Tool switching</h3>
+                <div className="shortcut-list">
+                  {TOOL_SHORTCUTS.map(({ tool, label, description, shortcutKey }) => (
+                    <div key={tool} className="shortcut-row">
+                      <span className="shortcut-key">{shortcutKey}</span>
+                      <div>
+                        <strong>{label}</strong>
+                        <p>{description}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <section className="shortcut-section" aria-label="General shortcuts">
+                <h3>General actions</h3>
+                <div className="shortcut-list">
+                  {GENERAL_SHORTCUTS.map(({ key, description }) => (
+                    <div key={key} className="shortcut-row">
+                      <span className="shortcut-key shortcut-key-wide">{key}</span>
+                      <div>
+                        <p>{description}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </div>
+          </section>
+        </div>
+      )}
 
       <main className={`app-body ${hasSelection ? "has-context-sidebar" : ""}`}>
         {hasSelection ? (
@@ -475,7 +682,7 @@ export default function App(): JSX.Element {
         ) : (
           <Palette
             activeTool={state.activeTool}
-            onSelectTool={(tool: ToolType) => dispatch({ type: "setTool", tool })}
+            onSelectTool={handleToolSelection}
           />
         )}
 
@@ -524,10 +731,14 @@ export default function App(): JSX.Element {
           onMoveItem={(itemId: string, placement: PlacementTarget) =>
             dispatch({ type: "moveItem", itemId, placement })
           }
+          onMoveSelection={(anchorItemId: string, placement: PlacementTarget) =>
+            dispatch({ type: "moveSelection", anchorItemId, placement })
+          }
           onSelectionChange={(itemIds) => {
             setSelectedWireLabel(null);
             dispatch({ type: "setSelectedIds", itemIds });
           }}
+          onResizeGrid={(dimension, value) => dispatch({ type: "resizeGrid", dimension, value })}
           onBoardMetricsChange={() => {}}
         />
 

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import App from "../src/renderer/App";
@@ -88,7 +88,7 @@ describe("App smoke tests", () => {
 
     await user.click(screen.getByRole("button", { name: /^gate$/i }));
     await user.click(screen.getByTestId("grid-cell-0-0"));
-    await user.click(screen.getByRole("button", { name: /select\/move/i }));
+    await user.click(screen.getByRole("button", { name: /^select$/i }));
 
     const gateRect = container.querySelector('rect[data-kind="gate-rect"]') as SVGRectElement;
     fireEvent.pointerDown(gateRect, { button: 0 });
@@ -102,13 +102,45 @@ describe("App smoke tests", () => {
     expect(screen.getByRole("button", { name: /^gate$/i })).toBeInTheDocument();
   });
 
+  it("merges the selection outline when multiple items are selected", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+
+    await user.click(screen.getByRole("button", { name: /^gate$/i }));
+    await user.click(screen.getByTestId("grid-cell-0-0"));
+    await user.click(screen.getByTestId("grid-cell-0-1"));
+    await user.click(screen.getByRole("button", { name: /^select$/i }));
+
+    fireEvent.keyDown(window, { key: "a", ctrlKey: true });
+
+    expect(container.querySelectorAll(".merged-selection-outline")).toHaveLength(1);
+    expect(container.querySelectorAll(".item-outline-selected")).toHaveLength(1);
+  });
+
+  it("renders gate labels through KaTeX automatically", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+
+    await user.click(screen.getByRole("button", { name: /^gate$/i }));
+    await user.click(screen.getByTestId("grid-cell-0-0"));
+    await user.click(screen.getByRole("button", { name: /^select$/i }));
+
+    const gateRect = container.querySelector('rect[data-kind="gate-rect"]') as SVGRectElement;
+    fireEvent.pointerDown(gateRect, { button: 0 });
+    fireEvent.change(screen.getByLabelText(/gate label/i), {
+      target: { value: "\\theta_0" }
+    });
+
+    expect(container.querySelector(".gate-label-math .katex")).toBeTruthy();
+  });
+
   it("renders gate bodies above wire segments in the workspace SVG", async () => {
     const user = userEvent.setup();
     const { container } = render(<App />);
 
     await user.click(screen.getByRole("button", { name: /^gate$/i }));
     await user.click(screen.getByTestId("grid-cell-0-0"));
-    await user.click(screen.getByRole("button", { name: /^pencil$/i }));
+    await user.click(screen.getByRole("button", { name: /^wires$/i }));
     await user.click(screen.getByTestId("segment-slot-0-0"));
 
     const gateRect = container.querySelector('rect[data-kind="gate-rect"]') as SVGRectElement;
@@ -154,7 +186,7 @@ describe("App smoke tests", () => {
 
     await user.click(screen.getByRole("button", { name: /^gate$/i }));
     await user.click(screen.getByTestId("grid-cell-0-0"));
-    await user.click(screen.getByRole("button", { name: /select\/move/i }));
+    await user.click(screen.getByRole("button", { name: /^select$/i }));
 
     const gateRect = container.querySelector('rect[data-kind="gate-rect"]') as SVGRectElement;
     fireEvent.pointerDown(gateRect, { button: 0 });
@@ -178,7 +210,7 @@ describe("App smoke tests", () => {
     const user = userEvent.setup();
     const { container } = render(<App />);
 
-    await user.click(screen.getByRole("button", { name: /select\/move/i }));
+    await user.click(screen.getByRole("button", { name: /^select$/i }));
 
     const horizontalLineHit = container.querySelector(".horizontal-segment-hit") as SVGLineElement;
     fireEvent.pointerDown(horizontalLineHit, { button: 0 });
@@ -189,6 +221,7 @@ describe("App smoke tests", () => {
     await user.click(screen.getByRole("button", { name: /convert to quantikz/i }));
 
     expect(container.querySelector(".absent-override")).toBeTruthy();
+    expect(container.querySelector(".absent-override-gap")).toBeNull();
     expect(container.querySelector(".absent-override circle")).toBeNull();
     expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain("\\wireoverride{n}");
   });
@@ -197,7 +230,7 @@ describe("App smoke tests", () => {
     const user = userEvent.setup();
     const { container } = render(<App />);
 
-    await user.click(screen.getByRole("button", { name: /select\/move/i }));
+    await user.click(screen.getByRole("button", { name: /^select$/i }));
     const horizontalLineHit = container.querySelector(".horizontal-segment-hit") as SVGLineElement;
     fireEvent.pointerDown(horizontalLineHit, { button: 0 });
 
@@ -207,6 +240,34 @@ describe("App smoke tests", () => {
 
     await user.click(screen.getByRole("button", { name: /convert to quantikz/i }));
     expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain("\\wireoverride{c}");
+  });
+
+  it("automatically removes only the horizontal wires to the right of a meter", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+
+    await user.click(screen.getByRole("button", { name: /^meter$/i }));
+    await user.click(screen.getByTestId("grid-cell-0-0"));
+    await user.click(screen.getByRole("button", { name: /convert to quantikz/i }));
+
+    expect(container.querySelectorAll(".absent-override").length).toBe(5);
+    expect(container.querySelector(".absent-override-gap")).toBeNull();
+    expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain("\\wireoverride{n}");
+  });
+
+  it("lets you redraw a wire to the right of a meter", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+
+    await user.click(screen.getByRole("button", { name: /^meter$/i }));
+    await user.click(screen.getByTestId("grid-cell-0-0"));
+
+    expect(container.querySelectorAll(".absent-override")).toHaveLength(5);
+
+    await user.click(screen.getByRole("button", { name: /^wires$/i }));
+    await user.click(screen.getByTestId("segment-slot-0-1"));
+
+    expect(container.querySelectorAll(".absent-override")).toHaveLength(4);
   });
 
   it("can grow the grid without auto-wiring the new row and column", async () => {
@@ -225,13 +286,55 @@ describe("App smoke tests", () => {
     expect(container.querySelectorAll(".grid-row-label")).toHaveLength(3);
   });
 
+  it("lets grid number inputs be cleared and retyped", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    const qubitsInput = screen.getByRole("textbox", { name: "Qubits" });
+
+    await user.click(qubitsInput);
+    await user.keyboard("{Backspace}4");
+
+    expect(qubitsInput).toHaveValue("4");
+  });
+
+  it("switches tools from the keyboard shortcuts", () => {
+    render(<App />);
+
+    fireEvent.keyDown(window, { key: "g" });
+    expect(screen.getByRole("button", { name: /^gate$/i })).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.keyDown(window, { key: "s" });
+    expect(screen.getByRole("button", { name: /^swap x$/i })).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.keyDown(window, { key: "v" });
+    expect(screen.getByRole("button", { name: /^select$/i })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("shows the shortcuts sheet from the Cmd launcher and closes it with Escape", () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: /show keyboard shortcuts/i }));
+
+    const dialog = screen.getByRole("dialog", { name: /shortcuts/i });
+
+    expect(dialog).toBeInTheDocument();
+    expect(within(dialog).getByText(/tool switching/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/^cmd\/ctrl \+ c$/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/^v$/i)).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(screen.queryByRole("dialog", { name: /shortcuts/i })).not.toBeInTheDocument();
+  });
+
   it("lets a selected control switch to an open c0 control", async () => {
     const user = userEvent.setup();
     const { container } = render(<App />);
 
     await user.click(screen.getByRole("button", { name: /^control dot$/i }));
     await user.click(screen.getByTestId("grid-cell-0-0"));
-    await user.click(screen.getByRole("button", { name: /select\/move/i }));
+    await user.click(screen.getByRole("button", { name: /^select$/i }));
 
     const controlDot = container.querySelector(".control-dot") as SVGCircleElement;
     fireEvent.pointerDown(controlDot, { button: 0 });
@@ -252,7 +355,7 @@ describe("App smoke tests", () => {
     const board = container.querySelector(".workspace-board") as HTMLDivElement;
     mockBoardRect(board);
 
-    await user.click(screen.getByRole("button", { name: /^pencil$/i }));
+    await user.click(screen.getByRole("button", { name: /^wires$/i }));
 
     await user.pointer([{ target: screen.getByTestId("grid-cell-0-0"), keys: "[MouseLeft>]" }]);
     fireEvent.pointerEnter(screen.getByTestId("grid-cell-0-1"), {
@@ -281,5 +384,21 @@ describe("App smoke tests", () => {
 
     fireEvent.keyDown(window, { key: "Z", ctrlKey: true, shiftKey: true });
     expect(container.querySelectorAll('rect[data-kind="gate-rect"]')).toHaveLength(1);
+  });
+
+  it("selects all circuit objects with ctrl+a outside text inputs", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+
+    await user.click(screen.getByRole("button", { name: /^gate$/i }));
+    await user.click(screen.getByTestId("grid-cell-0-0"));
+    await user.click(screen.getByRole("button", { name: /^control dot$/i }));
+    await user.click(screen.getByTestId("grid-cell-1-1"));
+
+    fireEvent.keyDown(window, { key: "a", ctrlKey: true });
+    fireEvent.keyDown(window, { key: "Delete" });
+
+    expect(container.querySelector('rect[data-kind="gate-rect"]')).toBeNull();
+    expect(container.querySelector(".control-dot")).toBeNull();
   });
 });

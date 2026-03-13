@@ -9,21 +9,22 @@ import targetPlusIcon from "../assets/targ.svg";
 import type { JSX } from "react";
 import type { ToolType } from "../types";
 
-const TOOL_LABELS: Array<{
+export const TOOL_LABELS: Array<{
   tool: ToolType;
   label: string;
   shortLabel: string;
   description: string;
   icon: string;
+  shortcutKey?: string;
 }> = [
-  { tool: "select", label: "Select/Move", shortLabel: "Sel", description: "Select and drag existing items.", icon: selectIcon },
-  { tool: "pencil", label: "Pencil", shortLabel: "Pen", description: "Paint horizontal or vertical wires.", icon: calygraphicPenIcon },
-  { tool: "gate", label: "Gate", shortLabel: "Gate", description: "Place an auto-sized gate box.", icon: gateIcon },
-  { tool: "meter", label: "Meter", shortLabel: "Meas", description: "Place a measurement box.", icon: meterIcon },
-  { tool: "annotation", label: "Frame/Slice", shortLabel: "Mark", description: "Drag for a frame or click for a slice.", icon: annotationIcon },
-  { tool: "controlDot", label: "Control dot", shortLabel: "Ctrl", description: "Place a filled or open control dot.", icon: controlDotIcon },
-  { tool: "targetPlus", label: "Target plus", shortLabel: "Targ", description: "Place a target plus sign.", icon: targetPlusIcon },
-  { tool: "swapX", label: "Swap X", shortLabel: "Swap", description: "Place a swap endpoint marker.", icon: swapXIcon }
+  { tool: "select", label: "Select", shortLabel: "SELECT", description: "Select and drag existing items.", icon: selectIcon, shortcutKey: "V" },
+  { tool: "pencil", label: "Wires", shortLabel: "WIRES", description: "Paint horizontal or vertical wires.", icon: calygraphicPenIcon, shortcutKey: "P" },
+  { tool: "gate", label: "Gate", shortLabel: "Gate", description: "Place an auto-sized gate box.", icon: gateIcon, shortcutKey: "G" },
+  { tool: "meter", label: "Meter", shortLabel: "Meas", description: "Place a measurement box.", icon: meterIcon, shortcutKey: "M" },
+  { tool: "annotation", label: "Frame/Slice", shortLabel: "Mark", description: "Drag for a frame or click for a slice.", icon: annotationIcon, shortcutKey: "F" },
+  { tool: "controlDot", label: "Control dot", shortLabel: "Ctrl", description: "Place a filled or open control dot.", icon: controlDotIcon, shortcutKey: "C" },
+  { tool: "targetPlus", label: "Target plus", shortLabel: "Targ", description: "Place a target plus sign.", icon: targetPlusIcon, shortcutKey: "T" },
+  { tool: "swapX", label: "Swap X", shortLabel: "Swap", description: "Place a swap endpoint marker.", icon: swapXIcon, shortcutKey: "S" }
 ];
 
 interface PaletteProps {
@@ -46,7 +47,7 @@ export function Palette({
         <h2>Objects</h2>
       </div>
       <div className="palette-list">
-        {TOOL_LABELS.map(({ tool, label, shortLabel, description, icon }) => (
+        {TOOL_LABELS.map(({ tool, label, shortLabel, description, icon, shortcutKey }) => (
           <button
             key={tool}
             type="button"
@@ -54,12 +55,15 @@ export function Palette({
             className={`palette-button ${activeTool === tool ? "is-active" : ""}`}
             aria-pressed={activeTool === tool}
             aria-label={label}
-            title={`${label} — ${description}`}
+            title={`${label}${shortcutKey ? ` (${shortcutKey})` : ""} — ${description}`}
           >
             <span className={`palette-preview palette-preview-${tool}`} aria-hidden="true">
               <ToolPreview icon={icon} />
             </span>
-            <span className="palette-label">{shortLabel}</span>
+            <span className="palette-title-row">
+              <span className="palette-label">{shortLabel}</span>
+              {shortcutKey && <span className="palette-shortcut">{shortcutKey}</span>}
+            </span>
           </button>
         ))}
       </div>

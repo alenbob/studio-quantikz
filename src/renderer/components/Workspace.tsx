@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import crossBlackIcon from "../assets/cross_black.svg";
+import meterBlackIcon from "../assets/meter_black.svg";
+import targBlackIcon from "../assets/targ_black.svg";
 import { canPasteClipboardAt, instantiateClipboardItems } from "../clipboard";
 import {
   type ColumnMetrics,
@@ -25,8 +28,10 @@ import {
   DEFAULT_ITEM_COLOR,
   mixHexWithWhite
 } from "../color";
+import { projectSelectionMove, selectionHasExternalVerticalLinks } from "../movement";
+import { canPlaceItemsWithoutOverlap } from "../occupancy";
 import { canPlaceCellToolAtRow, getBoardMetrics, placementFromViewportPoint } from "../placement";
-import { isLikelyTexMath, normalizeGateLabel, normalizeLabel, renderGateLabelHtml } from "../tex";
+import { isLikelyTexMath, normalizeGateLabel, normalizeLabel, renderGateDisplayHtml, renderGateLabelHtml } from "../tex";
 import {
   getWireLabelBracket,
   getWireLabelSpan,
@@ -67,7 +72,9 @@ interface WorkspaceProps {
   onDrawAnnotation: (start: { row: number; col: number }, end: { row: number; col: number }) => void;
   onPasteAt: (placement: PlacementTarget) => void;
   onMoveItem: (itemId: string, placement: PlacementTarget) => void;
+  onMoveSelection: (anchorItemId: string, placement: PlacementTarget) => void;
   onSelectionChange: (itemIds: string[]) => void;
+  onResizeGrid: (dimension: "qubits" | "steps", value: number) => void;
   onBoardMetricsChange: (metrics: BoardMetrics | null) => void;
 }
 
@@ -97,6 +104,13 @@ interface AreaDrawState {
 interface PencilStrokeState {
   kind: PlacementTarget["kind"];
 }
+
+interface DragState {
+  anchorItemId: string;
+  constrainVertical: boolean;
+}
+
+type ItemOutlineTone = "selected" | "preview" | "invalid-preview";
 
 function isGateLikeItem(item: CircuitItem): item is GateItem | MeterItem {
   return item.type === "gate" || item.type === "meter";
@@ -133,6 +147,22 @@ function getClipboardPlacementTool(clipboard: CircuitClipboard | null): ToolType
     : "gate";
 }
 
+function placementForItem(item: CircuitItem): PlacementTarget {
+  if (item.type === "horizontalSegment") {
+    return {
+      kind: "segment",
+      row: item.point.row,
+      col: item.point.col
+    };
+  }
+
+  return {
+    kind: "cell",
+    row: item.point.row,
+    col: item.point.col
+  };
+}
+
 function normalizeRect(start: ContentPoint, end: ContentPoint): SelectionRect {
   return {
     x: Math.min(start.x, end.x),
@@ -153,7 +183,7 @@ function rectsIntersect(a: SelectionRect, b: SelectionRect): boolean {
 
 function getItemColor(item: CircuitItem): string {
   if (item.type === "horizontalSegment") {
-    return item.color ?? (item.mode === "absent" ? DEFAULT_ABSENT_WIRE_COLOR : DEFAULT_ITEM_COLOR);
+    return item.color ?? ((item.mode === "absent" || item.autoSuppressed) ? DEFAULT_ABSENT_WIRE_COLOR : DEFAULT_ITEM_COLOR);
   }
 
   return item.color ?? DEFAULT_ITEM_COLOR;
@@ -276,6 +306,79 @@ function getItemBounds(
     y: getRowY(item.point.row, layout) - 14,
     width: 28,
     height: 28
+  };
+}
+
+function getItemOutlinePadding(item: CircuitItem): { x: number; y: number; radius: number } {
+  switch (item.type) {
+    case "horizontalSegment":
+      return { x: 8, y: 6, radius: 12 };
+    case "verticalConnector":
+      return { x: 8, y: 8, radius: 12 };
+    case "slice":
+      return { x: 6, y: 6, radius: 10 };
+    case "controlDot":
+    case "targetPlus":
+    case "swapX":
+      return { x: 7, y: 7, radius: 12 };
+    default:
+      return { x: 6, y: 6, radius: 10 };
+  }
+}
+
+function renderItemOutline(
+  item: CircuitItem,
+  tone: ItemOutlineTone,
+  steps: number,
+  qubits: number,
+  layout: CircuitLayout,
+  columnMetrics: ColumnMetrics
+): JSX.Element {
+  const bounds = getItemBounds(item, steps, qubits, layout, columnMetrics);
+  const padding = getItemOutlinePadding(item);
+
+  return (
+    <rect
+      x={bounds.x - padding.x}
+      y={bounds.y - padding.y}
+      width={bounds.width + (padding.x * 2)}
+      height={bounds.height + (padding.y * 2)}
+      rx={padding.radius}
+      className={`item-outline item-outline-${tone}`}
+    />
+  );
+}
+
+function getMergedSelectionOutline(
+  items: CircuitItem[],
+  steps: number,
+  qubits: number,
+  layout: CircuitLayout,
+  columnMetrics: ColumnMetrics
+): SelectionRect | null {
+  if (items.length < 2) {
+    return null;
+  }
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  for (const item of items) {
+    const bounds = getItemBounds(item, steps, qubits, layout, columnMetrics);
+    const padding = getItemOutlinePadding(item);
+    minX = Math.min(minX, bounds.x - padding.x);
+    minY = Math.min(minY, bounds.y - padding.y);
+    maxX = Math.max(maxX, bounds.x + bounds.width + padding.x);
+    maxY = Math.max(maxY, bounds.y + bounds.height + padding.y);
+  }
+
+  return {
+    x: minX,
+    y: minY,
+    width: maxX - minX,
+    height: maxY - minY
   };
 }
 
@@ -475,7 +578,7 @@ function renderGate(item: GateItem, isSelected: boolean, layout: CircuitLayout, 
   const rect = getGateRect(item, layout, columnMetrics);
   const textY = rect.y + (rect.height / 2);
   const label = normalizeGateLabel(item.label);
-  const texHtml = isLikelyTexMath(label) ? renderGateLabelHtml(label) : null;
+  const texHtml = renderGateDisplayHtml(label);
   const color = getItemColor(item);
 
   return (
@@ -528,8 +631,9 @@ function renderGate(item: GateItem, isSelected: boolean, layout: CircuitLayout, 
 function renderMeter(item: MeterItem, isSelected: boolean, layout: CircuitLayout, columnMetrics: ColumnMetrics): JSX.Element {
   const rect = getMeterRect(item, layout, columnMetrics);
   const color = getItemColor(item);
-  const centerY = rect.y + (rect.height / 2);
-  const centerX = rect.x + (rect.width / 2);
+  const iconSize = Math.max(rect.width - 12, 12);
+  const iconX = rect.x + ((rect.width - iconSize) / 2);
+  const iconY = rect.y + ((rect.height - iconSize) / 2);
 
   return (
     <g>
@@ -547,18 +651,14 @@ function renderMeter(item: MeterItem, isSelected: boolean, layout: CircuitLayout
           fill: item.color ? mixHexWithWhite(color, 0.9) : "rgba(255, 254, 250, 1)"
         }}
       />
-      <path
-        d={`M ${rect.x + 10} ${centerY + 6} Q ${centerX} ${centerY - 10} ${rect.x + rect.width - 10} ${centerY + 2}`}
+      <image
+        href={meterBlackIcon}
+        x={iconX}
+        y={iconY}
+        width={iconSize}
+        height={iconSize}
+        preserveAspectRatio="xMidYMid meet"
         className="meter-glyph"
-        style={{ stroke: color }}
-      />
-      <line
-        x1={centerX + 4}
-        y1={centerY - 1}
-        x2={centerX + 10}
-        y2={centerY - 10}
-        className="meter-glyph"
-        style={{ stroke: color }}
       />
     </g>
   );
@@ -672,19 +772,32 @@ function renderMarker(item: CircuitItem, isSelected: boolean, layout: CircuitLay
   }
 
   if (item.type === "targetPlus") {
+    const iconSize = 28;
     return (
       <g className={`target-plus ${isSelected ? "is-selected" : ""}`} style={{ stroke: color }}>
-        <circle cx={cx} cy={cy} r={13} />
-        <line x1={cx - 9} y1={cy} x2={cx + 9} y2={cy} />
-        <line x1={cx} y1={cy - 9} x2={cx} y2={cy + 9} />
+        <image
+          href={targBlackIcon}
+          x={cx - (iconSize / 2)}
+          y={cy - (iconSize / 2)}
+          width={iconSize}
+          height={iconSize}
+          preserveAspectRatio="xMidYMid meet"
+        />
       </g>
     );
   }
 
+  const iconSize = 24;
   return (
     <g className={`swap-x ${isSelected ? "is-selected" : ""}`} style={{ stroke: color }}>
-      <line x1={cx - 10} y1={cy - 10} x2={cx + 10} y2={cy + 10} />
-      <line x1={cx - 10} y1={cy + 10} x2={cx + 10} y2={cy - 10} />
+      <image
+        href={crossBlackIcon}
+        x={cx - (iconSize / 2)}
+        y={cy - (iconSize / 2)}
+        width={iconSize}
+        height={iconSize}
+        preserveAspectRatio="xMidYMid meet"
+      />
     </g>
   );
 }
@@ -699,8 +812,9 @@ function renderHorizontalSegment(
   const [x1, x2] = getIncomingSegmentRange(item.point.col, steps, layout, columnMetrics);
   const y = getRowY(item.point.row, layout);
   const color = getItemColor(item);
+  const isAbsent = item.mode === "absent" || item.autoSuppressed;
 
-  if (item.mode === "present") {
+  if (!isAbsent) {
     return (
       <g className={`horizontal-segment ${isSelected ? "is-selected" : ""}`}>
         <line x1={x1} x2={x2} y1={y} y2={y} className="horizontal-segment-hit" />
@@ -712,8 +826,7 @@ function renderHorizontalSegment(
 
   return (
     <g className={`absent-override ${isSelected ? "is-selected" : ""}`} style={{ stroke: color }}>
-      <line x1={x1} x2={x2} y1={y} y2={y} className="horizontal-segment-hit" />
-      <line x1={x1} x2={x2} y1={y} y2={y} className="absent-override-hit" />
+      {!item.autoSuppressed && renderWireStroke(x1, x2, y, item.wireType, "absent-override-hit", { stroke: color })}
       {isSelected && <line x1={x1} x2={x2} y1={y} y2={y} className="absent-override-selection" />}
     </g>
   );
@@ -774,17 +887,22 @@ export function Workspace({
   onDrawAnnotation,
   onPasteAt,
   onMoveItem,
+  onMoveSelection,
   onSelectionChange,
+  onResizeGrid,
   onBoardMetricsChange
 }: WorkspaceProps): JSX.Element {
   const boardRef = useRef<HTMLDivElement | null>(null);
-  const [draggingItemId, setDraggingItemId] = useState<string | null>(null);
+  const [dragState, setDragState] = useState<DragState | null>(null);
   const [hoverPlacement, setHoverPlacement] = useState<PlacementTarget | null>(null);
   const [marquee, setMarquee] = useState<MarqueeSelection | null>(null);
   const [editingWireLabel, setEditingWireLabel] = useState<{ row: number; side: "left" | "right" } | null>(null);
   const [areaDraw, setAreaDraw] = useState<AreaDrawState | null>(null);
   const [pencilStroke, setPencilStroke] = useState<PencilStrokeState | null>(null);
   const pencilVisitedRef = useRef<Set<string>>(new Set());
+  const dragPointerRef = useRef<{ clientX: number; clientY: number } | null>(null);
+  const dragGrowRef = useRef({ lastRowGrowAt: 0, lastColGrowAt: 0 });
+  const lastPointerRef = useRef<{ clientX: number; clientY: number } | null>(null);
 
   const layout = state.layout;
   const columnMetrics = useMemo(
@@ -797,8 +915,8 @@ export function Workspace({
   const wireEndX = getWireEndX(state.steps, layout, columnMetrics);
   const selectionSet = useMemo(() => new Set(state.selectedItemIds), [state.selectedItemIds]);
   const draggingItem = useMemo(
-    () => state.items.find((item) => item.id === draggingItemId) ?? null,
-    [draggingItemId, state.items]
+    () => state.items.find((item) => item.id === dragState?.anchorItemId) ?? null,
+    [dragState, state.items]
   );
   const hoverTool = draggingItem
     ? draggingItem.type
@@ -813,11 +931,19 @@ export function Workspace({
     !!pasteAnchor &&
     canPasteClipboardAt(state, pasteClipboard, pasteAnchor);
   const pastePreviewItems =
-    isPasteMode && pasteClipboard && pasteAnchor && pastePreviewValid
+    isPasteMode && pasteClipboard && pasteAnchor
       ? instantiateClipboardItems(pasteClipboard, pasteAnchor)
       : [];
   const marqueeRect = marquee ? normalizeRect(marquee.start, marquee.current) : null;
   const wireLayerItems = useMemo(() => state.items.filter(isWireLayerItem), [state.items]);
+  const selectedItems = useMemo(
+    () => state.items.filter((item) => selectionSet.has(item.id)),
+    [selectionSet, state.items]
+  );
+  const mergedSelectionOutline = useMemo(
+    () => getMergedSelectionOutline(selectedItems, state.steps, state.qubits, layout, columnMetrics),
+    [columnMetrics, layout, selectedItems, state.qubits, state.steps]
+  );
   const gateLayerItems = useMemo(() => state.items.filter(isGateLikeItem), [state.items]);
   const annotationBackgroundItems = useMemo(() => state.items.filter(isAnnotationBackgroundItem), [state.items]);
   const annotationOverlayItems = useMemo(() => state.items.filter(isAnnotationOverlayItem), [state.items]);
@@ -828,33 +954,29 @@ export function Workspace({
   const previewAnnotationOverlayItems = useMemo(() => pastePreviewItems.filter(isAnnotationOverlayItem), [pastePreviewItems]);
   const previewMarkerItems = useMemo(() => pastePreviewItems.filter(isMarkerItem), [pastePreviewItems]);
   const pastePlacementTool = getClipboardPlacementTool(pasteClipboard);
-  const hoverProjectionItems = useMemo(() => {
-    if (!hoverPlacement || areaDraw || isPasteMode || hoverTool === "select" || hoverTool === "pencil") {
-      return [];
+  const dragPreviewProjection = useMemo(() => {
+    if (!dragState || !draggingItem || !hoverPlacement || areaDraw || isPasteMode) {
+      return null;
     }
 
-    if (draggingItem) {
-      if (draggingItem.type === "horizontalSegment") {
-        if (hoverPlacement.kind !== "segment") {
-          return [];
-        }
+    return projectSelectionMove(state.items, state.selectedItemIds, dragState.anchorItemId, hoverPlacement);
+  }, [areaDraw, dragState, draggingItem, hoverPlacement, isPasteMode, state.items, state.selectedItemIds]);
+  const dragPreviewValid = useMemo(() => {
+    if (!dragPreviewProjection) {
+      return true;
+    }
 
-        return [withPreviewColor({ ...draggingItem, point: { row: hoverPlacement.row, col: hoverPlacement.col } })];
-      }
+    return canPlaceItemsWithoutOverlap(state.items, dragPreviewProjection.movedItems, dragPreviewProjection.selectedIds);
+  }, [dragPreviewProjection, state.items]);
+  const hoverProjectionItems = useMemo(() => {
+    if (dragPreviewProjection) {
+      return dragPreviewProjection.finalItems
+        .filter((item) => dragPreviewProjection.selectedIds.has(item.id))
+        .map(withPreviewColor);
+    }
 
-      if (hoverPlacement.kind !== "cell") {
-        return [];
-      }
-
-      if (draggingItem.type === "gate" || draggingItem.type === "meter" || draggingItem.type === "frame" || draggingItem.type === "slice") {
-        return [withPreviewColor({ ...draggingItem, point: { row: hoverPlacement.row, col: hoverPlacement.col } })];
-      }
-
-      if (draggingItem.type === "verticalConnector") {
-        return [withPreviewColor({ ...draggingItem, point: { row: hoverPlacement.row, col: hoverPlacement.col } })];
-      }
-
-      return [withPreviewColor({ ...draggingItem, point: { row: hoverPlacement.row, col: hoverPlacement.col } })];
+    if (!hoverPlacement || areaDraw || isPasteMode || hoverTool === "select" || hoverTool === "pencil") {
+      return [];
     }
 
     if (hoverPlacement.kind !== "cell") {
@@ -913,12 +1035,25 @@ export function Workspace({
       default:
         return [];
     }
-  }, [areaDraw, draggingItem, hoverPlacement, hoverTool, isPasteMode, state.activeTool]);
+  }, [areaDraw, dragPreviewProjection, hoverPlacement, hoverTool, isPasteMode, state.activeTool]);
   const hoverProjectionWireItems = useMemo(() => hoverProjectionItems.filter(isWireLayerItem), [hoverProjectionItems]);
   const hoverProjectionGateItems = useMemo(() => hoverProjectionItems.filter(isGateLikeItem), [hoverProjectionItems]);
   const hoverProjectionAnnotationBackgroundItems = useMemo(() => hoverProjectionItems.filter(isAnnotationBackgroundItem), [hoverProjectionItems]);
   const hoverProjectionAnnotationOverlayItems = useMemo(() => hoverProjectionItems.filter(isAnnotationOverlayItem), [hoverProjectionItems]);
   const hoverProjectionMarkerItems = useMemo(() => hoverProjectionItems.filter(isMarkerItem), [hoverProjectionItems]);
+
+  useEffect(() => {
+    if (!isPasteMode) {
+      return;
+    }
+
+    const lastPointer = lastPointerRef.current;
+    if (!lastPointer) {
+      return;
+    }
+
+    setHoverPlacement(resolvePlacement(lastPointer.clientX, lastPointer.clientY, pastePlacementTool));
+  }, [isPasteMode, pastePlacementTool]);
 
   useEffect(() => {
     if (editingWireLabel && editingWireLabel.row >= state.qubits) {
@@ -968,6 +1103,26 @@ export function Workspace({
     }
 
     return placement;
+  }
+
+  function maybeGrowDragGrid(clientX: number, clientY: number): void {
+    const board = boardRef.current;
+    if (!board) {
+      return;
+    }
+
+    const now = Date.now();
+    const rect = board.getBoundingClientRect();
+
+    if (clientY > rect.bottom + 12 && now - dragGrowRef.current.lastRowGrowAt > 180) {
+      dragGrowRef.current.lastRowGrowAt = now;
+      onResizeGrid("qubits", state.qubits + 1);
+    }
+
+    if (clientX > rect.right + 12 && now - dragGrowRef.current.lastColGrowAt > 180) {
+      dragGrowRef.current.lastColGrowAt = now;
+      onResizeGrid("steps", state.steps + 1);
+    }
   }
 
   function getClampedContentPoint(clientX: number, clientY: number): ContentPoint | null {
@@ -1092,6 +1247,7 @@ export function Workspace({
 
   function renderInteractiveItem(item: CircuitItem): JSX.Element {
     const selected = selectionSet.has(item.id);
+    const showIndividualOutline = selected && state.selectedItemIds.length <= 1;
     const rendered =
       item.type === "gate"
         ? renderGate(item, selected, layout, columnMetrics)
@@ -1152,17 +1308,22 @@ export function Workspace({
             return;
           }
 
-          setDraggingItemId(item.id);
+          dragPointerRef.current = { clientX: event.clientX, clientY: event.clientY };
+          dragGrowRef.current = { lastRowGrowAt: 0, lastColGrowAt: 0 };
+          setDragState({
+            anchorItemId: item.id,
+            constrainVertical: selectionHasExternalVerticalLinks(state.items, state.selectedItemIds, item.id)
+          });
           updateHoverFromPointer(event.clientX, event.clientY, item.type);
         }}
       >
+        {showIndividualOutline && renderItemOutline(item, "selected", state.steps, state.qubits, layout, columnMetrics)}
         {rendered}
       </g>
     );
   }
 
-  function renderPreviewItem(item: CircuitItem, index: number): JSX.Element {
-    const key = `paste-preview-${item.type}-${index}`;
+  function renderPreviewItem(item: CircuitItem, key: string, invalid = false): JSX.Element {
     const rendered =
       item.type === "gate"
         ? renderGate(item, false, layout, columnMetrics)
@@ -1179,7 +1340,8 @@ export function Workspace({
               : renderMarker(item, false, layout, columnMetrics);
 
     return (
-      <g key={key} className="paste-preview-item">
+      <g key={key} className={`paste-preview-item ${invalid ? "is-invalid" : ""}`}>
+        {renderItemOutline(item, invalid ? "invalid-preview" : "preview", state.steps, state.qubits, layout, columnMetrics)}
         {rendered}
       </g>
     );
@@ -1213,36 +1375,68 @@ export function Workspace({
   }, [onBoardMetricsChange, state.items, state.qubits, state.steps, state.layout.columnSepCm, state.layout.rowSepCm]);
 
   useEffect(() => {
-    if (!draggingItemId || !draggingItem) {
+    if (!dragState || !draggingItem) {
       return;
     }
 
     const dragTool = draggingItem.type;
 
     const handlePointerMove = (event: PointerEvent) => {
-      updateHoverFromPointer(event.clientX, event.clientY, dragTool);
+      lastPointerRef.current = { clientX: event.clientX, clientY: event.clientY };
+      dragPointerRef.current = { clientX: event.clientX, clientY: event.clientY };
+      maybeGrowDragGrid(event.clientX, event.clientY);
+
+      const placement = resolvePlacement(event.clientX, event.clientY, dragTool);
+      if (!placement) {
+        return;
+      }
+
+      setHoverPlacement(
+        dragState.constrainVertical
+          ? { ...placement, col: placementForItem(draggingItem).col }
+          : placement
+      );
     };
 
     const finishDrag = (event: PointerEvent) => {
-      const placement = resolvePlacement(event.clientX, event.clientY, dragTool);
+      const placement = resolvePlacement(event.clientX, event.clientY, dragTool) ?? hoverPlacement;
       if (placement) {
-        onMoveItem(draggingItemId, placement);
+        const nextPlacement = dragState.constrainVertical
+          ? { ...placement, col: placementForItem(draggingItem).col }
+          : placement;
+
+        if (state.selectedItemIds.length > 1 || selectionSet.has(dragState.anchorItemId)) {
+          onMoveSelection(dragState.anchorItemId, nextPlacement);
+        } else {
+          onMoveItem(dragState.anchorItemId, nextPlacement);
+        }
       }
 
-      setDraggingItemId(null);
+      setDragState(null);
       setHoverPlacement(null);
+      dragPointerRef.current = null;
     };
+
+    const growthInterval = window.setInterval(() => {
+      const pointer = dragPointerRef.current;
+      if (!pointer) {
+        return;
+      }
+
+      maybeGrowDragGrid(pointer.clientX, pointer.clientY);
+    }, 180);
 
     window.addEventListener("pointermove", handlePointerMove);
     window.addEventListener("pointerup", finishDrag);
     window.addEventListener("pointercancel", finishDrag);
 
     return () => {
+      window.clearInterval(growthInterval);
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", finishDrag);
       window.removeEventListener("pointercancel", finishDrag);
     };
-  }, [draggingItem, draggingItemId, onMoveItem]);
+  }, [dragState, draggingItem, hoverPlacement, onMoveItem, onMoveSelection, onResizeGrid, selectionSet, state.qubits, state.selectedItemIds.length, state.steps]);
 
   useEffect(() => {
     if (!marquee) {
@@ -1389,7 +1583,7 @@ export function Workspace({
           width: GATE_MIN_WIDTH,
           color: null
         },
-        0
+        "area-preview-gate"
       );
     }
 
@@ -1408,7 +1602,7 @@ export function Workspace({
             label: "slice",
             color: null
           },
-          0
+          "area-preview-slice"
         );
       }
 
@@ -1425,7 +1619,7 @@ export function Workspace({
           innerXSepPt: 2,
           color: null
         },
-        0
+        "area-preview-frame"
       );
     }
 
@@ -1437,7 +1631,7 @@ export function Workspace({
         span: { rows, cols: 1 },
         color: null
       },
-      0
+      "area-preview-meter"
     );
   }
 
@@ -1515,7 +1709,9 @@ export function Workspace({
           setMarquee({ start: point, current: point });
         }}
         onPointerMove={(event) => {
-          if (draggingItemId || marquee || areaDraw || pencilStroke) {
+          lastPointerRef.current = { clientX: event.clientX, clientY: event.clientY };
+
+          if (dragState || marquee || areaDraw || pencilStroke) {
             return;
           }
 
@@ -1529,7 +1725,7 @@ export function Workspace({
           }
         }}
         onPointerLeave={() => {
-          if (!draggingItemId && !marquee && !areaDraw && !pencilStroke) {
+          if (!dragState && !marquee && !areaDraw && !pencilStroke) {
             setHoverPlacement(null);
           }
         }}
@@ -1852,41 +2048,52 @@ export function Workspace({
           )}
 
           {annotationBackgroundItems.map(renderInteractiveItem)}
-          {previewAnnotationBackgroundItems.map(renderPreviewItem)}
+          {previewAnnotationBackgroundItems.map((item, index) => renderPreviewItem(item, `paste-preview-bg-${index}`, !pastePreviewValid))}
           {hoverProjectionAnnotationBackgroundItems.map((item, index) => (
-            <g key={`hover-projection-bg-${index}`} className="hover-projection-item">
-              {renderPreviewItem(item, index)}
+            <g key={`hover-projection-bg-${index}`} className={`hover-projection-item ${!dragPreviewValid ? "is-invalid" : ""}`}>
+              {renderPreviewItem(item, `hover-projection-bg-item-${index}`, !dragPreviewValid)}
             </g>
           ))}
           {wireLayerItems.map(renderInteractiveItem)}
-          {previewWireItems.map(renderPreviewItem)}
+          {previewWireItems.map((item, index) => renderPreviewItem(item, `paste-preview-wire-${index}`, !pastePreviewValid))}
           {hoverProjectionWireItems.map((item, index) => (
-            <g key={`hover-projection-wire-${index}`} className="hover-projection-item">
-              {renderPreviewItem(item, index)}
+            <g key={`hover-projection-wire-${index}`} className={`hover-projection-item ${!dragPreviewValid ? "is-invalid" : ""}`}>
+              {renderPreviewItem(item, `hover-projection-wire-item-${index}`, !dragPreviewValid)}
             </g>
           ))}
           {gateLayerItems.map(renderInteractiveItem)}
-          {previewGateItems.map(renderPreviewItem)}
+          {previewGateItems.map((item, index) => renderPreviewItem(item, `paste-preview-gate-${index}`, !pastePreviewValid))}
           {hoverProjectionGateItems.map((item, index) => (
-            <g key={`hover-projection-gate-${index}`} className="hover-projection-item">
-              {renderPreviewItem(item, index)}
+            <g key={`hover-projection-gate-${index}`} className={`hover-projection-item ${!dragPreviewValid ? "is-invalid" : ""}`}>
+              {renderPreviewItem(item, `hover-projection-gate-item-${index}`, !dragPreviewValid)}
             </g>
           ))}
           {annotationOverlayItems.map(renderInteractiveItem)}
-          {previewAnnotationOverlayItems.map(renderPreviewItem)}
+          {previewAnnotationOverlayItems.map((item, index) => renderPreviewItem(item, `paste-preview-overlay-${index}`, !pastePreviewValid))}
           {hoverProjectionAnnotationOverlayItems.map((item, index) => (
-            <g key={`hover-projection-overlay-${index}`} className="hover-projection-item">
-              {renderPreviewItem(item, index)}
+            <g key={`hover-projection-overlay-${index}`} className={`hover-projection-item ${!dragPreviewValid ? "is-invalid" : ""}`}>
+              {renderPreviewItem(item, `hover-projection-overlay-item-${index}`, !dragPreviewValid)}
             </g>
           ))}
           {markerLayerItems.map(renderInteractiveItem)}
-          {previewMarkerItems.map(renderPreviewItem)}
+          {previewMarkerItems.map((item, index) => renderPreviewItem(item, `paste-preview-marker-${index}`, !pastePreviewValid))}
           {hoverProjectionMarkerItems.map((item, index) => (
-            <g key={`hover-projection-marker-${index}`} className="hover-projection-item">
-              {renderPreviewItem(item, index)}
+            <g key={`hover-projection-marker-${index}`} className={`hover-projection-item ${!dragPreviewValid ? "is-invalid" : ""}`}>
+              {renderPreviewItem(item, `hover-projection-marker-item-${index}`, !dragPreviewValid)}
             </g>
           ))}
           {renderAreaPreview()}
+
+          {mergedSelectionOutline && (
+            <rect
+              x={mergedSelectionOutline.x}
+              y={mergedSelectionOutline.y}
+              width={mergedSelectionOutline.width}
+              height={mergedSelectionOutline.height}
+              rx={14}
+              className="item-outline item-outline-selected merged-selection-outline"
+            />
+          )}
 
           {marqueeRect && (
             <rect

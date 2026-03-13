@@ -2,7 +2,7 @@ PWD /Users/alessandro.summer/Documents/quantikzz
 INPUT /usr/local/texlive/2025/texmf.cnf
 INPUT /usr/local/texlive/2025/texmf-dist/web2c/texmf.cnf
 INPUT /usr/local/texlive/2025/texmf-var/web2c/pdftex/pdflatex.fmt
-INPUT quantikz_example.tex
+INPUT /Users/alessandro.summer/Documents/quantikzz/quantikz_example.tex
 OUTPUT quantikz_example.log
 INPUT /usr/local/texlive/2025/texmf-dist/tex/latex/base/article.cls
 INPUT /usr/local/texlive/2025/texmf-dist/tex/latex/base/article.cls

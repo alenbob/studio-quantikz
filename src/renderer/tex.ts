@@ -114,6 +114,20 @@ function escapeGateLabel(label: string): string {
   return escapeLatexText(label);
 }
 
+function renderKatexHtml(expression: string): string | null {
+  try {
+    return katex.renderToString(expression, {
+      displayMode: false,
+      macros: KATEX_MACROS,
+      output: "html",
+      strict: "ignore",
+      throwOnError: false
+    });
+  } catch {
+    return null;
+  }
+}
+
 export function stripMathDelimiters(label: string): string {
   const normalized = normalizeLabel(label);
 
@@ -146,17 +160,17 @@ export function getLabelMeasurementText(label: string): string {
 }
 
 export function renderGateLabelHtml(label: string): string | null {
-  try {
-    return katex.renderToString(stripMathDelimiters(label) || "U", {
-      displayMode: false,
-      macros: KATEX_MACROS,
-      output: "html",
-      strict: "ignore",
-      throwOnError: false
-    });
-  } catch {
-    return null;
+  return renderKatexHtml(stripMathDelimiters(label) || "U");
+}
+
+export function renderGateDisplayHtml(label: string): string | null {
+  const normalized = normalizeGateLabel(label);
+
+  if (containsInlineMathSegments(normalized) || isLikelyTexMath(normalized)) {
+    return renderGateLabelHtml(normalized);
   }
+
+  return renderKatexHtml(`\\text{${escapeLatexText(normalized)}}`);
 }
 
 export function formatLabelForQuantikz(label: string, fallback = ""): string {

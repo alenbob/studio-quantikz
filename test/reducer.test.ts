@@ -129,6 +129,126 @@ describe("editorReducer selection workflows", () => {
     expect(next.uiMessage).toBe("Cannot place objects on top of each other.");
   });
 
+  it("moves the current selection together by the anchor delta", () => {
+    const state = {
+      ...initialState,
+      items: [
+        ...initialState.items,
+        {
+          id: "gate-1",
+          type: "gate" as const,
+          point: { row: 0, col: 0 },
+          span: { rows: 1, cols: 1 },
+          label: "H",
+          width: 40
+        },
+        { id: "dot-1", type: "controlDot" as const, point: { row: 1, col: 1 } }
+      ],
+      selectedItemIds: ["gate-1", "dot-1"]
+    };
+
+    const next = editorReducer(state, {
+      type: "moveSelection",
+      anchorItemId: "gate-1",
+      placement: { kind: "cell", row: 1, col: 2 }
+    });
+
+    expect(next.items).toContainEqual({
+      id: "gate-1",
+      type: "gate",
+      point: { row: 1, col: 2 },
+      span: { rows: 1, cols: 1 },
+      label: "H",
+      width: 40
+    });
+    expect(next.items).toContainEqual({ id: "dot-1", type: "controlDot", point: { row: 2, col: 3 } });
+  });
+
+  it("grows the grid when a dragged selection moves below or to the right", () => {
+    const state = {
+      ...initialState,
+      items: [
+        ...initialState.items,
+        {
+          id: "gate-1",
+          type: "gate" as const,
+          point: { row: 2, col: 4 },
+          span: { rows: 1, cols: 1 },
+          label: "H",
+          width: 40
+        }
+      ],
+      selectedItemIds: ["gate-1"]
+    };
+
+    const next = editorReducer(state, {
+      type: "moveSelection",
+      anchorItemId: "gate-1",
+      placement: { kind: "cell", row: 3, col: 5 }
+    });
+
+    expect(next.qubits).toBe(4);
+    expect(next.steps).toBe(6);
+    expect(next.items).toContainEqual({
+      id: "gate-1",
+      type: "gate",
+      point: { row: 3, col: 5 },
+      span: { rows: 1, cols: 1 },
+      label: "H",
+      width: 40
+    });
+  });
+
+  it("restricts external vertical-link drags to rows and extends the connector", () => {
+    const state = {
+      ...initialState,
+      items: [
+        ...initialState.items,
+        {
+          id: "gate-1",
+          type: "gate" as const,
+          point: { row: 0, col: 0 },
+          span: { rows: 1, cols: 1 },
+          label: "H",
+          width: 40
+        },
+        { id: "dot-1", type: "controlDot" as const, point: { row: 1, col: 0 } },
+        {
+          id: "line-1",
+          type: "verticalConnector" as const,
+          point: { row: 0, col: 0 },
+          length: 1,
+          wireType: "quantum" as const,
+          color: null
+        }
+      ],
+      selectedItemIds: ["gate-1"]
+    };
+
+    const next = editorReducer(state, {
+      type: "moveSelection",
+      anchorItemId: "gate-1",
+      placement: { kind: "cell", row: 2, col: 2 }
+    });
+
+    expect(next.items).toContainEqual({
+      id: "gate-1",
+      type: "gate",
+      point: { row: 2, col: 0 },
+      span: { rows: 1, cols: 1 },
+      label: "H",
+      width: 40
+    });
+    expect(next.items).toContainEqual({
+      id: "line-1",
+      type: "verticalConnector",
+      point: { row: 1, col: 0 },
+      length: 1,
+      wireType: "quantum",
+      color: null
+    });
+  });
+
   it("rejects expanding a gate span over an existing marker", () => {
     const state = {
       ...initialState,
@@ -171,6 +291,69 @@ describe("editorReducer selection workflows", () => {
       span: { rows: 3, cols: 1 },
       color: null
     });
+  });
+
+  it("automatically suppresses only the horizontal wires to the right of a meter", () => {
+    const next = editorReducer(initialState, {
+      type: "addMeterFromArea",
+      start: { row: 0, col: 1 },
+      endRow: 1
+    });
+
+    for (let col = 0; col <= next.steps; col += 1) {
+      const expectedSuppressed = col > 1;
+      const firstRowSegment = next.items.find(
+        (item) => item.type === "horizontalSegment" && item.point.row === 0 && item.point.col === col
+      );
+      const secondRowSegment = next.items.find(
+        (item) => item.type === "horizontalSegment" && item.point.row === 1 && item.point.col === col
+      );
+
+      expect(firstRowSegment).toMatchObject({
+        type: "horizontalSegment",
+        point: { row: 0, col },
+        mode: "present"
+      });
+      expect(secondRowSegment).toMatchObject({
+        type: "horizontalSegment",
+        point: { row: 1, col },
+        mode: "present"
+      });
+      expect(firstRowSegment && "autoSuppressed" in firstRowSegment ? firstRowSegment.autoSuppressed : undefined).toBe(
+        expectedSuppressed ? true : undefined
+      );
+      expect(secondRowSegment && "autoSuppressed" in secondRowSegment ? secondRowSegment.autoSuppressed : undefined).toBe(
+        expectedSuppressed ? true : undefined
+      );
+      expect(next.wireMask[`0:${col}`]).toBe(expectedSuppressed ? "absent" : "present");
+      expect(next.wireMask[`1:${col}`]).toBe(expectedSuppressed ? "absent" : "present");
+    }
+  });
+
+  it("lets the wires tool restore a meter-suppressed horizontal segment", () => {
+    const withMeter = editorReducer(initialState, {
+      type: "addMeterFromArea",
+      start: { row: 0, col: 1 },
+      endRow: 0
+    });
+
+    const restored = editorReducer(withMeter, {
+      type: "addItem",
+      tool: "horizontalSegment",
+      placement: { kind: "segment", row: 0, col: 2 }
+    });
+
+    expect(
+      restored.items.find(
+        (item) => item.type === "horizontalSegment" && item.point.row === 0 && item.point.col === 2
+      )
+    ).toMatchObject({
+      type: "horizontalSegment",
+      point: { row: 0, col: 2 },
+      mode: "present",
+      autoSuppressed: false
+    });
+    expect(restored.wireMask["0:2"]).toBe("present");
   });
 
   it("creates a frame from a dragged annotation area and a slice from a click", () => {

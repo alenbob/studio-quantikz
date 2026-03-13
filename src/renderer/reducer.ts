@@ -6,6 +6,7 @@ import {
   measureGateWidth
 } from "./layout";
 import { normalizeHexColor } from "./color";
+import { projectSelectionMove } from "./movement";
 import { canPlaceItemsWithoutOverlap } from "./occupancy";
 import { exportToQuantikz } from "./exporter";
 import { validateCircuit } from "./validation";
@@ -45,6 +46,7 @@ type Action =
   | { type: "addMeterFromArea"; start: { row: number; col: number }; endRow: number }
   | { type: "addAnnotationFromArea"; start: { row: number; col: number }; end: { row: number; col: number } }
   | { type: "moveItem"; itemId: string; placement: PlacementTarget }
+  | { type: "moveSelection"; anchorItemId: string; placement: PlacementTarget }
   | { type: "pasteClipboard"; clipboard: CircuitClipboard; anchor: { row: number; col: number } }
   | { type: "updateGateLabel"; itemId: string; label: string }
   | { type: "updateGateSpan"; itemId: string; rows: number; cols: number }
@@ -89,7 +91,7 @@ function deriveWireMask(items: CircuitItem[]): EditorState["wireMask"] {
 
   for (const item of items) {
     if (item.type === "horizontalSegment") {
-      mask[wireKey(item.point.row, item.point.col)] = item.mode;
+      mask[wireKey(item.point.row, item.point.col)] = item.autoSuppressed === true ? "absent" : item.mode;
     }
   }
 
@@ -195,6 +197,25 @@ function createAbsentHorizontalSegments(
   );
 }
 
+function getMeterSuppressedHorizontalKeys(items: CircuitItem[], steps: number): Set<string> {
+  const suppressed = new Set<string>();
+
+  for (const item of items) {
+    if (item.type !== "meter") {
+      continue;
+    }
+
+    const rows = item.span.rows ?? 1;
+    for (let row = item.point.row; row < item.point.row + rows; row += 1) {
+      for (let col = item.point.col + 1; col <= steps; col += 1) {
+        suppressed.add(wireKey(row, col));
+      }
+    }
+  }
+
+  return suppressed;
+}
+
 function normalizeHorizontalSegments(
   items: CircuitItem[],
   qubits: number,
@@ -203,6 +224,7 @@ function normalizeHorizontalSegments(
 ): CircuitItem[] {
   const nonHorizontals = items.filter((item) => item.type !== "horizontalSegment");
   const horizontals = new Map<string, HorizontalSegmentItem>();
+  const meterSuppressedKeys = getMeterSuppressedHorizontalKeys(items, steps);
 
   for (const item of items) {
     if (item.type !== "horizontalSegment") {
@@ -225,6 +247,23 @@ function normalizeHorizontalSegments(
           buildHorizontalSegment(row, col, "present", wireTypes[row] ?? "quantum")
         );
       }
+    }
+  }
+
+  for (const [key, segment] of horizontals.entries()) {
+    if (meterSuppressedKeys.has(key)) {
+      if (segment.autoSuppressed !== true && segment.autoSuppressed !== false) {
+        horizontals.set(key, {
+          ...segment,
+          autoSuppressed: true
+        });
+      }
+      continue;
+    }
+
+    if (segment.autoSuppressed) {
+      const { autoSuppressed, ...rest } = segment;
+      horizontals.set(key, rest);
     }
   }
 
@@ -452,6 +491,35 @@ function computeOccupiedExtents(items: CircuitItem[]): { maxRow: number; maxStep
   return { maxRow, maxStep };
 }
 
+function addSegmentsForExpandedGrid(
+  items: CircuitItem[],
+  previousQubits: number,
+  previousSteps: number,
+  nextQubits: number,
+  nextSteps: number,
+  autoWireNewGrid: boolean
+): CircuitItem[] {
+  if (autoWireNewGrid) {
+    return items;
+  }
+
+  let nextItems = items;
+
+  if (nextQubits > previousQubits) {
+    const newRows = Array.from({ length: nextQubits - previousQubits }, (_, index) => previousQubits + index);
+    const segmentCols = Array.from({ length: previousSteps + 1 }, (_, index) => index);
+    nextItems = [...nextItems, ...createAbsentHorizontalSegments(newRows, segmentCols)];
+  }
+
+  if (nextSteps > previousSteps) {
+    const newSegmentCols = Array.from({ length: nextSteps - previousSteps }, (_, index) => previousSteps + 1 + index);
+    const rows = Array.from({ length: nextQubits }, (_, row) => row);
+    nextItems = [...nextItems, ...createAbsentHorizontalSegments(rows, newSegmentCols)];
+  }
+
+  return nextItems;
+}
+
 function withItems(state: EditorState, items: CircuitItem[], selectedItemIds: string[]): EditorState {
   const normalizedItems = normalizeHorizontalSegments(items, state.qubits, state.steps, state.wireTypes);
   const nextState = resetExport({
@@ -580,7 +648,7 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
         );
 
         if (existing) {
-          if (existing.mode === "present") {
+          if (existing.mode === "present" && existing.autoSuppressed !== true) {
             return {
               ...state,
               selectedItemIds: [existing.id],
@@ -597,7 +665,8 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
               item.id === existing.id
                 ? {
                     ...item,
-                    mode: "present"
+                    mode: "present",
+                    autoSuppressed: false
                   }
                 : item
             ),
@@ -715,6 +784,50 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
         [action.itemId]
       );
     }
+    case "moveSelection": {
+      const projection = projectSelectionMove(
+        state.items,
+        state.selectedItemIds,
+        action.anchorItemId,
+        action.placement
+      );
+      if (!projection) {
+        return state;
+      }
+
+      if (projection.rowDelta === 0 && projection.colDelta === 0) {
+        return state;
+      }
+
+      if (!canPlaceItemsWithoutOverlap(state.items, projection.movedItems, projection.selectedIds)) {
+        return withOverlapMessage(state);
+      }
+
+      const { maxRow, maxStep } = computeOccupiedExtents(projection.finalItems);
+      const nextQubits = Math.max(state.qubits, maxRow + 1);
+      const nextSteps = Math.max(state.steps, maxStep);
+      const grownItems = addSegmentsForExpandedGrid(
+        projection.finalItems,
+        state.qubits,
+        state.steps,
+        nextQubits,
+        nextSteps,
+        state.autoWireNewGrid
+      );
+
+      return withItems(
+        {
+          ...state,
+          qubits: nextQubits,
+          steps: nextSteps,
+          wireTypes: resizeWireTypes(state.wireTypes, nextQubits),
+          wireLabels: resizeWireLabels(state.wireLabels, nextQubits),
+          uiMessage: null
+        },
+        grownItems,
+        state.selectedItemIds.filter((itemId) => grownItems.some((item) => item.id === itemId))
+      );
+    }
     case "pasteClipboard": {
       if (!canPasteClipboardAt(state, action.clipboard, action.anchor)) {
         return {
@@ -755,7 +868,7 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
     case "updateGateSpan": {
       const gate = state.items.find((item) => item.id === action.itemId && item.type === "gate");
       if (!gate || gate.type !== "gate") {
-        return state;
+        [...projection.selectedIds]
       }
 
       const rows = clamp(action.rows, 1, state.qubits - gate.point.row);
@@ -887,7 +1000,8 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
 
         return {
           ...item,
-          mode: action.mode
+          mode: action.mode,
+          autoSuppressed: action.mode === "present" ? false : item.autoSuppressed
         };
       });
 
