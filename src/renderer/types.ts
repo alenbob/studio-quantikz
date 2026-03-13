@@ -113,6 +113,7 @@ export interface HorizontalSegmentItem extends BaseItem {
   point: GridPoint;
   mode: HorizontalSegmentMode;
   wireType: WireType;
+  autoSuppressed?: boolean;
 }
 
 export interface ControlDotItem extends BaseItem {

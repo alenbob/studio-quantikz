@@ -293,17 +293,6 @@ select {
   border-color: rgba(255, 255, 255, 0.16);
 }
 
-.palette-preview-pencil {
-  background: linear-gradient(180deg, rgba(250, 244, 235, 0.98), rgba(236, 227, 214, 0.98));
-  border-color: rgba(31, 27, 23, 0.14);
-}
-
-.palette-button.is-active .palette-preview-pencil {
-  background: linear-gradient(180deg, rgba(255, 247, 236, 1), rgba(241, 230, 214, 1));
-  border-color: rgba(200, 93, 45, 0.38);
-  box-shadow: 0 0 0 1px rgba(200, 93, 45, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.4);
-}
-
 .palette-preview-svg {
   width: 30px;
   height: 30px;
@@ -567,7 +556,7 @@ select {
   stroke: rgba(15, 106, 109, 0.72);
   stroke-width: 1.5;
   stroke-dasharray: 6 5;
-  rx: 18px;
+  rx: 0;
 }
 
 .gate-rect {
@@ -794,6 +783,7 @@ select {
 
 .vertical-connector,
 .vertical-connector line,
+.horizontal-segment-hit,
 .horizontal-segment-stroke,
 .horizontal-segment-stroke line,
 .target-plus line,
@@ -804,6 +794,12 @@ select {
   stroke: rgba(31, 27, 23, 0.92);
   stroke-width: 2;
   fill: none;
+}
+
+.horizontal-segment-hit {
+  stroke: transparent;
+  stroke-width: 16;
+  pointer-events: stroke;
 }
 
 .control-dot {

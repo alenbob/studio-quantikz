@@ -6,6 +6,7 @@ import {
   measureGateWidth
 } from "./layout";
 import { normalizeHexColor } from "./color";
+import { canPlaceItemsWithoutOverlap } from "./occupancy";
 import { exportToQuantikz } from "./exporter";
 import { validateCircuit } from "./validation";
 import {
@@ -465,6 +466,13 @@ function withItems(state: EditorState, items: CircuitItem[], selectedItemIds: st
   return nextState;
 }
 
+function withOverlapMessage(state: EditorState, message = "Cannot place objects on top of each other."): EditorState {
+  return {
+    ...state,
+    uiMessage: message
+  };
+}
+
 function createInitialEditorState(): EditorState {
   const qubits = 3;
   const steps = 5;
@@ -598,6 +606,10 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
         }
       }
 
+      if (!canPlaceItemsWithoutOverlap(state.items, [newItem])) {
+        return withOverlapMessage(state);
+      }
+
       return withItems(
         {
           ...state,
@@ -622,6 +634,10 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
         color: null
       };
 
+      if (!canPlaceItemsWithoutOverlap(state.items, [gate])) {
+        return withOverlapMessage(state);
+      }
+
       return withItems({ ...state, uiMessage: null }, [...state.items, gate], [gate.id]);
     }
     case "addMeterFromArea": {
@@ -634,6 +650,10 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
         span: { rows, cols: 1 },
         color: null
       };
+
+      if (!canPlaceItemsWithoutOverlap(state.items, [meter])) {
+        return withOverlapMessage(state);
+      }
 
       return withItems({ ...state, uiMessage: null }, [...state.items, meter], [meter.id]);
     }
@@ -672,8 +692,18 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
       return withItems({ ...state, uiMessage: null }, [...state.items, frame], [frame.id]);
     }
     case "moveItem": {
+      const movingItem = state.items.find((item) => item.id === action.itemId);
+      if (!movingItem) {
+        return state;
+      }
+
+      const nextItem = moveItemToPlacement(movingItem, action.placement, state);
+      if (!canPlaceItemsWithoutOverlap(state.items, [nextItem], [action.itemId])) {
+        return withOverlapMessage(state);
+      }
+
       const items = state.items.map((item) =>
-        item.id === action.itemId ? moveItemToPlacement(item, action.placement, state) : item
+        item.id === action.itemId ? nextItem : item
       );
 
       return withItems(
@@ -689,7 +719,7 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
       if (!canPasteClipboardAt(state, action.clipboard, action.anchor)) {
         return {
           ...state,
-          uiMessage: "Copied group does not fit in that area."
+          uiMessage: "Copied group cannot be placed there."
         };
       }
 
@@ -723,18 +753,25 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
       return withItems(state, items, state.selectedItemIds);
     }
     case "updateGateSpan": {
-      const items = state.items.map((item) => {
-        if (item.id !== action.itemId || item.type !== "gate") {
-          return item;
-        }
+      const gate = state.items.find((item) => item.id === action.itemId && item.type === "gate");
+      if (!gate || gate.type !== "gate") {
+        return state;
+      }
 
-        const rows = clamp(action.rows, 1, state.qubits - item.point.row);
-        const cols = clamp(action.cols, 1, state.steps - item.point.col);
-        return {
-          ...item,
-          span: { rows, cols }
-        };
-      });
+      const rows = clamp(action.rows, 1, state.qubits - gate.point.row);
+      const cols = clamp(action.cols, 1, state.steps - gate.point.col);
+      const updatedGate = {
+        ...gate,
+        span: { rows, cols }
+      };
+
+      if (!canPlaceItemsWithoutOverlap(state.items, [updatedGate], [action.itemId])) {
+        return withOverlapMessage(state);
+      }
+
+      const items = state.items.map((item) => (
+        item.id === action.itemId ? updatedGate : item
+      ));
 
       return withItems(state, items, state.selectedItemIds);
     }

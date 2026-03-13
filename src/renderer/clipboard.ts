@@ -1,4 +1,5 @@
 import { measureGateWidth } from "./layout";
+import { canPlaceItemsWithoutOverlap } from "./occupancy";
 import type {
   CircuitClipboard,
   CircuitItem,
@@ -259,5 +260,7 @@ export function canPasteClipboardAt(
   clipboard: CircuitClipboard,
   anchor: GridPoint
 ): boolean {
-  return instantiateClipboardItems(clipboard, anchor).every((item) => fitsGrid(item, state));
+  const pastedItems = instantiateClipboardItems(clipboard, anchor);
+
+  return pastedItems.every((item) => fitsGrid(item, state)) && canPlaceItemsWithoutOverlap(state.items, pastedItems);
 }

@@ -307,7 +307,7 @@ function renderEditableWireLabel(
     return (
       <foreignObject
         x={foreignX}
-        y={y - 20}
+        y={y - (objectHeight / 2)}
         width={width}
         height={objectHeight}
         className="wire-label-editor-foreign-object"
@@ -703,6 +703,8 @@ function renderHorizontalSegment(
   if (item.mode === "present") {
     return (
       <g className={`horizontal-segment ${isSelected ? "is-selected" : ""}`}>
+        <line x1={x1} x2={x2} y1={y} y2={y} className="horizontal-segment-hit" />
+        {isSelected && renderWireStroke(x1, x2, y, item.wireType, "horizontal-segment-selection")}
         {renderWireStroke(x1, x2, y, item.wireType, "horizontal-segment-stroke", { stroke: color })}
       </g>
     );
@@ -710,6 +712,7 @@ function renderHorizontalSegment(
 
   return (
     <g className={`absent-override ${isSelected ? "is-selected" : ""}`} style={{ stroke: color }}>
+      <line x1={x1} x2={x2} y1={y} y2={y} className="horizontal-segment-hit" />
       <line x1={x1} x2={x2} y1={y} y2={y} className="absent-override-hit" />
       {isSelected && <line x1={x1} x2={x2} y1={y} y2={y} className="absent-override-selection" />}
     </g>
@@ -1891,6 +1894,7 @@ export function Workspace({
               y={marqueeRect.y}
               width={marqueeRect.width}
               height={marqueeRect.height}
+              rx={0}
               className="selection-marquee"
             />
           )}

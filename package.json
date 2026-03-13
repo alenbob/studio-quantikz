@@ -1,17 +1,12 @@
 {
-  "name": "quantikz-desktop-editor",
+  "name": "quantikz-studio",
   "version": "0.1.0",
   "private": true,
-  "description": "Electron desktop editor for building quantikz circuits visually.",
-  "main": "dist-electron/main.js",
+  "description": "Web app for building quantikz circuits visually.",
   "scripts": {
-    "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\" \"npm:dev:app\"",
-    "dev:renderer": "vite --host 127.0.0.1",
-    "dev:electron": "tsc -p tsconfig.electron.json --watch --preserveWatchOutput",
-    "dev:app": "wait-on tcp:5173 dist-electron/main.js dist-electron/preload.js && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 nodemon --watch dist-electron --ext js --exec \"node scripts/launch-electron.cjs\"",
-    "build": "npm run build:electron && npm run build:renderer",
-    "build:renderer": "vite build",
-    "build:electron": "tsc -p tsconfig.electron.json",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -28,14 +23,9 @@
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
     "@vitejs/plugin-react": "^4.4.1",
-    "concurrently": "^9.1.2",
-    "cross-env": "^7.0.3",
-    "electron": "^34.0.0",
     "jsdom": "^26.0.0",
-    "nodemon": "^3.1.9",
     "typescript": "^5.7.2",
     "vite": "^6.0.5",
-    "vitest": "^3.0.7",
-    "wait-on": "^8.0.1"
+    "vitest": "^3.0.7"
   }
 }

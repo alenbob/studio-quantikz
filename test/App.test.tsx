@@ -180,8 +180,8 @@ describe("App smoke tests", () => {
 
     await user.click(screen.getByRole("button", { name: /select\/move/i }));
 
-    const horizontalLine = container.querySelector(".horizontal-segment") as SVGGElement;
-    fireEvent.pointerDown(horizontalLine, { button: 0 });
+    const horizontalLineHit = container.querySelector(".horizontal-segment-hit") as SVGLineElement;
+    fireEvent.pointerDown(horizontalLineHit, { button: 0 });
 
     expect(screen.getByLabelText(/segment mode/i)).toBeInTheDocument();
 
@@ -195,11 +195,11 @@ describe("App smoke tests", () => {
 
   it("lets a selected horizontal segment switch to classical wire style", async () => {
     const user = userEvent.setup();
-    render(<App />);
+    const { container } = render(<App />);
 
     await user.click(screen.getByRole("button", { name: /select\/move/i }));
-    const horizontalLine = document.querySelector(".horizontal-segment") as SVGGElement;
-    fireEvent.pointerDown(horizontalLine, { button: 0 });
+    const horizontalLineHit = container.querySelector(".horizontal-segment-hit") as SVGLineElement;
+    fireEvent.pointerDown(horizontalLineHit, { button: 0 });
 
     fireEvent.change(screen.getByLabelText(/horizontal wire style/i), {
       target: { value: "classical" }

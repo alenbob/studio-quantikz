@@ -231,31 +231,25 @@ export default function App(): JSX.Element {
     };
   }
 
-  async function handleDownloadSvg(): Promise<void> {
-    const desktopApi = window.quantikzDesktop;
-    if (!desktopApi?.exportQuantikzSvg) {
-      dispatch({ type: "setMessage", message: "SVG export is only available in the desktop app." });
-      return;
-    }
-
+  function handleDownloadTex(): void {
     dispatch({ type: "convert" });
     const { code, hasErrors } = computeExportResult();
     if (hasErrors || !code) {
-      dispatch({ type: "setMessage", message: "Fix validation errors before exporting SVG." });
+      dispatch({ type: "setMessage", message: "Fix validation errors before downloading the Quantikz file." });
       return;
     }
 
-    const result = await desktopApi.exportQuantikzSvg(code);
-    if (!result.success && !result.error) {
-      dispatch({ type: "clearMessage" });
-      return;
-    }
+    const blob = new Blob([code], { type: "text/x-tex;charset=utf-8" });
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = "quantikz-circuit.tex";
+    link.click();
+    URL.revokeObjectURL(objectUrl);
 
     dispatch({
       type: "setMessage",
-      message: result.success
-        ? `SVG exported to ${result.filePath}.`
-        : result.error ?? "Failed to export SVG."
+      message: "Downloaded quantikz-circuit.tex."
     });
   }
 
@@ -305,7 +299,7 @@ export default function App(): JSX.Element {
 
     const anchor = { row: placement.row, col: placement.col };
     if (!canPasteClipboardAt(stateRef.current, clipboard, anchor)) {
-      dispatch({ type: "setMessage", message: "Copied group does not fit in that area." });
+      dispatch({ type: "setMessage", message: "Copied group cannot be placed there." });
       return;
     }
 
@@ -318,7 +312,7 @@ export default function App(): JSX.Element {
     <div className="app-shell">
       <header className="top-bar">
         <div className="title-block">
-          <p className="eyebrow">Quantikz Desktop Editor</p>
+          <p className="eyebrow">Quantikz Studio</p>
           <h1>Visual circuit to Quantikz</h1>
         </div>
         <div className="toolbar-controls">
@@ -555,8 +549,8 @@ export default function App(): JSX.Element {
               <button type="button" className="secondary-button" onClick={handleLoadFromCode}>
                 Convert to visual
               </button>
-              <button type="button" className="secondary-button" onClick={() => void handleDownloadSvg()}>
-                Download SVG
+              <button type="button" className="secondary-button" onClick={handleDownloadTex}>
+                Download .tex
               </button>
             </div>
 

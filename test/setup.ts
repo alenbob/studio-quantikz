@@ -13,10 +13,3 @@ Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
     measureText: (text: string) => ({ width: text.length * 9 })
   }))
 });
-
-if (!window.quantikzDesktop) {
-  window.quantikzDesktop = {
-    copyText: async () => true,
-    exportQuantikzSvg: async () => ({ success: true, filePath: "/tmp/quantikz-circuit.svg" })
-  };
-}

@@ -83,6 +83,80 @@ describe("editorReducer selection workflows", () => {
     });
   });
 
+  it("rejects placing a gate on top of an existing anchored object", () => {
+    const state = {
+      ...initialState,
+      items: [
+        ...initialState.items,
+        { id: "dot-1", type: "controlDot" as const, point: { row: 0, col: 0 } }
+      ]
+    };
+
+    const next = editorReducer(state, {
+      type: "addItem",
+      tool: "gate",
+      placement: { kind: "cell", row: 0, col: 0 }
+    });
+
+    expect(next.items).toEqual(state.items);
+    expect(next.uiMessage).toBe("Cannot place objects on top of each other.");
+  });
+
+  it("rejects moving a gate onto an occupied cell", () => {
+    const state = {
+      ...initialState,
+      items: [
+        ...initialState.items,
+        {
+          id: "gate-1",
+          type: "gate" as const,
+          point: { row: 0, col: 0 },
+          span: { rows: 1, cols: 1 },
+          label: "H",
+          width: 40
+        },
+        { id: "swap-1", type: "swapX" as const, point: { row: 0, col: 1 } }
+      ]
+    };
+
+    const next = editorReducer(state, {
+      type: "moveItem",
+      itemId: "gate-1",
+      placement: { kind: "cell", row: 0, col: 1 }
+    });
+
+    expect(next.items).toEqual(state.items);
+    expect(next.uiMessage).toBe("Cannot place objects on top of each other.");
+  });
+
+  it("rejects expanding a gate span over an existing marker", () => {
+    const state = {
+      ...initialState,
+      items: [
+        ...initialState.items,
+        {
+          id: "gate-1",
+          type: "gate" as const,
+          point: { row: 0, col: 0 },
+          span: { rows: 1, cols: 1 },
+          label: "H",
+          width: 40
+        },
+        { id: "dot-1", type: "controlDot" as const, point: { row: 0, col: 1 } }
+      ]
+    };
+
+    const next = editorReducer(state, {
+      type: "updateGateSpan",
+      itemId: "gate-1",
+      rows: 1,
+      cols: 2
+    });
+
+    expect(next.items).toEqual(state.items);
+    expect(next.uiMessage).toBe("Cannot place objects on top of each other.");
+  });
+
   it("creates a multi-row measurement from a dragged area", () => {
     const next = editorReducer(initialState, {
       type: "addMeterFromArea",
@@ -257,5 +331,35 @@ describe("editorReducer selection workflows", () => {
       point: { row: 0, col: 1 },
       controlState: "open"
     });
+  });
+
+  it("rejects pasting a copied group onto occupied cells", () => {
+    const clipboard = buildClipboard([
+      {
+        id: "gate-1",
+        type: "gate",
+        point: { row: 0, col: 0 },
+        span: { rows: 1, cols: 1 },
+        label: "H",
+        width: 40
+      }
+    ]);
+
+    const state = {
+      ...initialState,
+      items: [
+        ...initialState.items,
+        { id: "dot-1", type: "controlDot" as const, point: { row: 1, col: 1 } }
+      ]
+    };
+
+    const next = editorReducer(state, {
+      type: "pasteClipboard",
+      clipboard: clipboard!,
+      anchor: { row: 1, col: 1 }
+    });
+
+    expect(next.items).toEqual(state.items);
+    expect(next.uiMessage).toBe("Copied group cannot be placed there.");
   });
 });

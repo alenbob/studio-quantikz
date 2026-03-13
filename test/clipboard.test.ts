@@ -77,4 +77,28 @@ describe("clipboard helpers", () => {
     expect(canPasteClipboardAt(makeState(), clipboard!, { row: 3, col: 5 })).toBe(false);
     expect(canPasteClipboardAt(makeState(), clipboard!, { row: 2, col: 4 })).toBe(true);
   });
+
+  it("rejects pasting a copied group onto occupied cells", () => {
+    const clipboard = buildClipboard([
+      {
+        id: "gate-1",
+        type: "gate",
+        point: { row: 0, col: 0 },
+        span: { rows: 1, cols: 1 },
+        label: "U",
+        width: 40
+      }
+    ]);
+
+    expect(clipboard).not.toBeNull();
+    expect(
+      canPasteClipboardAt(
+        makeState({
+          items: [{ id: "dot-1", type: "controlDot", point: { row: 1, col: 1 } }]
+        }),
+        clipboard!,
+        { row: 1, col: 1 }
+      )
+    ).toBe(false);
+  });
 });

@@ -5,21 +5,45 @@
 
 \begin{document}
 
-\section*{Quantikz Examples}
+\section*{Quantikz Stress Examples}
 
+This file is a stress corpus for the editor rather than a minimal tutorial.
+Each circuit targets a feature or edge case that the app currently imports and exports.
+
+\subsection*{1. Baseline single-qubit path}
 \[
 \begin{quantikz}
 \lstick{\ket{0}} & \gate{H} & \gate{Z} & \meter{}
 \end{quantikz}
 \]
 
+\subsection*{2. Multi-wire labels, spanning gate, and spanning meter}
 \[
-\begin{quantikz}
-\lstick{\ket{0}} & \gate{H} & \ctrl{1} & \meter{} \\
-\lstick{\ket{0}} &          & \targ{}  & \meter{}
+\begin{quantikz}[row sep={0.95cm,between origins}, column sep=0.8cm]
+\lstick[wires=2,braces=right]{input\ register} & \gate[wires=2,style={minimum width=1.6cm}]{U_f} & \ctrl{1} & \meter[wires=2]{} \\
+												  &                                                  & \targ{}  &
 \end{quantikz}
 \]
 
+\subsection*{3. Standard control, open control, and standalone control dots}
+\[
+\begin{quantikz}
+\lstick{\ket{1}}    & \octrl{2} & \ocontrol{} & \qw \\
+\lstick{\ket{0}}    & \ctrl{1}  & \ctrl{1} & \qw  \\
+\lstick{\ket{\psi}} & \gate{V}  & \targ{-2} & \gate{W}
+\end{quantikz}
+\]
+
+\subsection*{4. Upward controls and one control driving multiple targets}
+\[
+\begin{quantikz}
+\lstick{\ket{0}}   & \targ{}   & \targ{}   & \meter{} \\
+\lstick{\ket{0}}   & \targ{}   & \qw       & \meter{} \\
+\lstick{\ket{\phi}} & \ctrl{-2} & \ctrl{-1} & \gate{R_Z(\theta)}
+\end{quantikz}
+\]
+
+\subsection*{5. Compute and uncompute AND corner shorthand}
 \[
 \begin{quantikz}
 & \ctrl{1} & \qquad & & \ctrl{1} & \\
@@ -28,24 +52,46 @@
 \end{quantikz}
 \]
 
+\subsection*{6. Classical row, per-segment wire overrides, and classical vertical control}
 \[
-\begin{quantikz}
-\lstick{\ket{\psi}} & \gate[2]{U} & \swap{1} & \meter{} \\
-\lstick{\ket{0}}    &             & \targX{} & \meter{}
+\begin{quantikz}[wire types={q,q}]
+\lstick{$c_0$}    & \qw  & \meter{}\vcw{1}           & \wireoverride{c} \\
+\lstick{\ket{\psi}} & \gate{H}         & \targ{}                   & \qw
 \end{quantikz}
 \]
 
+\subsection*{7. Raw vertical connectors: quantum, classical, and generic wire command}
 \[
 \begin{quantikz}
-\lstick{\ket{0}} & \gate{H}\gategroup[2,steps=2,style={rounded corners, dashed, inner xsep=2pt},background]{Entangle} & \ctrl{1} & \meter{} \\
-\lstick{\ket{0}} &                                                                                                     & \targ{}  & \meter{}
+\lstick{\ket{0}}   & \vqw{2}      & \vcw{1}      & \wire[d][2]{q} \\
+\lstick{\ket{0}}   & \gate{A}     & \gate{B}     & \qw            \\
+\lstick{\ket{\chi}} & \gate{C}     & \qw          & \gate{D}
 \end{quantikz}
 \]
 
+\subsection*{8. Swap ladder into a wide three-wire operation}
 \[
-\begin{quantikz}
-& \gate{H}\slice{prepare} & \ctrl{1}\slice{entangle} & \meter{} \\
-&                         & \targ{}                  & \meter{}
+\begin{quantikz}[column sep=0.9cm]
+\lstick{\ket{\psi_0}} & \swap{2} & \gate[wires=3,style={minimum width=2.4cm}]{\mathrm{SELECT}(x)} & \meter{} \\
+\lstick{\ket{\psi_1}} &          &                                                                      & \meter{} \\
+\lstick{\ket{\psi_2}} & \targX{} &                                                                      & \meter{}
+\end{quantikz}
+\]
+
+\subsection*{9. Frames, slices, and exporter-style RGB color options}
+\[
+\begin{quantikz}[row sep={1.0cm,between origins}, column sep=0.85cm]
+\lstick{\ket{0}} & \gate[style={draw={rgb,255:red,200;green,93;blue,45},fill={rgb,255:red,200;green,93;blue,45}}]{H}\gategroup[2,steps=3,style={rounded corners,dashed,inner xsep=3pt,draw={rgb,255:red,15;green,106;blue,109}},background]{ENTANGLE}\slice[style={draw={rgb,255:red,15;green,106;blue,109}}]{init} & \ctrl[style={draw={rgb,255:red,15;green,106;blue,109},fill={rgb,255:red,15;green,106;blue,109}},wire style={draw={rgb,255:red,15;green,106;blue,109}}]{1} & \gate[style={draw={rgb,255:red,73;green,134;blue,74},fill={rgb,255:red,73;green,134;blue,74},minimum width=1.7cm}]{R_Z(\theta)}\slice[style={draw={rgb,255:red,73;green,134;blue,74}}]{phase} & \meter[style={draw={rgb,255:red,70;green,70;blue,70},fill={rgb,255:red,245;green,245;blue,245}}]{} \\
+\lstick{\ket{0}} & \gate{S} & \targ{} & \gate{T^{\dagger}} & \meter{}
+\end{quantikz}
+\]
+
+\subsection*{10. Right label sharing its last cell and phantom-bracket label metadata}
+\[
+\begin{quantikz}[row sep={0.9cm,between origins}, column sep=0.7cm]
+\lstick{$\ket{0}$} & \gate{H} & \rstick[wires=2]{$\left[\vphantom{\begin{matrix}.\\.\end{matrix}}\right.$}\qw \\
+\lstick{$\ket{0}$} & \qw      & \qw \\
+\lstick{$\ket{a}$} & \gate{A\&B\ 50\%\ \#1} &
 \end{quantikz}
 \]
 
