@@ -1,0 +1,52 @@
+\documentclass{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{tikz}
+\usetikzlibrary{quantikz2}
+
+\begin{document}
+
+\section*{Quantikz Examples}
+
+\[
+\begin{quantikz}
+\lstick{\ket{0}} & \gate{H} & \gate{Z} & \meter{}
+\end{quantikz}
+\]
+
+\[
+\begin{quantikz}
+\lstick{\ket{0}} & \gate{H} & \ctrl{1} & \meter{} \\
+\lstick{\ket{0}} &          & \targ{}  & \meter{}
+\end{quantikz}
+\]
+
+\[
+\begin{quantikz}
+& \ctrl{1} & \qquad & & \ctrl{1} & \\
+& \ctrl{1} & \qquad & & \ctrl{1} & \\
+& \wireoverride{n} & \qquad & & & \wireoverride{n}
+\end{quantikz}
+\]
+
+\[
+\begin{quantikz}
+\lstick{\ket{\psi}} & \gate[2]{U} & \swap{1} & \meter{} \\
+\lstick{\ket{0}}    &             & \targX{} & \meter{}
+\end{quantikz}
+\]
+
+\[
+\begin{quantikz}
+\lstick{\ket{0}} & \gate{H}\gategroup[2,steps=2,style={rounded corners, dashed, inner xsep=2pt},background]{Entangle} & \ctrl{1} & \meter{} \\
+\lstick{\ket{0}} &                                                                                                     & \targ{}  & \meter{}
+\end{quantikz}
+\]
+
+\[
+\begin{quantikz}
+& \gate{H}\slice{prepare} & \ctrl{1}\slice{entangle} & \meter{} \\
+&                         & \targ{}                  & \meter{}
+\end{quantikz}
+\]
+
+\end{document}
