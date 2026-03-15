@@ -1,4 +1,5 @@
 import { canPasteClipboardAt, instantiateClipboardItems } from "./clipboard";
+import { DEFAULT_EXPORT_PREAMBLE } from "./document";
 import {
   DEFAULT_CIRCUIT_LAYOUT,
   clampColumnSepCm,
@@ -71,7 +72,8 @@ type Action =
   | { type: "resetCircuit" }
   | { type: "convert" }
   | { type: "setExportCode"; code: string }
-  | { type: "loadQuantikz"; imported: ImportedCircuit; code: string }
+  | { type: "setExportPreamble"; preamble: string }
+  | { type: "loadQuantikz"; imported: ImportedCircuit; code: string; preamble: string }
   | { type: "clearMessage" }
   | { type: "setMessage"; message: string | null };
 
@@ -560,6 +562,7 @@ function createInitialEditorState(): EditorState {
     selectedItemIds: [],
     activeTool: "select",
     exportCode: "",
+    exportPreamble: DEFAULT_EXPORT_PREAMBLE,
     exportIssues: [],
     uiMessage: null
   };
@@ -1216,6 +1219,13 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
         exportIssues: [],
         uiMessage: null
       };
+    case "setExportPreamble":
+      return {
+        ...state,
+        exportPreamble: action.preamble,
+        exportIssues: [],
+        uiMessage: null
+      };
     case "loadQuantikz":
       return withItems(
         {
@@ -1231,6 +1241,7 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
           selectedItemIds: [],
           activeTool: "select",
           exportCode: action.code,
+          exportPreamble: action.preamble,
           exportIssues: [],
           uiMessage: "Quantikz code loaded into the visual editor."
         },

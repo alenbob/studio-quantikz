@@ -238,6 +238,7 @@ export interface EditorState {
   selectedItemIds: string[];
   activeTool: ToolType;
   exportCode: string;
+  exportPreamble: string;
   exportIssues: ExportIssue[];
   uiMessage: string | null;
 }

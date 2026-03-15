@@ -299,6 +299,27 @@ describe("exportToQuantikz", () => {
     expect(code).toContain("\\targX{}");
   });
 
+  it("exports a controlled swap gate with a shared connector", () => {
+    const code = exportToQuantikz(
+      makeState({
+        qubits: 4,
+        items: [
+          { id: "ctrl-1", type: "controlDot", point: { row: 0, col: 2 } },
+          { id: "swap-1", type: "swapX", point: { row: 1, col: 2 } },
+          { id: "swap-2", type: "swapX", point: { row: 3, col: 2 } },
+          { id: "line-1", type: "verticalConnector", point: { row: 0, col: 2 }, length: 1, wireType: "quantum" },
+          { id: "line-2", type: "verticalConnector", point: { row: 1, col: 2 }, length: 2, wireType: "quantum" }
+        ],
+        wireTypes: Array.from({ length: 4 }, () => "quantum"),
+        wireLabels: Array.from({ length: 4 }, () => ({ left: "", right: "" }))
+      })
+    );
+
+    expect(code).toContain("\\ctrl{1}");
+    expect(code).toContain("\\swap{2}");
+    expect(code).toContain("\\targX{}");
+  });
+
   it("falls back to a raw wire command for a standalone connector", () => {
     const code = exportToQuantikz(
       makeState({

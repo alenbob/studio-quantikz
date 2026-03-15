@@ -3,9 +3,9 @@ import type {
   EditorState,
   ExportIssue,
   HorizontalSegmentItem,
-  SwapXItem,
   VerticalConnectorItem
 } from "./types";
+import { getSwapStatusById } from "./swapAnalysis";
 import { getGateLabelIssues, getLabelIssues } from "./tex";
 
 function issue(id: string, message: string, severity: "error" | "warning" = "error"): ExportIssue {
@@ -14,93 +14,6 @@ function issue(id: string, message: string, severity: "error" | "warning" = "err
 
 function cellKey(row: number, col: number): string {
   return `${row}:${col}`;
-}
-
-function connectorRange(item: Pick<VerticalConnectorItem, "point" | "length">): [number, number] {
-  return [item.point.row, item.point.row + item.length];
-}
-
-interface NormalizedConnectorGroup {
-  point: { row: number; col: number };
-  length: number;
-  wireType: VerticalConnectorItem["wireType"];
-  color: string | null;
-  members: VerticalConnectorItem[];
-}
-
-function normalizeConnectors(connectors: VerticalConnectorItem[]): NormalizedConnectorGroup[] {
-  const byColumn = new Map<number, VerticalConnectorItem[]>();
-
-  for (const connector of connectors) {
-    const bucket = byColumn.get(connector.point.col) ?? [];
-    bucket.push(connector);
-    byColumn.set(connector.point.col, bucket);
-  }
-
-  const normalized: NormalizedConnectorGroup[] = [];
-
-  for (const [col, columnConnectors] of byColumn.entries()) {
-    const sorted = [...columnConnectors].sort((left, right) =>
-      left.point.row - right.point.row || left.length - right.length
-    );
-
-    let active: NormalizedConnectorGroup | null = null;
-
-    for (const connector of sorted) {
-      const [start, end] = connectorRange(connector);
-
-      if (!active) {
-        active = {
-          point: { row: start, col },
-          length: end - start,
-          wireType: connector.wireType,
-          color: connector.color ?? null,
-          members: [connector]
-        };
-        continue;
-      }
-
-      const activeEnd = active.point.row + active.length;
-      if (start <= activeEnd) {
-        active = {
-          point: active.point,
-          length: Math.max(activeEnd, end) - active.point.row,
-          wireType: active.wireType === "classical" || connector.wireType === "classical"
-            ? "classical"
-            : "quantum",
-          color: active.color ?? connector.color ?? null,
-          members: [...active.members, connector]
-        };
-        continue;
-      }
-
-      normalized.push(active);
-      active = {
-        point: { row: start, col },
-        length: end - start,
-        wireType: connector.wireType,
-        color: connector.color ?? null,
-        members: [connector]
-      };
-    }
-
-    if (active) {
-      normalized.push(active);
-    }
-  }
-
-  return normalized;
-}
-
-function swapEndpointCount(item: SwapXItem, connectors: Array<Pick<VerticalConnectorItem, "point" | "length">>): number {
-  return connectors.filter((connector) => {
-    if (connector.point.col !== item.point.col) {
-      return false;
-    }
-
-    const [start, end] = connectorRange(connector);
-    return item.point.row === start || item.point.row === end;
-  }).length;
 }
 
 function gateLikeSpanRows(item: CircuitItem): number {
@@ -118,11 +31,10 @@ export function validateCircuit(state: EditorState): ExportIssue[] {
   const connectors = state.items.filter(
     (item): item is VerticalConnectorItem => item.type === "verticalConnector"
   );
-  const normalizedConnectors = normalizeConnectors(connectors);
   const horizontals = state.items.filter(
     (item): item is HorizontalSegmentItem => item.type === "horizontalSegment"
   );
-  const swaps = state.items.filter((item): item is SwapXItem => item.type === "swapX");
+  const swapStatuses = getSwapStatusById(state.items);
 
   for (const item of state.items) {
     if (item.type === "horizontalSegment") {
@@ -227,6 +139,10 @@ export function validateCircuit(state: EditorState): ExportIssue[] {
     if (controlCount > 0 && targetCount > 0) {
       issues.push(issue(`control-target-${key}`, "A control dot and a target cannot occupy the same cell."));
     }
+
+    if (controlCount > 0 && swapCount > 0) {
+      issues.push(issue(`control-swap-${key}`, "A control dot and a swap X cannot occupy the same cell."));
+    }
   }
 
   for (let gateIndex = 0; gateIndex < gateLikes.length; gateIndex += 1) {
@@ -277,20 +193,9 @@ export function validateCircuit(state: EditorState): ExportIssue[] {
     }
   }
 
-  for (const swap of swaps) {
-    const endpointCount = swapEndpointCount(swap, normalizedConnectors);
-    if (endpointCount !== 1) {
-      issues.push(issue(`swap-endpoint-${swap.id}`, "Each swap X must be an endpoint of exactly one vertical connector."));
-    }
-  }
-
-  for (const connector of normalizedConnectors) {
-    const [start, end] = connectorRange(connector);
-    const swapEndpoints = swaps.filter((swap) => swap.point.col === connector.point.col)
-      .filter((swap) => swap.point.row === start || swap.point.row === end);
-
-    if (swapEndpoints.length === 1) {
-      issues.push(issue(`swap-pair-${connector.id}`, "A swap connector must terminate in two swap X markers."));
+  for (const [swapId, status] of swapStatuses.entries()) {
+    if (!status.valid) {
+      issues.push(issue(`swap-status-${swapId}`, status.message ?? "Invalid swap configuration."));
     }
   }
 

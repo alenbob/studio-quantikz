@@ -102,7 +102,7 @@ describe("App smoke tests", () => {
     expect(screen.getByRole("button", { name: /^gate$/i })).toBeInTheDocument();
   });
 
-  it("merges the selection outline when multiple items are selected", async () => {
+  it("draws a tight outline around each selected object", async () => {
     const user = userEvent.setup();
     const { container } = render(<App />);
 
@@ -113,8 +113,8 @@ describe("App smoke tests", () => {
 
     fireEvent.keyDown(window, { key: "a", ctrlKey: true });
 
-    expect(container.querySelectorAll(".merged-selection-outline")).toHaveLength(1);
-    expect(container.querySelectorAll(".item-outline-selected")).toHaveLength(1);
+    expect(container.querySelectorAll(".merged-selection-outline")).toHaveLength(0);
+    expect(container.querySelectorAll(".item-outline-selected")).toHaveLength(2);
   });
 
   it("renders gate labels through KaTeX automatically", async () => {
@@ -175,6 +175,39 @@ describe("App smoke tests", () => {
     const exported = (screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value;
     expect(exported).toContain("\\lstick{$\\ket{0}$}");
     expect(exported).toContain("\\lstick{$\\ket{\\psi}$}");
+  });
+
+  it("splits a standalone document into preamble and quantikz code when loading", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText(/quantikz output/i), {
+      target: {
+        value: String.raw`\documentclass[tikz,border=8pt]{standalone}
+\usepackage{tikz}
+\usetikzlibrary{quantikz2}
+\newcommand{\foo}{bar}
+\begin{document}
+\begin{quantikz}
+\lstick{$\ket{0}$} & \gate{H}
+\end{quantikz}
+\end{document}`
+      }
+    });
+
+    await user.click(screen.getByRole("button", { name: /convert to visual/i }));
+    await user.click(screen.getByRole("button", { name: /^preamble$/i }));
+
+    expect((screen.getByLabelText(/quantikz preamble/i) as HTMLTextAreaElement).value).toContain(
+      String.raw`\newcommand{\foo}{bar}`
+    );
+    await user.click(screen.getByRole("button", { name: /^code$/i }));
+    expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain(
+      String.raw`\begin{quantikz}`
+    );
+    expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).not.toContain(
+      String.raw`\begin{document}`
+    );
   });
 
   it("pastes a copied selection back into the circuit", async () => {
@@ -328,6 +361,40 @@ describe("App smoke tests", () => {
     expect(screen.queryByRole("dialog", { name: /shortcuts/i })).not.toBeInTheDocument();
   });
 
+  it("opens the cached export history with H and loads an entry into the export panel", async () => {
+    window.localStorage.clear();
+    window.localStorage.setItem(
+      "quantikzz.export-history.v1",
+      JSON.stringify([
+        {
+          id: "history-1",
+          createdAt: "2026-03-15T10:00:00.000Z",
+          code: "\\begin{quantikz}\n\\lstick{$\\\\ket{0}$} & \\gate{H}\n\\end{quantikz}",
+          preamble: "\\documentclass{standalone}\n\\usetikzlibrary{quantikz2}",
+          svg: "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'><rect width='20' height='20' fill='#ffffff'/></svg>"
+        }
+      ])
+    );
+
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+
+    fireEvent.keyDown(window, { key: "h" });
+
+    const dialog = screen.getByRole("dialog", { name: /history/i });
+    expect(dialog).toBeInTheDocument();
+    expect(within(dialog).getByText(/\\begin\{quantikz\}/)).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole("button", { name: /\\begin\{quantikz\}/ }));
+
+    expect(screen.queryByRole("dialog", { name: /history/i })).not.toBeInTheDocument();
+    expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain("\\gate{H}");
+    expect(container.querySelector('rect[data-kind="gate-rect"]')).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: /^preamble$/i }));
+    expect((screen.getByLabelText(/quantikz preamble/i) as HTMLTextAreaElement).value).toContain("\\usetikzlibrary{quantikz2}");
+  });
+
   it("lets a selected control switch to an open c0 control", async () => {
     const user = userEvent.setup();
     const { container } = render(<App />);
@@ -347,6 +414,23 @@ describe("App smoke tests", () => {
 
     expect(container.querySelector(".control-dot-open")).toBeTruthy();
     expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain("\\ocontrol{}");
+  });
+
+  it("marks incomplete swap endpoints red and shows the reason on hover", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+
+    await user.click(screen.getByRole("button", { name: /^swap x$/i }));
+    await user.click(screen.getByTestId("grid-cell-0-0"));
+    await user.click(screen.getByRole("button", { name: /^wires$/i }));
+    await user.click(screen.getByTestId("grid-cell-0-0"));
+
+    const invalidSwap = container.querySelector(".swap-x.is-invalid") as SVGGElement;
+    expect(invalidSwap).toBeTruthy();
+
+    fireEvent.pointerEnter(invalidSwap.closest(".item-group") as SVGGElement, { clientX: 120, clientY: 140 });
+
+    expect(screen.getByText(/connect this swap x to one other swap x/i)).toBeInTheDocument();
   });
 
   it("paints multiple vertical connectors in one pencil stroke", async () => {

@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import crossBlackIcon from "../assets/cross_black.svg";
 import meterBlackIcon from "../assets/meter_black.svg";
 import targBlackIcon from "../assets/targ_black.svg";
 import { canPasteClipboardAt, instantiateClipboardItems } from "../clipboard";
@@ -31,6 +30,7 @@ import {
 import { projectSelectionMove, selectionHasExternalVerticalLinks } from "../movement";
 import { canPlaceItemsWithoutOverlap } from "../occupancy";
 import { canPlaceCellToolAtRow, getBoardMetrics, placementFromViewportPoint } from "../placement";
+import { getSwapStatusById } from "../swapAnalysis";
 import { isLikelyTexMath, normalizeGateLabel, normalizeLabel, renderGateDisplayHtml, renderGateLabelHtml } from "../tex";
 import {
   getWireLabelBracket,
@@ -111,6 +111,8 @@ interface DragState {
 }
 
 type ItemOutlineTone = "selected" | "preview" | "invalid-preview";
+
+const INVALID_SWAP_COLOR = "#c24038";
 
 function isGateLikeItem(item: CircuitItem): item is GateItem | MeterItem {
   return item.type === "gate" || item.type === "meter";
@@ -312,17 +314,17 @@ function getItemBounds(
 function getItemOutlinePadding(item: CircuitItem): { x: number; y: number; radius: number } {
   switch (item.type) {
     case "horizontalSegment":
-      return { x: 8, y: 6, radius: 12 };
+      return { x: 2, y: 2, radius: 6 };
     case "verticalConnector":
-      return { x: 8, y: 8, radius: 12 };
+      return { x: 3, y: 2, radius: 6 };
     case "slice":
-      return { x: 6, y: 6, radius: 10 };
+      return { x: 2, y: 2, radius: 4 };
     case "controlDot":
     case "targetPlus":
     case "swapX":
-      return { x: 7, y: 7, radius: 12 };
+      return { x: 2, y: 2, radius: 5 };
     default:
-      return { x: 6, y: 6, radius: 10 };
+      return { x: 2, y: 2, radius: 4 };
   }
 }
 
@@ -347,39 +349,6 @@ function renderItemOutline(
       className={`item-outline item-outline-${tone}`}
     />
   );
-}
-
-function getMergedSelectionOutline(
-  items: CircuitItem[],
-  steps: number,
-  qubits: number,
-  layout: CircuitLayout,
-  columnMetrics: ColumnMetrics
-): SelectionRect | null {
-  if (items.length < 2) {
-    return null;
-  }
-
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-
-  for (const item of items) {
-    const bounds = getItemBounds(item, steps, qubits, layout, columnMetrics);
-    const padding = getItemOutlinePadding(item);
-    minX = Math.min(minX, bounds.x - padding.x);
-    minY = Math.min(minY, bounds.y - padding.y);
-    maxX = Math.max(maxX, bounds.x + bounds.width + padding.x);
-    maxY = Math.max(maxY, bounds.y + bounds.height + padding.y);
-  }
-
-  return {
-    x: minX,
-    y: minY,
-    width: maxX - minX,
-    height: maxY - minY
-  };
 }
 
 function renderEditableWireLabel(
@@ -750,10 +719,16 @@ function renderVerticalConnector(
   return <line x1={x} x2={x} y1={y1} y2={y2} className={className} style={style} />;
 }
 
-function renderMarker(item: CircuitItem, isSelected: boolean, layout: CircuitLayout, columnMetrics: ColumnMetrics): JSX.Element {
+function renderMarker(
+  item: CircuitItem,
+  isSelected: boolean,
+  layout: CircuitLayout,
+  columnMetrics: ColumnMetrics,
+  invalidSwap = false
+): JSX.Element {
   const cx = getCellCenterX(item.point.col, layout, columnMetrics);
   const cy = getRowY(item.point.row, layout);
-  const color = getItemColor(item);
+  const color = invalidSwap ? INVALID_SWAP_COLOR : getItemColor(item);
 
   if (item.type === "controlDot") {
     const controlState = controlStateFor(item);
@@ -787,17 +762,20 @@ function renderMarker(item: CircuitItem, isSelected: boolean, layout: CircuitLay
     );
   }
 
-  const iconSize = 24;
   return (
-    <g className={`swap-x ${isSelected ? "is-selected" : ""}`} style={{ stroke: color }}>
-      <image
-        href={crossBlackIcon}
-        x={cx - (iconSize / 2)}
-        y={cy - (iconSize / 2)}
-        width={iconSize}
-        height={iconSize}
-        preserveAspectRatio="xMidYMid meet"
-      />
+    <g className={`swap-x ${isSelected ? "is-selected" : ""} ${invalidSwap ? "is-invalid" : ""}`} style={{ stroke: color }}>
+      {invalidSwap && (
+        <rect
+          x={cx - 10}
+          y={cy - 10}
+          width={20}
+          height={20}
+          rx={4}
+          className="swap-x-border"
+        />
+      )}
+      <line x1={cx - 8} x2={cx + 8} y1={cy - 8} y2={cy + 8} />
+      <line x1={cx - 8} x2={cx + 8} y1={cy + 8} y2={cy - 8} />
     </g>
   );
 }
@@ -899,6 +877,7 @@ export function Workspace({
   const [editingWireLabel, setEditingWireLabel] = useState<{ row: number; side: "left" | "right" } | null>(null);
   const [areaDraw, setAreaDraw] = useState<AreaDrawState | null>(null);
   const [pencilStroke, setPencilStroke] = useState<PencilStrokeState | null>(null);
+  const [swapTooltip, setSwapTooltip] = useState<{ message: string; x: number; y: number } | null>(null);
   const pencilVisitedRef = useRef<Set<string>>(new Set());
   const dragPointerRef = useRef<{ clientX: number; clientY: number } | null>(null);
   const dragGrowRef = useRef({ lastRowGrowAt: 0, lastColGrowAt: 0 });
@@ -936,18 +915,11 @@ export function Workspace({
       : [];
   const marqueeRect = marquee ? normalizeRect(marquee.start, marquee.current) : null;
   const wireLayerItems = useMemo(() => state.items.filter(isWireLayerItem), [state.items]);
-  const selectedItems = useMemo(
-    () => state.items.filter((item) => selectionSet.has(item.id)),
-    [selectionSet, state.items]
-  );
-  const mergedSelectionOutline = useMemo(
-    () => getMergedSelectionOutline(selectedItems, state.steps, state.qubits, layout, columnMetrics),
-    [columnMetrics, layout, selectedItems, state.qubits, state.steps]
-  );
   const gateLayerItems = useMemo(() => state.items.filter(isGateLikeItem), [state.items]);
   const annotationBackgroundItems = useMemo(() => state.items.filter(isAnnotationBackgroundItem), [state.items]);
   const annotationOverlayItems = useMemo(() => state.items.filter(isAnnotationOverlayItem), [state.items]);
   const markerLayerItems = useMemo(() => state.items.filter(isMarkerItem), [state.items]);
+  const swapStatuses = useMemo(() => getSwapStatusById(state.items), [state.items]);
   const previewWireItems = useMemo(() => pastePreviewItems.filter(isWireLayerItem), [pastePreviewItems]);
   const previewGateItems = useMemo(() => pastePreviewItems.filter(isGateLikeItem), [pastePreviewItems]);
   const previewAnnotationBackgroundItems = useMemo(() => pastePreviewItems.filter(isAnnotationBackgroundItem), [pastePreviewItems]);
@@ -1247,7 +1219,8 @@ export function Workspace({
 
   function renderInteractiveItem(item: CircuitItem): JSX.Element {
     const selected = selectionSet.has(item.id);
-    const showIndividualOutline = selected && state.selectedItemIds.length <= 1;
+    const swapStatus = item.type === "swapX" ? swapStatuses.get(item.id) : null;
+    const invalidSwap = item.type === "swapX" && !!swapStatus && !swapStatus.valid;
     const rendered =
       item.type === "gate"
         ? renderGate(item, selected, layout, columnMetrics)
@@ -1260,8 +1233,8 @@ export function Workspace({
           : item.type === "verticalConnector"
             ? renderVerticalConnector(item, selected, layout, columnMetrics)
             : item.type === "horizontalSegment"
-              ? renderHorizontalSegment(item, selected, state.steps, layout, columnMetrics)
-              : renderMarker(item, selected, layout, columnMetrics);
+          ? renderHorizontalSegment(item, selected, state.steps, layout, columnMetrics)
+              : renderMarker(item, selected, layout, columnMetrics, invalidSwap);
 
     return (
       <g
@@ -1269,9 +1242,37 @@ export function Workspace({
         data-item-id={item.id}
         data-testid={`item-${item.id}`}
         className="item-group"
+        onPointerEnter={(event) => {
+          if (!invalidSwap || !swapStatus?.message) {
+            return;
+          }
+
+          setSwapTooltip({
+            message: swapStatus.message,
+            x: Number.isFinite(event.clientX) ? event.clientX : 0,
+            y: Number.isFinite(event.clientY) ? event.clientY : 0
+          });
+        }}
+        onPointerMove={(event) => {
+          if (!invalidSwap || !swapStatus?.message) {
+            return;
+          }
+
+          setSwapTooltip({
+            message: swapStatus.message,
+            x: Number.isFinite(event.clientX) ? event.clientX : 0,
+            y: Number.isFinite(event.clientY) ? event.clientY : 0
+          });
+        }}
+        onPointerLeave={() => {
+          if (invalidSwap) {
+            setSwapTooltip(null);
+          }
+        }}
         onPointerDown={(event) => {
           event.preventDefault();
           event.stopPropagation();
+          setSwapTooltip(null);
 
           if (isPasteMode) {
             placePastedClipboardFromPointer(event.clientX, event.clientY);
@@ -1317,13 +1318,14 @@ export function Workspace({
           updateHoverFromPointer(event.clientX, event.clientY, item.type);
         }}
       >
-        {showIndividualOutline && renderItemOutline(item, "selected", state.steps, state.qubits, layout, columnMetrics)}
+        {selected && renderItemOutline(item, "selected", state.steps, state.qubits, layout, columnMetrics)}
         {rendered}
       </g>
     );
   }
 
   function renderPreviewItem(item: CircuitItem, key: string, invalid = false): JSX.Element {
+    const previewInvalidSwap = item.type === "swapX" && invalid;
     const rendered =
       item.type === "gate"
         ? renderGate(item, false, layout, columnMetrics)
@@ -1336,8 +1338,8 @@ export function Workspace({
           : item.type === "verticalConnector"
             ? renderVerticalConnector(item, false, layout, columnMetrics)
             : item.type === "horizontalSegment"
-              ? renderHorizontalSegment(item, false, state.steps, layout, columnMetrics)
-              : renderMarker(item, false, layout, columnMetrics);
+          ? renderHorizontalSegment(item, false, state.steps, layout, columnMetrics)
+              : renderMarker(item, false, layout, columnMetrics, previewInvalidSwap);
 
     return (
       <g key={key} className={`paste-preview-item ${invalid ? "is-invalid" : ""}`}>
@@ -1728,6 +1730,7 @@ export function Workspace({
           if (!dragState && !marquee && !areaDraw && !pencilStroke) {
             setHoverPlacement(null);
           }
+          setSwapTooltip(null);
         }}
       >
         <svg width={width} height={height} className="workspace-svg" aria-label="Circuit workbench">
@@ -2083,18 +2086,6 @@ export function Workspace({
             </g>
           ))}
           {renderAreaPreview()}
-
-          {mergedSelectionOutline && (
-            <rect
-              x={mergedSelectionOutline.x}
-              y={mergedSelectionOutline.y}
-              width={mergedSelectionOutline.width}
-              height={mergedSelectionOutline.height}
-              rx={14}
-              className="item-outline item-outline-selected merged-selection-outline"
-            />
-          )}
-
           {marqueeRect && (
             <rect
               x={marqueeRect.x}
@@ -2106,6 +2097,18 @@ export function Workspace({
             />
           )}
         </svg>
+        {swapTooltip && (
+          <div
+            className="workspace-tooltip"
+            style={{
+              left: swapTooltip.x + 14,
+              top: swapTooltip.y + 18
+            }}
+            role="status"
+          >
+            {swapTooltip.message}
+          </div>
+        )}
       </div>
     </section>
   );

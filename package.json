@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview",
+    "preview": "node scripts/preview-server.mjs",
+    "start": "node scripts/preview-server.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },

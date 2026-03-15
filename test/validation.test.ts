@@ -85,6 +85,25 @@ describe("validateCircuit", () => {
     expect(issues.some((entry) => entry.message.includes("swap"))).toBe(true);
   });
 
+  it("allows controlled swaps when the same connected wire contains one swap pair", () => {
+    const issues = validateCircuit(
+      makeState({
+        qubits: 4,
+        items: [
+          { id: "ctrl-1", type: "controlDot", point: { row: 0, col: 1 } },
+          { id: "swap-1", type: "swapX", point: { row: 1, col: 1 } },
+          { id: "swap-2", type: "swapX", point: { row: 3, col: 1 } },
+          { id: "line-1", type: "verticalConnector", point: { row: 0, col: 1 }, length: 1, wireType: "quantum" },
+          { id: "line-2", type: "verticalConnector", point: { row: 1, col: 1 }, length: 2, wireType: "quantum" }
+        ],
+        wireTypes: Array.from({ length: 4 }, () => "quantum"),
+        wireLabels: Array.from({ length: 4 }, () => ({ left: "", right: "" }))
+      })
+    );
+
+    expect(issues.some((entry) => entry.message.includes("swap"))).toBe(false);
+  });
+
   it("reports malformed gate labels before export", () => {
     const issues = validateCircuit(
       makeState({

@@ -593,7 +593,6 @@ export function Inspector({
         (selectedCount > 1 ? (
           <>
             <div className="selection-header-row">
-              <div className="selected-pill selected-pill-name">{selectedCount} elements</div>
               {onClearSelection && (
                 <button
                   type="button"
@@ -604,6 +603,7 @@ export function Inspector({
                   ←
                 </button>
               )}
+              <div className="selected-pill selected-pill-name">{selectedCount} elements</div>
             </div>
             <p className="empty-panel-copy">
               Group selection is active. Use copy/paste to duplicate it or delete to remove the whole group.
@@ -619,11 +619,6 @@ export function Inspector({
         ) : (
           <>
             <div className="selection-header-row">
-              <div className="selected-pill selected-pill-name">
-                {selectedWireLabelGroup
-                  ? `${selectedWireLabelGroup.side === "left" ? "Left" : "Right"} label`
-                  : ITEM_LABELS[selectedItem!.type]}
-              </div>
               {onClearSelection && (
                 <button
                   type="button"
@@ -634,6 +629,11 @@ export function Inspector({
                   ←
                 </button>
               )}
+              <div className="selected-pill selected-pill-name">
+                {selectedWireLabelGroup
+                  ? `${selectedWireLabelGroup.side === "left" ? "Left" : "Right"} label`
+                  : ITEM_LABELS[selectedItem!.type]}
+              </div>
             </div>
 
             {selectedWireLabelGroup && onWireLabelGroupChange && onWireLabelGroupUnmerge &&

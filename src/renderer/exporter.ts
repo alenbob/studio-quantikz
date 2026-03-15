@@ -19,6 +19,10 @@ import {
   isLikelyTexMath,
   stripMathDelimiters
 } from "./tex";
+import {
+  normalizeConnectors,
+  pickControlledSwapAnchorRow
+} from "./swapAnalysis";
 import { getWireLabelBracket, getWireLabelSpan, isWireLabelGroupStart, type WireLabelSide } from "./wireLabels";
 
 function itemKey(item: CircuitItem): string {
@@ -27,18 +31,6 @@ function itemKey(item: CircuitItem): string {
 
 function wireKey(row: number, col: number): string {
   return `${row}:${col}`;
-}
-
-function rangeForConnector(item: Pick<VerticalConnectorItem, "point" | "length">): [number, number] {
-  return [item.point.row, item.point.row + item.length];
-}
-
-interface NormalizedConnectorGroup {
-  point: { row: number; col: number };
-  length: number;
-  wireType: WireType;
-  color: string | null;
-  members: VerticalConnectorItem[];
 }
 
 function isConsecutive(rows: number[]): boolean {
@@ -201,69 +193,6 @@ function appendConnectorWireOption(options: string[], wireType: WireType): void 
   }
 }
 
-function normalizeConnectors(connectors: VerticalConnectorItem[]): NormalizedConnectorGroup[] {
-  const byColumn = new Map<number, VerticalConnectorItem[]>();
-
-  for (const connector of connectors) {
-    const bucket = byColumn.get(connector.point.col) ?? [];
-    bucket.push(connector);
-    byColumn.set(connector.point.col, bucket);
-  }
-
-  const normalized: NormalizedConnectorGroup[] = [];
-
-  for (const [col, columnConnectors] of byColumn.entries()) {
-    const sorted = [...columnConnectors].sort((left, right) =>
-      left.point.row - right.point.row || left.length - right.length
-    );
-
-    let active: NormalizedConnectorGroup | null = null;
-
-    for (const connector of sorted) {
-      const [start, end] = rangeForConnector(connector);
-
-      if (!active) {
-        active = {
-          point: { row: start, col },
-          length: end - start,
-          wireType: connector.wireType,
-          color: connector.color ?? null,
-          members: [connector]
-        };
-        continue;
-      }
-
-      const activeEnd = active.point.row + active.length;
-      if (start <= activeEnd) {
-        active = {
-          point: active.point,
-          length: Math.max(activeEnd, end) - active.point.row,
-          wireType: active.wireType === "classical" || connector.wireType === "classical"
-            ? "classical"
-            : "quantum",
-          color: active.color ?? connector.color ?? null,
-          members: [...active.members, connector]
-        };
-        continue;
-      }
-
-      normalized.push(active);
-      active = {
-        point: { row: start, col },
-        length: end - start,
-        wireType: connector.wireType,
-        color: connector.color ?? null,
-        members: [connector]
-      };
-    }
-
-    if (active) {
-      normalized.push(active);
-    }
-  }
-
-  return normalized;
-}
 
 function formatSpacingCm(value: number): string {
   const rounded = Math.round(value * 100) / 100;
@@ -427,7 +356,8 @@ export function exportToQuantikz(state: EditorState): string {
   }
 
   for (const connector of normalizedConnectors) {
-    const [start, end] = rangeForConnector(connector);
+    const start = connector.point.row;
+    const end = connector.point.row + connector.length;
     const column = connector.point.col;
     const connectorControls = controls
       .filter((item) => item.point.col === column)
@@ -440,7 +370,7 @@ export function exportToQuantikz(state: EditorState): string {
 
     const connectorSwaps = swaps
       .filter((item) => item.point.col === column)
-      .filter((item) => item.point.row === start || item.point.row === end)
+      .filter((item) => item.point.row >= start && item.point.row <= end)
       .sort((left, right) => left.point.row - right.point.row);
 
     const connectorGateTargets = gateLikes.filter(
@@ -448,23 +378,47 @@ export function exportToQuantikz(state: EditorState): string {
     ).sort((left, right) => left.point.row - right.point.row);
 
     if (connectorSwaps.length === 2) {
+      const sortedSwaps = [...connectorSwaps].sort((left, right) => left.point.row - right.point.row);
+      const topSwap = sortedSwaps[0];
+      const bottomSwap = sortedSwaps[1];
       const swapStartOptionParts: string[] = [];
-      const swapStartStyle = commandColorOptions(connectorSwaps[0].color ?? connector.color, { wire: true });
+      const swapStartStyle = commandColorOptions(topSwap.color ?? connector.color, { wire: true });
       if (swapStartStyle) {
         swapStartOptionParts.push(swapStartStyle);
       }
       appendConnectorWireOption(swapStartOptionParts, connector.wireType);
-      const swapEndOptions = commandColorOptions(connectorSwaps[1].color ?? connector.color);
-      cells[start][column].push(
+
+      for (const control of connectorControls) {
+        const controlOptionParts: string[] = [];
+        const controlStyle = commandColorOptions(control.color ?? connector.color, {
+          fill: controlStateFor(control) === "open" ? "open" : "solid",
+          wire: true
+        });
+        if (controlStyle) {
+          controlOptionParts.push(controlStyle);
+        }
+        appendConnectorWireOption(controlOptionParts, connector.wireType);
+        const controlCommand = controlStateFor(control) === "open" ? "\\octrl" : "\\ctrl";
+        const targetRow = pickControlledSwapAnchorRow(control.point.row, topSwap.point.row, bottomSwap.point.row);
+        cells[control.point.row][column].push(
+          controlOptionParts.length > 0
+            ? `${controlCommand}[${wrapOptionBlock(controlOptionParts)}]{${targetRow - control.point.row}}`
+            : `${controlCommand}{${targetRow - control.point.row}}`
+        );
+        used.add(itemKey(control));
+      }
+
+      const swapEndOptions = commandColorOptions(bottomSwap.color ?? connector.color);
+      cells[topSwap.point.row][column].push(
         swapStartOptionParts.length > 0
-          ? `\\swap[${wrapOptionBlock(swapStartOptionParts)}]{${end - start}}`
-          : `\\swap{${end - start}}`
+          ? `\\swap[${wrapOptionBlock(swapStartOptionParts)}]{${bottomSwap.point.row - topSwap.point.row}}`
+          : `\\swap{${bottomSwap.point.row - topSwap.point.row}}`
       );
-      cells[end][column].push(swapEndOptions ? `\\targX[${swapEndOptions}]{}`
+      cells[bottomSwap.point.row][column].push(swapEndOptions ? `\\targX[${swapEndOptions}]{}`
         : "\\targX{}");
       connector.members.forEach((member) => used.add(itemKey(member)));
-      used.add(itemKey(connectorSwaps[0]));
-      used.add(itemKey(connectorSwaps[1]));
+      used.add(itemKey(topSwap));
+      used.add(itemKey(bottomSwap));
       continue;
     }
 

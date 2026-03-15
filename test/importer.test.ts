@@ -150,6 +150,23 @@ describe("importFromQuantikz", () => {
     expect(openControls.every((item) => item.type === "controlDot" && item.controlState === "open")).toBe(true);
   });
 
+  it("imports a controlled swap gate into swap markers plus merged connectors", () => {
+    const code = String.raw`\begin{quantikz}
+\lstick{$\ket{c}$} & \ctrl{1} \\
+\lstick{$\ket{0}$} & \swap{2} \\
+\lstick{$\ket{0}$} & \qw \\
+\lstick{$\ket{0}$} & \targX{}
+\end{quantikz}`;
+
+    const imported = importFromQuantikz(code);
+
+    expect(imported.items.filter((item) => item.type === "controlDot")).toHaveLength(1);
+    expect(imported.items.filter((item) => item.type === "swapX")).toHaveLength(2);
+    expect(
+      imported.items.some((item) => item.type === "verticalConnector" && item.point.row === 0 && item.point.col === 0 && item.length === 3)
+    ).toBe(true);
+  });
+
   it("merges multiple imported control offsets into one visual control with a shared connector", () => {
     const code = String.raw`\begin{quantikz}
 \lstick{$\ket{0}$} & \ctrl{1} \ctrl{2} \\
