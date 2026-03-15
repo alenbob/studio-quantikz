@@ -2,6 +2,7 @@ import { useEffect, useMemo, useReducer, useRef, useState, type DragEvent, type 
 import { buildClipboard, canPasteClipboardAt } from "./clipboard";
 import cmdIcon from "./assets/cmd.svg";
 import automaticIcon from "./assets/automatic.svg";
+import historyIcon from "./assets/history.svg";
 import lockedIcon from "./assets/locked.svg";
 import unlockedIcon from "./assets/unlocked.svg";
 import { Palette, TOOL_LABELS } from "./components/Palette";
@@ -816,7 +817,7 @@ export default function App(): JSX.Element {
     <div className="app-shell">
       <header className="top-bar">
         <div className="title-block">
-          <p className="eyebrow">Quantikz Studio</p>
+          <p className="eyebrow">Studio Quantikz</p>
           <div className="title-row">
             <h1>Circuit drawer</h1>
             <button
@@ -832,6 +833,16 @@ export default function App(): JSX.Element {
           </div>
         </div>
         <div className="toolbar-controls">
+          <button
+            type="button"
+            className="shortcut-launcher history-launcher"
+            aria-label="Show export history"
+            title="Show export history"
+            onClick={handleOpenHistory}
+          >
+            <img src={historyIcon} alt="" className="shortcut-help-icon" aria-hidden="true" />
+            <span className="history-launcher-shortcut" aria-hidden="true">H</span>
+          </button>
           <div className="toolbar-stepper" aria-label="Qubits control group">
             <div className="stepper-control">
               <span className="stepper-title" aria-hidden="true">Qubits</span>
@@ -1108,6 +1119,7 @@ export default function App(): JSX.Element {
       )}
 
       <main className={`app-body ${hasSelection ? "has-context-sidebar" : ""}`}>
+        <div key={hasSelection ? "inspector" : "palette"} className={hasSelection ? "left-panel-slide-in" : "left-panel-slide-back"}>
         {hasSelection ? (
           <Inspector
             selectedItem={selectedItem}
@@ -1163,6 +1175,7 @@ export default function App(): JSX.Element {
             onSelectTool={handleToolSelection}
           />
         )}
+        </div>
 
         <Workspace
           state={state}

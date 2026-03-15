@@ -141,6 +141,25 @@ select,
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
 }
 
+.history-launcher {
+  width: auto;
+  padding: 0 16px 0 10px;
+  justify-content: center;
+  position: relative;
+}
+
+.history-launcher-shortcut {
+  position: absolute;
+  bottom: 7px;
+  right: 12px;
+  font-size: 0.5rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: rgba(191, 217, 255, 0.88);
+  line-height: 1;
+  pointer-events: none;
+}
+
 .shortcut-chip,
 .shortcut-key,
 .palette-shortcut {
@@ -1325,6 +1344,26 @@ select,
   display: flex;
   flex-direction: column;
   gap: 18px;
+}
+
+@keyframes leftPanelSlideIn {
+  from { transform: translateX(32px); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+@keyframes leftPanelSlideBack {
+  from { transform: translateX(-32px); opacity: 0; }
+  to   { transform: translateX(0);     opacity: 1; }
+}
+
+.left-panel-slide-in {
+  animation: leftPanelSlideIn 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  min-width: 0;
+}
+
+.left-panel-slide-back {
+  animation: leftPanelSlideBack 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  min-width: 0;
 }
 
 .selected-pill {
