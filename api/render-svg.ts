@@ -1,4 +1,4 @@
-import { renderQuantikzSvg } from "../src/server/renderQuantikz";
+import { renderQuantikzSvg } from "../src/server/renderQuantikz.js";
 
 async function readRequestBody(request: { body?: unknown; on: (event: string, cb: (chunk: Buffer | string) => void) => void }): Promise<string> {
   if (typeof request.body === "string") {

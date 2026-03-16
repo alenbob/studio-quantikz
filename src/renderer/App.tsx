@@ -28,6 +28,7 @@ import {
   type ExportAssetSource
 } from "./exportAssets";
 import { importFromQuantikz } from "./importer";
+import { useTikzJax } from "./useTikzJax";
 import { editorReducer, initialState, type EditorAction } from "./reducer";
 import { getWireLabelGroup, type WireLabelSide } from "./wireLabels";
 import type {
@@ -221,9 +222,6 @@ export default function App(): JSX.Element {
   const [pendingHistoryCapture, setPendingHistoryCapture] = useState(false);
   const [toastAnimationKey, setToastAnimationKey] = useState(0);
   const [selectedWireLabel, setSelectedWireLabel] = useState<{ row: number; side: WireLabelSide } | null>(null);
-  const [svgPreviewMarkup, setSvgPreviewMarkup] = useState("");
-  const [svgPreviewState, setSvgPreviewState] = useState<"idle" | "loading" | "ready" | "error">("idle");
-  const [svgPreviewError, setSvgPreviewError] = useState<string | null>(null);
   const [previewPngBlob, setPreviewPngBlob] = useState<Blob | null>(null);
   const [previewPngUrl, setPreviewPngUrl] = useState<string | null>(null);
   const stateRef = useRef(state);
@@ -249,6 +247,13 @@ export default function App(): JSX.Element {
     () => splitStandaloneQuantikzSource(state.exportCode, state.exportPreamble),
     [state.exportCode, state.exportPreamble]
   );
+  const tikzJaxResult = useTikzJax(
+    resolvedExportSource.code,
+    resolvedExportSource.preamble
+  );
+  const svgPreviewMarkup = tikzJaxResult.svg;
+  const svgPreviewState = tikzJaxResult.state;
+  const svgPreviewError = tikzJaxResult.error;
 
   useEffect(() => {
     stateRef.current = state;
@@ -471,65 +476,6 @@ export default function App(): JSX.Element {
   }, []);
 
   useEffect(() => {
-    if (import.meta.env.MODE === "test") {
-      setSvgPreviewMarkup("");
-      setSvgPreviewError(null);
-      setSvgPreviewState("idle");
-      return;
-    }
-
-    const code = resolvedExportSource.code.trim();
-    if (!code) {
-      setSvgPreviewMarkup("");
-      setSvgPreviewError(null);
-      setSvgPreviewState("idle");
-      return;
-    }
-
-    const abortController = new AbortController();
-    setSvgPreviewState("loading");
-    setSvgPreviewError(null);
-
-    const timeoutId = window.setTimeout(() => {
-      void fetch("/api/render-svg", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          code: resolvedExportSource.code,
-          preamble: resolvedExportSource.preamble
-        }),
-        signal: abortController.signal
-      })
-        .then(async (response) => {
-          const result = (await response.json()) as { success: boolean; svg?: string; error?: string };
-          if (!response.ok || !result.success || !result.svg) {
-            throw new Error(result.error ?? "Unable to render SVG preview.");
-          }
-
-          setSvgPreviewMarkup(result.svg);
-          setSvgPreviewError(null);
-          setSvgPreviewState("ready");
-        })
-        .catch((error: unknown) => {
-          if (abortController.signal.aborted) {
-            return;
-          }
-
-          setSvgPreviewMarkup("");
-          setSvgPreviewError(error instanceof Error ? error.message : "Unable to render SVG preview.");
-          setSvgPreviewState("error");
-        });
-    }, 260);
-
-    return () => {
-      abortController.abort();
-      window.clearTimeout(timeoutId);
-    };
-  }, [resolvedExportSource.code, resolvedExportSource.preamble]);
-
-  useEffect(() => {
     if (!pendingHistoryCapture) {
       return;
     }
@@ -688,9 +634,6 @@ export default function App(): JSX.Element {
       const imported = importFromQuantikz(entry.code);
       setPasteMode(false);
       setSelectedWireLabel(null);
-      setSvgPreviewMarkup(entry.svg);
-      setSvgPreviewError(null);
-      setSvgPreviewState("ready");
       setOpenDownloadMenuTarget(null);
       dispatch({ type: "loadQuantikz", imported, code: entry.code, preamble: entry.preamble });
       setExportEditorTab("code");
