@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { resolveTikzRenderPreamble } from "../shared/tikzPreamble";
 
 type TikzJaxState = "idle" | "loading" | "ready" | "error";
 
@@ -32,16 +33,6 @@ function createAbortError(): Error {
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
-}
-
-function sanitizePreambleForBrowser(preamble: string): string {
-  const sanitizedLines = preamble
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line && !/^\\documentclass\b/.test(line))
-    .filter((line) => line !== "\\begin{document}" && line !== "\\end{document}");
-
-  return Array.from(new Set(sanitizedLines)).join("\n");
 }
 
 async function ensureTikzJaxScript(): Promise<void> {
@@ -133,12 +124,10 @@ async function renderWithBrowserTikzJax(code: string, preamble: string, signal: 
           return;
         }
 
-        if (renderedNode.tagName.toLowerCase() === "svg") {
-          finishSuccess(renderedNode.outerHTML);
+        if (renderedNode.tagName.toLowerCase() === "img") {
+          finishError(new Error("Unable to render the TikZ preview in the browser."));
           return;
         }
-
-        finishError(new Error("Unable to render the Quantikz preview in the browser."));
       };
 
       const handleAbort = (): void => finishError(createAbortError());
@@ -166,9 +155,17 @@ async function renderWithBrowserTikzJax(code: string, preamble: string, signal: 
       script.type = "text/tikz";
       script.textContent = code;
 
-      const sanitizedPreamble = sanitizePreambleForBrowser(preamble);
-      if (sanitizedPreamble) {
-        script.dataset.addToPreamble = sanitizedPreamble;
+      const browserPreamble = resolveTikzRenderPreamble(code, preamble);
+      if (browserPreamble.addToPreamble) {
+        script.dataset.addToPreamble = browserPreamble.addToPreamble;
+      }
+
+      if (Object.keys(browserPreamble.texPackages).length > 0) {
+        script.dataset.texPackages = JSON.stringify(browserPreamble.texPackages);
+      }
+
+      if (browserPreamble.tikzLibraries.length > 0) {
+        script.dataset.tikzLibraries = browserPreamble.tikzLibraries.join(",");
       }
 
       document.body.appendChild(host);

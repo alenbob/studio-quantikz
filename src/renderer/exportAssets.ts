@@ -32,6 +32,11 @@ export async function svgMarkupToPngBlob(svgMarkup: string): Promise<Blob> {
 
   const blob = await new Promise<Blob>((resolve, reject) => {
     const image = new Image();
+    const objectUrl = URL.createObjectURL(new Blob([svgMarkup], { type: "image/svg+xml;charset=utf-8" }));
+
+    const cleanup = (): void => {
+      URL.revokeObjectURL(objectUrl);
+    };
 
     image.onload = () => {
       const width = Math.max(1, Math.ceil(image.naturalWidth || image.width || 1));
@@ -49,6 +54,8 @@ export async function svgMarkupToPngBlob(svgMarkup: string): Promise<Blob> {
       context.clearRect(0, 0, width, height);
       context.drawImage(image, 0, 0, width, height);
       canvas.toBlob((nextBlob) => {
+        cleanup();
+
         if (!nextBlob) {
           reject(new Error("Unable to rasterize the Quantikz preview."));
           return;
@@ -58,8 +65,11 @@ export async function svgMarkupToPngBlob(svgMarkup: string): Promise<Blob> {
       }, "image/png");
     };
 
-    image.onerror = () => reject(new Error("Unable to load the Quantikz SVG preview."));
-    image.src = svgMarkupToDataUrl(svgMarkup);
+    image.onerror = () => {
+      cleanup();
+      reject(new Error("Unable to load the Quantikz SVG preview."));
+    };
+    image.src = objectUrl;
   });
 
   return blob;

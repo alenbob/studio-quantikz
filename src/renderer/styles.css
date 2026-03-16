@@ -648,6 +648,13 @@ select,
   margin: 0 auto;
 }
 
+.history-card-preview-image > svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
 .history-card-copy {
   display: grid;
   gap: 8px;
@@ -1720,6 +1727,13 @@ select,
 
 .svg-preview-image {
   display: block;
+  height: auto;
+  margin: 0 auto;
+}
+
+.svg-preview-image > svg {
+  display: block;
+  max-width: 100%;
   height: auto;
   margin: 0 auto;
 }

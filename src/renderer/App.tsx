@@ -23,7 +23,6 @@ import {
   copySvgToClipboard,
   downloadBlob,
   getDownloadFilename,
-  svgMarkupToDataUrl,
   svgMarkupToPngBlob,
   type DownloadFormat,
   type ExportAssetSource
@@ -86,6 +85,22 @@ function formatHistoryTimestamp(createdAt: string): string {
 
 function formatLabelForDownload(format: DownloadFormat): string {
   return format.toUpperCase();
+}
+
+function SvgPreviewImage({
+  svgMarkup,
+  className,
+  alt
+}: {
+  svgMarkup: string;
+  className: string;
+  alt: string;
+}): JSX.Element | null {
+  if (!svgMarkup.trim()) {
+    return null;
+  }
+
+  return <div className={className} role="img" aria-label={alt} dangerouslySetInnerHTML={{ __html: svgMarkup }} />;
 }
 
 function DownloadMenu({
@@ -255,10 +270,6 @@ export default function App(): JSX.Element {
   const svgPreviewMarkup = tikzJaxResult.svg;
   const svgPreviewState = tikzJaxResult.state;
   const svgPreviewError = tikzJaxResult.error;
-  const svgPreviewDataUrl = useMemo(
-    () => svgPreviewMarkup ? svgMarkupToDataUrl(svgPreviewMarkup) : "",
-    [svgPreviewMarkup]
-  );
 
   useEffect(() => {
     stateRef.current = state;
@@ -1028,9 +1039,9 @@ export default function App(): JSX.Element {
                         onClick={() => handleLoadHistoryEntry(entry)}
                       >
                         <div className="history-card-preview">
-                          <img
+                          <SvgPreviewImage
                             className="history-card-preview-image"
-                            src={svgMarkupToDataUrl(entry.svg)}
+                            svgMarkup={entry.svg}
                             alt="Quantikz history preview"
                           />
                         </div>
@@ -1261,9 +1272,9 @@ export default function App(): JSX.Element {
                 >
                   {svgPreviewState === "ready" ? (
                     <div className="svg-preview-stage">
-                      <img
+                      <SvgPreviewImage
                         className="svg-preview-image"
-                        src={svgPreviewDataUrl}
+                        svgMarkup={svgPreviewMarkup}
                         alt="Rendered Quantikz preview"
                       />
                       <p className="svg-preview-drag-hint">Drag out as PNG</p>

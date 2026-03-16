@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { resolveTikzRenderPreamble } from "../shared/tikzPreamble";
 
 const DEFAULT_WASM_PREAMBLE = [
   "\\usepackage{tikz}",
@@ -12,10 +13,14 @@ const DEFAULT_WASM_PREAMBLE = [
 ].join("\n");
 
 const UNSUPPORTED_QUANTIKZ_MESSAGE = "Quantikz SVG rendering is not available in the Vercel/WASM renderer yet. This endpoint currently supports plain TikZ only.";
+const NODE_TIKZJAX_FONT_CSS_URL = "/node-tikzjax/fonts.css";
 
 type TikzJaxRenderOptions = {
   addToPreamble?: string;
+  texPackages?: Record<string, string>;
+  tikzLibraries?: string;
   embedFontCss?: boolean;
+  fontCssUrl?: string;
   disableOptimize?: boolean;
 };
 
@@ -51,64 +56,13 @@ function ensureDocumentBody(code: string): string {
   return ["\\begin{document}", trimmed, "\\end{document}"].join("\n");
 }
 
-function sanitizeUsePackageLine(line: string): string | null {
-  const match = /^\s*\\usepackage(?:\[(?<options>[^\]]*)\])?\{(?<packages>[^}]*)\}\s*$/.exec(line);
-  if (!match?.groups) {
-    return line;
-  }
-
-  const packages = match.groups.packages
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter((entry) => entry && entry !== "quantikz");
-
-  if (!packages.length) {
-    return null;
-  }
-
-  const options = match.groups.options ? `[${match.groups.options}]` : "";
-  return `\\usepackage${options}{${packages.join(",")}}`;
-}
-
-function sanitizeTikzLibraryLine(line: string): string | null {
-  const match = /^\s*\\usetikzlibrary\{(?<libraries>[^}]*)\}\s*$/.exec(line);
-  if (!match?.groups) {
-    return line;
-  }
-
-  const libraries = match.groups.libraries
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter((entry) => entry && entry !== "quantikz2");
-
-  if (!libraries.length) {
-    return null;
-  }
-
-  return `\\usetikzlibrary{${libraries.join(",")}}`;
-}
-
-function sanitizePreambleForWasm(preamble: string): string {
-  const sanitizedLines = [DEFAULT_WASM_PREAMBLE]
-    .concat(preamble.split(/\r?\n/))
-    .map((line) => line.trim())
-    .filter((line) => line && !/^\\documentclass\b/.test(line))
-    .filter((line) => line !== "\\begin{document}" && line !== "\\end{document}")
-    .map((line) => sanitizeUsePackageLine(line))
-    .filter((line): line is string => Boolean(line))
-    .map((line) => sanitizeTikzLibraryLine(line))
-    .filter((line): line is string => Boolean(line));
-
-  return Array.from(new Set(sanitizedLines)).join("\n");
-}
-
 function looksLikeQuantikz(code: string): boolean {
   return /\\begin\{quantikz\}|\\end\{quantikz\}|\\(lstick|rstick|gate|phase|ctrl|octrl|control|ocontrol|targX?|meter|qw|qwbundle|swap|slice|gategroup|setwiretype)\b/.test(code);
 }
 
 function hasGraphicPrimitives(svgMarkup: string): boolean {
   const body = svgMarkup.includes("</defs>") ? svgMarkup.split("</defs>", 2)[1] : svgMarkup;
-  return /<(path|line|rect|circle|ellipse|polygon|polyline)\b/.test(body);
+  return /<(path|line|rect|circle|ellipse|polygon|polyline|text)\b/.test(body);
 }
 
 function validateSvgMarkup(svgMarkup: string): string {
@@ -131,7 +85,10 @@ async function withSvgRenderLock<T>(work: () => Promise<T>): Promise<T> {
 
 async function renderTikzToSvgWithWasm(code: string, preamble: string): Promise<string> {
   const source = ensureDocumentBody(code);
-  const addToPreamble = sanitizePreambleForWasm(preamble);
+  const preambleOptions = resolveTikzRenderPreamble(code, [DEFAULT_WASM_PREAMBLE, preamble].filter(Boolean).join("\n"), {
+    stripTexPackages: ["quantikz"],
+    stripTikzLibraries: ["quantikz2"]
+  });
   const tikzjaxModule = (await import("node-tikzjax")) as TikzJaxModule;
   const tex2svg = tikzjaxModule.default;
 
@@ -141,8 +98,11 @@ async function renderTikzToSvgWithWasm(code: string, preamble: string): Promise<
 
   return withSvgRenderLock(() =>
     tex2svg(source, {
-      addToPreamble,
-      embedFontCss: false,
+      addToPreamble: preambleOptions.addToPreamble,
+      texPackages: preambleOptions.texPackages,
+      tikzLibraries: preambleOptions.tikzLibraries.join(","),
+      embedFontCss: true,
+      fontCssUrl: NODE_TIKZJAX_FONT_CSS_URL,
       disableOptimize: false
     })
   );
