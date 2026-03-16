@@ -2,10 +2,11 @@
 
 ## SVG preview backend
 
-The current SVG preview pipeline has been intentionally reset.
-The `/api/render-svg` endpoint now returns a disabled response until a clean LaTeX-based implementation is rebuilt.
+The website SVG preview backend now uses a Vercel-safe pure Node/WASM TikZ renderer.
 
-This is deliberate: the project should not ship a non-LaTeX fallback, raster wrapper, or hand-built circuit SVG approximation.
+Current limitation: `/api/render-svg` supports plain TikZ input, but it does not yet compile Quantikz source because the deployed WASM TeX engine does not support the modern `expl3`/`xparse` stack required by Quantikz 2. The editor preview therefore needs a browser-side fallback when Quantikz source is pasted directly into the textbox.
+
+This is deliberate: the project should not ship a fake circuit renderer, raster wrapper, or a local-only TeX compiler path that cannot run on Vercel.
 
 This guide is a practical introduction to drawing quantum circuits with Quantikz in LaTeX.
 

@@ -22,6 +22,7 @@ const injectedFiles = [
   "xkvtxhdr.tex",
   "xstring.sty",
   "xstring.tex",
+  "xparse.sty",
   "mathtools.sty",
   "environ.sty",
   "trimspaces.sty",

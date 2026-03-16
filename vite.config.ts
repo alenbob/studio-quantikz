@@ -51,7 +51,7 @@ export default defineConfig({
           try {
             const body = await readJsonBody(request);
             const result = await renderQuantikzSvg(body.code ?? "", body.preamble ?? "");
-            sendJson(response, result.success ? 200 : 400, result);
+            sendJson(response, result.success ? 200 : (result.statusCode ?? 400), result);
           } catch (error) {
             sendJson(response, 500, {
               success: false,

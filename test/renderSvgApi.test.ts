@@ -7,14 +7,13 @@ describe("render-svg api", () => {
     vi.unstubAllGlobals();
   });
 
-  it("returns a 501 while SVG rendering is reset", async () => {
+  it("renders plain tikz svg over the api", async () => {
     const request = {
       method: "POST",
       body: JSON.stringify({
-        code: String.raw`\begin{quantikz}
-\lstick{$\ket{0}$} & \gate{H} & \ctrl{1} & \meter{} \\
-\lstick{$\ket{0}$} & \qw & \targ{} & \qw
-\end{quantikz}`,
+        code: String.raw`\begin{tikzpicture}
+\draw (0,0) circle (1);
+\end{tikzpicture}`,
         preamble: DEFAULT_EXPORT_PREAMBLE
       }),
       on: () => request
@@ -34,11 +33,47 @@ describe("render-svg api", () => {
 
     await handler(request, response);
 
-    expect(responseState.statusCode).toBe(501);
+    expect(responseState.statusCode).toBe(200);
+    expect(responseState.payload).toMatchObject({ success: true });
+
+    const payload = responseState.payload as { error?: string; svg?: string };
+    expect(payload.error).toBeUndefined();
+    expect(payload.svg).toContain("<svg");
+    expect(payload.svg).toMatch(/<(path|line|rect|circle)\b/);
+  });
+
+  it("returns a 422 for quantikz input on the wasm api", async () => {
+    const request = {
+      method: "POST",
+      body: JSON.stringify({
+        code: String.raw`\begin{quantikz}
+\lstick{$\ket{0}$} & \gate{H} & \ctrl{1} & \meter{} \\
+\lstick{$\ket{0}$} & \qw & \targ{} & \qw
+\end{quantikz}`,
+        preamble: DEFAULT_EXPORT_PREAMBLE
+      }),
+      on: () => request
+    };
+
+    const responseState: { statusCode?: number; payload?: { success?: boolean; error?: string; svg?: string } } = {};
+    const response = {
+      status(code: number) {
+        responseState.statusCode = code;
+        return this;
+      },
+      json(payload: { success?: boolean; error?: string; svg?: string }) {
+        responseState.payload = payload;
+        return this;
+      }
+    };
+
+    await handler(request, response);
+
+    expect(responseState.statusCode).toBe(422);
     expect(responseState.payload).toMatchObject({ success: false });
 
     const payload = responseState.payload as { error?: string; svg?: string };
     expect(payload.svg).toBeUndefined();
-    expect(payload.error).toContain("disabled pending a full LaTeX-based rewrite");
+    expect(payload.error).toContain("plain TikZ only");
   });
 });

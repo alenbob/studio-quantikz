@@ -4,7 +4,24 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 
-const SVG_RENDER_DISABLED_MESSAGE = "SVG rendering is disabled pending a full LaTeX-based rewrite.";
+const DEFAULT_WASM_PREAMBLE = [
+  "\\usepackage{tikz}",
+  "\\providecommand{\\ket}[1]{\\left|#1\\right\\rangle}",
+  "\\providecommand{\\bra}[1]{\\left\\langle#1\\right|}",
+  "\\providecommand{\\proj}[1]{\\left|#1\\right\\rangle\\left\\langle#1\\right|}"
+].join("\n");
+
+const UNSUPPORTED_QUANTIKZ_MESSAGE = "Quantikz SVG rendering is not available in the Vercel/WASM renderer yet. This endpoint currently supports plain TikZ only.";
+
+type TikzJaxRenderOptions = {
+  addToPreamble?: string;
+  embedFontCss?: boolean;
+  disableOptimize?: boolean;
+};
+
+type TikzJaxModule = {
+  default?: (input: string, options?: TikzJaxRenderOptions) => Promise<string>;
+};
 
 interface RenderQuantikzSvgResult {
   success: boolean;
@@ -13,10 +30,122 @@ interface RenderQuantikzSvgResult {
   statusCode?: number;
 }
 
+let svgRenderQueue: Promise<void> = Promise.resolve();
+
 function buildStandaloneDocument(code: string, preamble: string): string {
   return [preamble.trim(), "\\begin{document}", code.trim(), "\\end{document}"]
     .filter(Boolean)
     .join("\n");
+}
+
+function ensureDocumentBody(code: string): string {
+  const trimmed = code.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  if (/\\begin\{document\}/.test(trimmed)) {
+    return trimmed;
+  }
+
+  return ["\\begin{document}", trimmed, "\\end{document}"].join("\n");
+}
+
+function sanitizeUsePackageLine(line: string): string | null {
+  const match = /^\s*\\usepackage(?:\[(?<options>[^\]]*)\])?\{(?<packages>[^}]*)\}\s*$/.exec(line);
+  if (!match?.groups) {
+    return line;
+  }
+
+  const packages = match.groups.packages
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry && entry !== "quantikz");
+
+  if (!packages.length) {
+    return null;
+  }
+
+  const options = match.groups.options ? `[${match.groups.options}]` : "";
+  return `\\usepackage${options}{${packages.join(",")}}`;
+}
+
+function sanitizeTikzLibraryLine(line: string): string | null {
+  const match = /^\s*\\usetikzlibrary\{(?<libraries>[^}]*)\}\s*$/.exec(line);
+  if (!match?.groups) {
+    return line;
+  }
+
+  const libraries = match.groups.libraries
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry && entry !== "quantikz2");
+
+  if (!libraries.length) {
+    return null;
+  }
+
+  return `\\usetikzlibrary{${libraries.join(",")}}`;
+}
+
+function sanitizePreambleForWasm(preamble: string): string {
+  const sanitizedLines = [DEFAULT_WASM_PREAMBLE]
+    .concat(preamble.split(/\r?\n/))
+    .map((line) => line.trim())
+    .filter((line) => line && !/^\\documentclass\b/.test(line))
+    .filter((line) => line !== "\\begin{document}" && line !== "\\end{document}")
+    .map((line) => sanitizeUsePackageLine(line))
+    .filter((line): line is string => Boolean(line))
+    .map((line) => sanitizeTikzLibraryLine(line))
+    .filter((line): line is string => Boolean(line));
+
+  return Array.from(new Set(sanitizedLines)).join("\n");
+}
+
+function looksLikeQuantikz(code: string): boolean {
+  return /\\begin\{quantikz\}|\\end\{quantikz\}|\\(lstick|rstick|gate|phase|ctrl|octrl|control|ocontrol|targX?|meter|qw|qwbundle|swap|slice|gategroup|setwiretype)\b/.test(code);
+}
+
+function hasGraphicPrimitives(svgMarkup: string): boolean {
+  const body = svgMarkup.includes("</defs>") ? svgMarkup.split("</defs>", 2)[1] : svgMarkup;
+  return /<(path|line|rect|circle|ellipse|polygon|polyline)\b/.test(body);
+}
+
+function validateSvgMarkup(svgMarkup: string): string {
+  if (!svgMarkup.includes("<svg")) {
+    throw new Error("Renderer did not return SVG markup.");
+  }
+
+  if (!hasGraphicPrimitives(svgMarkup)) {
+    throw new Error("Renderer returned SVG markup without drawing primitives.");
+  }
+
+  return svgMarkup;
+}
+
+async function withSvgRenderLock<T>(work: () => Promise<T>): Promise<T> {
+  const nextRun = svgRenderQueue.then(work, work);
+  svgRenderQueue = nextRun.then(() => undefined, () => undefined);
+  return nextRun;
+}
+
+async function renderTikzToSvgWithWasm(code: string, preamble: string): Promise<string> {
+  const source = ensureDocumentBody(code);
+  const addToPreamble = sanitizePreambleForWasm(preamble);
+  const tikzjaxModule = (await import("node-tikzjax")) as TikzJaxModule;
+  const tex2svg = tikzjaxModule.default;
+
+  if (!tex2svg) {
+    throw new Error("node-tikzjax is not available.");
+  }
+
+  return withSvgRenderLock(() =>
+    tex2svg(source, {
+      addToPreamble,
+      embedFontCss: false,
+      disableOptimize: false
+    })
+  );
 }
 
 export async function renderQuantikzSvg(
@@ -27,15 +156,27 @@ export async function renderQuantikzSvg(
     return { success: false, error: "Quantikz code is required." };
   }
 
-  if (!preamble.trim()) {
-    return { success: false, error: "A LaTeX preamble is required." };
+  if (looksLikeQuantikz(code)) {
+    return {
+      success: false,
+      error: UNSUPPORTED_QUANTIKZ_MESSAGE,
+      statusCode: 422
+    };
   }
 
-  return {
-    success: false,
-    error: SVG_RENDER_DISABLED_MESSAGE,
-    statusCode: 501
-  };
+  try {
+    const svg = await renderTikzToSvgWithWasm(code, preamble);
+    return {
+      success: true,
+      svg: validateSvgMarkup(svg)
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unable to render SVG.",
+      statusCode: 400
+    };
+  }
 }
 
 // PDF rendering still relies on local latex/dvipdfmx binaries (not available on
