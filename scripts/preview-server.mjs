@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIST_DIR = path.resolve(__dirname, "..", "dist");
 const PORT = Number(process.env.PORT || 4173);
+const SVG_RENDER_DISABLED_MESSAGE = "SVG rendering is disabled pending a full LaTeX-based rewrite.";
 
 function resolveTeXBinary(binaryName) {
   if (process.env.TEXBIN_PATH) {
@@ -76,37 +77,11 @@ async function renderQuantikzSvg(code, preamble) {
     return { success: false, error: "A LaTeX preamble is required." };
   }
 
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "quantikzz-preview-"));
-  const svgFilePath = path.join(tempDir, "circuit.svg");
-  const dvisvgmArgs = ["-n"];
-  const libgsPath = resolveGhostscriptLibrary();
-
-  if (libgsPath) {
-    dvisvgmArgs.push(`--libgs=${libgsPath}`);
-  }
-
-  try {
-    const { dviFilePath } = await compileQuantikzDocument(code, preamble, tempDir);
-    dvisvgmArgs.push("-o", svgFilePath, dviFilePath);
-
-    await runCommand(
-      resolveTeXBinary("dvisvgm"),
-      dvisvgmArgs,
-      tempDir
-    );
-
-    return {
-      success: true,
-      svg: await fs.readFile(svgFilePath, "utf8")
-    };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Unable to render SVG."
-    };
-  } finally {
-    await fs.rm(tempDir, { recursive: true, force: true });
-  }
+  return {
+    success: false,
+    error: SVG_RENDER_DISABLED_MESSAGE,
+    statusCode: 501
+  };
 }
 
 async function renderQuantikzPdf(code, preamble) {
@@ -187,7 +162,7 @@ const server = createServer(async (request, response) => {
     if (request.method === "POST" && request.url === "/api/render-svg") {
       const body = await readJsonBody(request);
       const result = await renderQuantikzSvg(body.code ?? "", body.preamble ?? "");
-      sendJson(response, result.success ? 200 : 400, result);
+      sendJson(response, result.success ? 200 : (result.statusCode ?? 400), result);
       return;
     }
 

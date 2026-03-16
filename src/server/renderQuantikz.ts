@@ -4,6 +4,15 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 
+const SVG_RENDER_DISABLED_MESSAGE = "SVG rendering is disabled pending a full LaTeX-based rewrite.";
+
+interface RenderQuantikzSvgResult {
+  success: boolean;
+  svg?: string;
+  error?: string;
+  statusCode?: number;
+}
+
 function buildStandaloneDocument(code: string, preamble: string): string {
   return [preamble.trim(), "\\begin{document}", code.trim(), "\\end{document}"]
     .filter(Boolean)
@@ -13,7 +22,7 @@ function buildStandaloneDocument(code: string, preamble: string): string {
 export async function renderQuantikzSvg(
   code: string,
   preamble: string
-): Promise<{ success: boolean; svg?: string; error?: string }> {
+): Promise<RenderQuantikzSvgResult> {
   if (!code.trim()) {
     return { success: false, error: "Quantikz code is required." };
   }
@@ -22,43 +31,11 @@ export async function renderQuantikzSvg(
     return { success: false, error: "A LaTeX preamble is required." };
   }
 
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "quantikzz-render-"));
-  const texFilePath = path.join(tempDir, "circuit.tex");
-  const dviFilePath = path.join(tempDir, "circuit.dvi");
-  const svgFilePath = path.join(tempDir, "circuit.svg");
-  const dvisvgmArgs = ["-n"];
-  const libgsPath = resolveGhostscriptLibrary();
-
-  if (libgsPath) {
-    dvisvgmArgs.push(`--libgs=${libgsPath}`);
-  }
-
-  try {
-    await fs.writeFile(texFilePath, buildStandaloneDocument(code, preamble), "utf8");
-
-    await runCommand(
-      resolveTeXBinary("latex"),
-      ["-interaction=nonstopmode", "-halt-on-error", "-output-directory", tempDir, texFilePath],
-      tempDir
-    );
-
-    dvisvgmArgs.push("-o", svgFilePath, dviFilePath);
-
-    await runCommand(
-      resolveTeXBinary("dvisvgm"),
-      dvisvgmArgs,
-      tempDir
-    );
-
-    return { success: true, svg: await fs.readFile(svgFilePath, "utf8") };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Unable to render SVG."
-    };
-  } finally {
-    await fs.rm(tempDir, { recursive: true, force: true });
-  }
+  return {
+    success: false,
+    error: SVG_RENDER_DISABLED_MESSAGE,
+    statusCode: 501
+  };
 }
 
 // PDF rendering still relies on local latex/dvipdfmx binaries (not available on

@@ -33,8 +33,7 @@ export default async function handler(request: any, response: any): Promise<void
     const code = typeof parsed.code === "string" ? parsed.code : "";
     const preamble = typeof parsed.preamble === "string" ? parsed.preamble : "";
     const result = await renderQuantikzSvg(code, preamble);
-
-    response.status(result.success ? 200 : 400).json(result);
+    response.status(result.success ? 200 : (result.statusCode ?? 400)).json(result);
   } catch (error) {
     response.status(500).json({
       success: false,

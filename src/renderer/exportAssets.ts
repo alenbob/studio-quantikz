@@ -21,7 +21,7 @@ export function downloadBlob(blob: Blob, filename: string): void {
   URL.revokeObjectURL(objectUrl);
 }
 
-function svgMarkupToDataUrl(svgMarkup: string): string {
+export function svgMarkupToDataUrl(svgMarkup: string): string {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgMarkup)}`;
 }
 

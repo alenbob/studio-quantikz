@@ -1,4 +1,4 @@
-import type { WireLabel, WireLabelBracket } from "./types";
+import type { WireLabel, WireLabelBracket } from "./types.js";
 
 export type WireLabelSide = "left" | "right";
 

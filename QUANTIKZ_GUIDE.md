@@ -1,5 +1,12 @@
 # Quantikz Guide
 
+## SVG preview backend
+
+The current SVG preview pipeline has been intentionally reset.
+The `/api/render-svg` endpoint now returns a disabled response until a clean LaTeX-based implementation is rebuilt.
+
+This is deliberate: the project should not ship a non-LaTeX fallback, raster wrapper, or hand-built circuit SVG approximation.
+
 This guide is a practical introduction to drawing quantum circuits with Quantikz in LaTeX.
 
 For current TeX Live installations, load the modern release like this:

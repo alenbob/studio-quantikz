@@ -1,6 +1,6 @@
-import { measureGateWidth, DEFAULT_CIRCUIT_LAYOUT, clampColumnSepCm, clampRowSepCm } from "./layout";
-import { normalizeHexColor } from "./color";
-import { normalizeWireLabels } from "./wireLabels";
+import { measureGateWidth, DEFAULT_CIRCUIT_LAYOUT, clampColumnSepCm, clampRowSepCm } from "./layout.js";
+import { normalizeHexColor } from "./color.js";
+import { normalizeWireLabels } from "./wireLabels.js";
 import type {
   CircuitItem,
   CircuitLayout,
@@ -13,7 +13,7 @@ import type {
   WireLabelBracket,
   WireType,
   WireLabel
-} from "./types";
+} from "./types.js";
 
 interface ParsedCommand {
   name: string;

@@ -23,6 +23,7 @@ import {
   copySvgToClipboard,
   downloadBlob,
   getDownloadFilename,
+  svgMarkupToDataUrl,
   svgMarkupToPngBlob,
   type DownloadFormat,
   type ExportAssetSource
@@ -254,6 +255,10 @@ export default function App(): JSX.Element {
   const svgPreviewMarkup = tikzJaxResult.svg;
   const svgPreviewState = tikzJaxResult.state;
   const svgPreviewError = tikzJaxResult.error;
+  const svgPreviewDataUrl = useMemo(
+    () => svgPreviewMarkup ? svgMarkupToDataUrl(svgPreviewMarkup) : "",
+    [svgPreviewMarkup]
+  );
 
   useEffect(() => {
     stateRef.current = state;
@@ -1023,9 +1028,10 @@ export default function App(): JSX.Element {
                         onClick={() => handleLoadHistoryEntry(entry)}
                       >
                         <div className="history-card-preview">
-                          <div
-                            className="history-card-preview-markup"
-                            dangerouslySetInnerHTML={{ __html: entry.svg }}
+                          <img
+                            className="history-card-preview-image"
+                            src={svgMarkupToDataUrl(entry.svg)}
+                            alt="Quantikz history preview"
                           />
                         </div>
                         <div className="history-card-copy">
@@ -1255,9 +1261,10 @@ export default function App(): JSX.Element {
                 >
                   {svgPreviewState === "ready" ? (
                     <div className="svg-preview-stage">
-                      <div
-                        className="svg-preview-markup"
-                        dangerouslySetInnerHTML={{ __html: svgPreviewMarkup }}
+                      <img
+                        className="svg-preview-image"
+                        src={svgPreviewDataUrl}
+                        alt="Rendered Quantikz preview"
                       />
                       <p className="svg-preview-drag-hint">Drag out as PNG</p>
                     </div>

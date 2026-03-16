@@ -638,12 +638,11 @@ select,
   overflow: hidden;
 }
 
-.history-card-preview-markup,
-.history-card-preview-markup svg {
+.history-card-preview-image {
   max-width: 100%;
 }
 
-.history-card-preview-markup svg {
+.history-card-preview-image {
   display: block;
   height: auto;
   margin: 0 auto;
@@ -1715,12 +1714,11 @@ select,
   gap: 10px;
 }
 
-.svg-preview-markup,
-.svg-preview-markup svg {
+.svg-preview-image {
   max-width: 100%;
 }
 
-.svg-preview-markup svg {
+.svg-preview-image {
   display: block;
   height: auto;
   margin: 0 auto;

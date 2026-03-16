@@ -1,5 +1,5 @@
-import type { CircuitItem, CircuitLayout } from "./types";
-import { getLabelMeasurementText } from "./tex";
+import type { CircuitItem, CircuitLayout } from "./types.js";
+import { getLabelMeasurementText } from "./tex.js";
 
 export const DEFAULT_COLUMN_SEP_CM = 0.7;
 export const DEFAULT_ROW_SEP_CM = 0.9;
