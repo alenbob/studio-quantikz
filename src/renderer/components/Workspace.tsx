@@ -803,8 +803,13 @@ function renderHorizontalSegment(
   }
 
   return (
-    <g className={`absent-override ${isSelected ? "is-selected" : ""}`} style={{ stroke: color }}>
-      {!item.autoSuppressed && renderWireStroke(x1, x2, y, item.wireType, "absent-override-hit", { stroke: color })}
+    <g className={`absent-override ${isSelected ? "is-selected" : ""}`}>
+      {!item.autoSuppressed && (
+        <>
+          <line x1={x1} x2={x2} y1={y} y2={y} className="absent-override-hit" />
+          <line x1={x1} x2={x2} y1={y} y2={y} className="absent-override-dash" style={{ stroke: color }} />
+        </>
+      )}
       {isSelected && <line x1={x1} x2={x2} y1={y} y2={y} className="absent-override-selection" />}
     </g>
   );

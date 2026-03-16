@@ -1274,7 +1274,6 @@ select,
 .target-plus line,
 .target-plus circle,
 .swap-x line,
-.absent-override line,
 .control-dot {
   stroke: rgba(31, 27, 23, 0.92);
   stroke-width: 2;
@@ -1287,11 +1286,19 @@ select,
   pointer-events: stroke;
 }
 
-.absent-override-hit,
-.absent-override-hit line {
-  stroke-opacity: 0;
+.absent-override-hit {
+  stroke: transparent;
   stroke-width: 16;
   pointer-events: stroke;
+  fill: none;
+}
+
+.absent-override-dash {
+  stroke-width: 2;
+  stroke-dasharray: 4 5;
+  stroke-linecap: round;
+  fill: none;
+  pointer-events: none;
 }
 
 .control-dot {
