@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_CIRCUIT_LAYOUT, getColumnMetrics } from "../src/renderer/layout";
+import { DEFAULT_CIRCUIT_LAYOUT, getColumnMetrics, measureGateHeight } from "../src/renderer/layout";
 import type { CircuitItem } from "../src/renderer/types";
 
 describe("layout column metrics", () => {
@@ -19,5 +19,9 @@ describe("layout column metrics", () => {
 
     expect(metrics.widths[1]).toBeGreaterThan(metrics.widths[0]);
     expect(metrics.widths[1]).toBeGreaterThan(metrics.widths[2]);
+  });
+
+  it("gives taller math labels more vertical room than a simple symbol", () => {
+    expect(measureGateHeight("\\frac{a}{b}")).toBeGreaterThan(measureGateHeight("H"));
   });
 });

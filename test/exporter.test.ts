@@ -96,7 +96,38 @@ describe("exportToQuantikz", () => {
       })
     );
 
-    expect(code).toContain("\\gate[wires=2,style={minimum width=2.1cm}]{U}");
+    expect(code).toContain("\\gate[wires=2,style={minimum width=2.1cm}]{U} & \\ghost{U} & \\ghost{U}");
+  });
+
+  it("exports slice and group math labels with math delimiters", () => {
+    const code = exportToQuantikz(
+      makeState({
+        items: [
+          {
+            id: "frame-1",
+            type: "frame",
+            point: { row: 0, col: 0 },
+            span: { rows: 2, cols: 2 },
+            label: "\\theta_0",
+            rounded: true,
+            dashed: true,
+            background: true,
+            innerXSepPt: 2,
+            color: null
+          },
+          {
+            id: "slice-1",
+            type: "slice",
+            point: { row: 0, col: 2 },
+            label: "\\phi",
+            color: null
+          }
+        ]
+      })
+    );
+
+    expect(code).toContain("\\gategroup[2,steps=2,style={rounded corners,dashed,inner xsep=2pt},background]{$\\theta_0$}");
+    expect(code).toContain("\\slice{$\\phi$}");
   });
 
   it("exports TeX-style gate labels without forcing extra math delimiters", () => {

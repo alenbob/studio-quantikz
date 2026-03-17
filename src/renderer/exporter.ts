@@ -86,6 +86,10 @@ function commandPriority(token: string): number {
     return 1;
   }
 
+  if (command === "ghost") {
+    return 1;
+  }
+
   if (["gategroup", "slice"].includes(command)) {
     return 2;
   }
@@ -395,6 +399,10 @@ export function exportToQuantikz(state: EditorState): string {
       : `\\gate{${formattedLabel}}`;
     cells[gate.point.row][gate.point.col].push(command);
 
+    for (let col = gate.point.col + 1; col < gate.point.col + gate.span.cols; col += 1) {
+      cells[gate.point.row][col].push(`\\ghost{${formattedLabel}}`);
+    }
+
     for (let row = gate.point.row; row < gate.point.row + gate.span.rows; row += 1) {
       for (let col = gate.point.col; col < gate.point.col + gate.span.cols; col += 1) {
         if (row === gate.point.row && col === gate.point.col) {
@@ -427,13 +435,13 @@ export function exportToQuantikz(state: EditorState): string {
   }
 
   for (const frame of frames) {
-    const formattedLabel = formatGateLabelForQuantikz(frame.label);
+    const formattedLabel = formatLabelForQuantikz(frame.label);
     const optionBlock = frameStyleOptions(frame);
     cells[frame.point.row][frame.point.col].push(`\\gategroup[${optionBlock}]{${formattedLabel}}`);
   }
 
   for (const slice of slices) {
-    const formattedLabel = formatGateLabelForQuantikz(slice.label);
+    const formattedLabel = formatLabelForQuantikz(slice.label);
     const options = sliceOptions(slice);
     cells[slice.point.row][slice.point.col].push(
       options ? `\\slice[${options}]{${formattedLabel}}` : `\\slice{${formattedLabel}}`

@@ -111,7 +111,7 @@ describe("importFromQuantikz", () => {
 
   it("imports gategroups and slices as annotation items", () => {
     const code = String.raw`\begin{quantikz}
-& \gate{H}\gategroup[2,steps=2,style={rounded corners, dashed, inner xsep=2pt},background]{Entangle} & \ctrl{1}\slice{prepare} & \meter{} \\
+& \gate{H}\gategroup[2,steps=2,style={rounded corners, dashed, inner xsep=2pt},background]{$\theta$} & \ctrl{1}\slice{$\phi$} & \meter{} \\
 &  & \targ{} & \meter{}
 \end{quantikz}`;
 
@@ -120,8 +120,21 @@ describe("importFromQuantikz", () => {
     const slice = imported.items.find((item) => item.type === "slice");
 
     expect(frame && frame.type === "frame" ? frame.span : null).toEqual({ rows: 2, cols: 2 });
-    expect(frame && frame.type === "frame" ? frame.label : "").toBe("Entangle");
-    expect(slice && slice.type === "slice" ? slice.label : "").toBe("prepare");
+    expect(frame && frame.type === "frame" ? frame.label : "").toBe("\\theta");
+    expect(slice && slice.type === "slice" ? slice.label : "").toBe("\\phi");
+  });
+
+  it("imports ghost continuation cells as a multi-step gate span", () => {
+    const code = String.raw`\begin{quantikz}
+& \gate[wires=2,style={minimum width=2.1cm}]{U} & \ghost{U} & \ghost{U} \\
+&  &  &
+\end{quantikz}`;
+
+    const imported = importFromQuantikz(code);
+    const gate = imported.items.find((item) => item.type === "gate");
+
+    expect(gate && gate.type === "gate" ? gate.span : null).toEqual({ rows: 2, cols: 3 });
+    expect(imported.steps).toBe(3);
   });
 
   it("imports a measurement object and its controlling connector", () => {

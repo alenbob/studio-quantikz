@@ -1,5 +1,5 @@
 import type { CircuitItem, CircuitLayout } from "./types.js";
-import { getLabelMeasurementText } from "./tex.js";
+import { getLabelMeasurementText, normalizeGateLabel, renderGateLabelHtml } from "./tex.js";
 
 export const DEFAULT_COLUMN_SEP_CM = 0.7;
 export const DEFAULT_ROW_SEP_CM = 0.9;
@@ -8,7 +8,7 @@ export const BASE_ROW_HEIGHT = 56;
 export const WIRE_STROKE = 2;
 export const GATE_MIN_WIDTH = 40;
 export const GATE_MIN_HEIGHT = 32;
-export const GATE_PADDING_X = 12;
+export const GATE_PADDING_X = 2;
 export const GATE_PADDING_Y = 8;
 export const LEFT_LABEL_WIDTH = 144;
 export const RIGHT_LABEL_WIDTH = 144;
@@ -18,6 +18,12 @@ export const GRID_TOP = 72;
 export const GRID_BOTTOM_PADDING = 44;
 const BASE_COLUMN_PADDING = BASE_COLUMN_WIDTH - GATE_MIN_WIDTH;
 const CONNECTOR_CONTENT_WIDTH = 28;
+const MEASUREMENT_ROOT_ID = "quantikzz-gate-measure-root";
+
+interface GateLabelMeasurement {
+  width: number;
+  height: number;
+}
 
 export interface ColumnMetrics {
   widths: number[];
@@ -66,7 +72,7 @@ export function getColumnMetrics(
 
     switch (item.type) {
       case "gate": {
-        const contentWidth = Math.max(item.width, GATE_MIN_WIDTH);
+        const contentWidth = Math.max(measureGateWidth(item.label), GATE_MIN_WIDTH);
         const spanCols = Math.max(item.span.cols, 1);
         const perColumnWidth = Math.max(GATE_MIN_WIDTH, Math.ceil(contentWidth / spanCols));
         for (let col = item.point.col; col < Math.min(item.point.col + spanCols, safeSteps); col += 1) {
@@ -205,9 +211,63 @@ export function getIncomingSegmentRange(
 }
 
 let cachedContext: CanvasRenderingContext2D | null = null;
+let measurementRoot: HTMLDivElement | null = null;
+const gateMeasurementCache = new Map<string, GateLabelMeasurement>();
 
-export function measureGateWidth(label: string): number {
+function getMeasurementRoot(): HTMLDivElement | null {
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  if (measurementRoot?.isConnected) {
+    return measurementRoot;
+  }
+
+  const existingRoot = document.getElementById(MEASUREMENT_ROOT_ID);
+  if (existingRoot instanceof HTMLDivElement) {
+    measurementRoot = existingRoot;
+    return measurementRoot;
+  }
+
+  const root = document.createElement("div");
+  root.id = MEASUREMENT_ROOT_ID;
+  root.setAttribute("aria-hidden", "true");
+  Object.assign(root.style, {
+    position: "absolute",
+    left: "-99999px",
+    top: "-99999px",
+    visibility: "hidden",
+    pointerEvents: "none",
+    whiteSpace: "nowrap"
+  });
+  document.body.appendChild(root);
+  measurementRoot = root;
+  return measurementRoot;
+}
+
+function estimateGateLabelHeight(label: string): number {
+  const normalized = normalizeGateLabel(label);
+  let extraHeight = 0;
+
+  if (/\\(?:frac|dfrac|tfrac|sqrt|sum|prod|int|oint|left|right|overline|underline)/.test(normalized)) {
+    extraHeight += 10;
+  }
+
+  if (/[_^]/.test(normalized)) {
+    extraHeight += 4;
+  }
+
+  if (/\\begin\{(?:matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|cases|array)\}/.test(normalized)) {
+    extraHeight += 14;
+  }
+
+  return Math.max(GATE_MIN_HEIGHT, 20 + (GATE_PADDING_Y * 2) + extraHeight);
+}
+
+function fallbackGateMeasurement(label: string): GateLabelMeasurement {
   const safeLabel = getLabelMeasurementText(label);
+
+  let width = Math.max(GATE_MIN_WIDTH, safeLabel.length * 10 + (GATE_PADDING_X * 2));
 
   if (typeof document !== "undefined") {
     try {
@@ -217,7 +277,7 @@ export function measureGateWidth(label: string): number {
 
       if (cachedContext) {
         cachedContext.font = '600 16px "Avenir Next", "Segoe UI", sans-serif';
-        return Math.max(
+        width = Math.max(
           GATE_MIN_WIDTH,
           Math.ceil(cachedContext.measureText(safeLabel).width + (GATE_PADDING_X * 2))
         );
@@ -227,5 +287,69 @@ export function measureGateWidth(label: string): number {
     }
   }
 
-  return Math.max(GATE_MIN_WIDTH, safeLabel.length * 10 + (GATE_PADDING_X * 2));
+  return {
+    width,
+    height: estimateGateLabelHeight(label)
+  };
+}
+
+function measureGateLabel(label: string): GateLabelMeasurement {
+  const normalized = normalizeGateLabel(label);
+  const cached = gateMeasurementCache.get(normalized);
+  if (cached) {
+    return cached;
+  }
+
+  const root = getMeasurementRoot();
+  const texHtml = renderGateLabelHtml(normalized);
+
+  if (root && texHtml) {
+    try {
+      const wrapper = document.createElement("div");
+      Object.assign(wrapper.style, {
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: "max-content",
+        height: "max-content",
+        padding: "0",
+        margin: "0",
+        whiteSpace: "nowrap"
+      });
+      wrapper.innerHTML = texHtml;
+
+      const katexNode = wrapper.querySelector(".katex");
+      if (katexNode instanceof HTMLElement) {
+        katexNode.style.fontSize = "1.05rem";
+        katexNode.style.lineHeight = "1";
+      }
+
+      root.appendChild(wrapper);
+      const rect = wrapper.getBoundingClientRect();
+      root.removeChild(wrapper);
+
+      if (rect.width > 0 && rect.height > 0) {
+        const measured = {
+          width: Math.max(GATE_MIN_WIDTH, Math.ceil(rect.width + (GATE_PADDING_X * 2))),
+          height: Math.max(GATE_MIN_HEIGHT, Math.ceil(rect.height + (GATE_PADDING_Y * 2)))
+        };
+        gateMeasurementCache.set(normalized, measured);
+        return measured;
+      }
+    } catch {
+      measurementRoot = null;
+    }
+  }
+
+  const fallback = fallbackGateMeasurement(normalized);
+  gateMeasurementCache.set(normalized, fallback);
+  return fallback;
+}
+
+export function measureGateWidth(label: string): number {
+  return measureGateLabel(label).width;
+}
+
+export function measureGateHeight(label: string): number {
+  return measureGateLabel(label).height;
 }

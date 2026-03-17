@@ -24,7 +24,9 @@ import {
   getIncomingSegmentRange,
   getRowHeight,
   getRowY,
-  getWireEndX
+  getWireEndX,
+  measureGateWidth,
+  measureGateHeight
 } from "../layout";
 import {
   DEFAULT_ABSENT_WIRE_COLOR,
@@ -255,10 +257,11 @@ function getGateRect(item: GateItem, layout: CircuitLayout, columnMetrics: Colum
   const rowHeight = getRowHeight(layout);
   const [blockX, blockRight] = getColumnSpanRange(item.point.col, item.span.cols, layout, columnMetrics);
   const blockWidth = blockRight - blockX;
-  const width = Math.max(item.width, Math.max(GATE_MIN_WIDTH, blockWidth - 12));
+  const width = Math.max(measureGateWidth(item.label), Math.max(GATE_MIN_WIDTH, blockWidth - 12));
+  const baseHeight = Math.max(GATE_MIN_HEIGHT, measureGateHeight(item.label));
   const x = blockX + ((blockWidth - width) / 2);
-  const y = getRowY(item.point.row, layout) - (GATE_MIN_HEIGHT / 2);
-  const height = GATE_MIN_HEIGHT + ((item.span.rows - 1) * rowHeight);
+  const y = getRowY(item.point.row, layout) - (baseHeight / 2);
+  const height = baseHeight + ((item.span.rows - 1) * rowHeight);
 
   return { x, y, width, height };
 }
@@ -644,7 +647,7 @@ function renderSelectedOverlay(
       <circle
         cx={cx}
         cy={cy}
-        r={6}
+        r={4.5}
         className="selected-object-overlay selected-control-overlay"
         style={{
           fill: "transparent",
@@ -1085,7 +1088,7 @@ function renderMarker(
       <circle
         cx={cx}
         cy={cy}
-        r={7}
+        r={4.5}
         className={`control-dot control-dot-${controlState} ${isSelected ? "is-selected" : ""}`}
         style={{
           fill: controlState === "open" ? "#FFF8EF" : color,

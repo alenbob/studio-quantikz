@@ -236,14 +236,14 @@ function parseCommandSequence(source: string): ParsedCommand[] {
 
       if (name !== "wire" && name !== "vqw" && name !== "vcw" &&
           name !== "gate" && name !== "meter" && name !== "gategroup" &&
-          name !== "slice" && name !== "ctrl" && name !== "octrl" && name !== "swap" &&
+          name !== "slice" && name !== "ghost" && name !== "ctrl" && name !== "octrl" && name !== "swap" &&
           name !== "lstick" && name !== "rstick" && name !== "control" &&
           name !== "ocontrol" && name !== "targ" &&
           name !== "targX" && name !== "wireoverride" && name !== "setwiretype") {
         break;
       }
 
-      if ((name === "gate" || name === "meter" || name === "gategroup" || name === "slice" ||
+      if ((name === "gate" || name === "meter" || name === "gategroup" || name === "slice" || name === "ghost" ||
           name === "ctrl" || name === "octrl" || name === "swap" ||
           name === "lstick" || name === "rstick" || name === "vqw" || name === "vcw" ||
           name === "wireoverride" || name === "setwiretype") && args.length >= 1) {
@@ -726,6 +726,7 @@ export function importFromQuantikz(code: string): ImportedCircuit {
   rawRows.forEach((rawRow, rowIndex) => {
     const rowCells = splitTopLevel(rawRow, "&").map((cell) => cell.trim());
     const cells = [...rowCells];
+    const rowGates: Array<{ gate: GateItem; legacyCols: number }> = [];
 
     const leftLabel = extractLabelCommand(cells[0] ?? "", "lstick");
     if (leftLabel.label !== null) {
@@ -758,9 +759,11 @@ export function importFromQuantikz(code: string): ImportedCircuit {
     steps = Math.max(steps, cells.length);
 
     let persistentWireType: ParsedHorizontalWireToken = wireTypes[rowIndex] ?? "quantum";
+    let lastHorizontalGate: GateItem | null = null;
 
     cells.forEach((cell, colIndex) => {
       if (!cell || cell === "\\qw") {
+        lastHorizontalGate = null;
         return;
       }
 
@@ -782,6 +785,10 @@ export function importFromQuantikz(code: string): ImportedCircuit {
           return direction !== "l" && direction !== "r";
         }
 
+        if (entry.name === "ghost") {
+          return true;
+        }
+
         return true;
       });
 
@@ -800,6 +807,8 @@ export function importFromQuantikz(code: string): ImportedCircuit {
       let setWireType: ParsedHorizontalWireToken | null = null;
       let wireOverrideType: ParsedHorizontalWireToken | null = null;
       let activeColor: string | null = null;
+      let gateCreatedInCell: GateItem | null = null;
+      let extendedGateInCell = false;
 
       commands.forEach((command) => {
         if (command.name === "color") {
@@ -815,18 +824,20 @@ export function importFromQuantikz(code: string): ImportedCircuit {
             break;
           case "gate": {
             const rows = parseWiresOption(optionText);
-            const cols = parseColumnSpan(optionText, layout);
+            const legacyCols = parseColumnSpan(optionText, layout);
             const label = decodeLabel(command.args[0] ?? "U") || "U";
             const gate: GateItem = {
               id: nextId("gate", idCounter),
               type: "gate",
               point: { row: rowIndex, col: colIndex },
-              span: { rows, cols },
+              span: { rows, cols: 1 },
               label,
               width: measureGateWidth(label),
               color
             };
             items.push(gate);
+            rowGates.push({ gate, legacyCols });
+            gateCreatedInCell = gate;
             break;
           }
           case "meter": {
@@ -868,6 +879,13 @@ export function importFromQuantikz(code: string): ImportedCircuit {
               color
             };
             items.push(slice);
+            break;
+          }
+          case "ghost": {
+            if (lastHorizontalGate && lastHorizontalGate.point.col + lastHorizontalGate.span.cols === colIndex) {
+              lastHorizontalGate.span.cols += 1;
+              extendedGateInCell = true;
+            }
             break;
           }
           case "ctrl":
@@ -1003,7 +1021,22 @@ export function importFromQuantikz(code: string): ImportedCircuit {
       if (setWireType !== null) {
         persistentWireType = setWireType;
       }
+
+      if (gateCreatedInCell) {
+        lastHorizontalGate = gateCreatedInCell;
+        return;
+      }
+
+      if (!extendedGateInCell) {
+        lastHorizontalGate = null;
+      }
     });
+
+    for (const { gate, legacyCols } of rowGates) {
+      if (gate.span.cols === 1 && legacyCols > 1) {
+        gate.span.cols = legacyCols;
+      }
+    }
   });
 
   const gateTargetsByColumn = new Map<number, Set<number>>();

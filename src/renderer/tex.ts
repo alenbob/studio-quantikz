@@ -164,13 +164,7 @@ export function renderGateLabelHtml(label: string): string | null {
 }
 
 export function renderGateDisplayHtml(label: string): string | null {
-  const normalized = normalizeGateLabel(label);
-
-  if (containsInlineMathSegments(normalized) || isLikelyTexMath(normalized)) {
-    return renderGateLabelHtml(normalized);
-  }
-
-  return renderKatexHtml(`\\text{${escapeLatexText(normalized)}}`);
+  return renderGateLabelHtml(normalizeGateLabel(label));
 }
 
 export function formatLabelForQuantikz(label: string, fallback = ""): string {

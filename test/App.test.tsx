@@ -208,12 +208,17 @@ describe("App smoke tests", () => {
 
     const targetGlyph = container.querySelector(".target-plus") as SVGGElement;
     const targetIcon = container.querySelector(".target-plus-icon") as SVGSVGElement;
+    const targetCircle = targetIcon?.querySelector("circle") as SVGCircleElement | null;
+    const targetLines = targetIcon?.querySelectorAll("line") ?? [];
+    const targetStyle = targetIcon?.querySelector("style");
     const meterGlyph = container.querySelector(".meter-glyph") as SVGSVGElement;
 
     expect(targetGlyph).toBeTruthy();
     expect(targetGlyph.querySelector("image")).toBeNull();
     expect(targetIcon).toBeTruthy();
-    expect(targetIcon.querySelector("circle")).toBeTruthy();
+    expect(targetCircle).toBeTruthy();
+    expect(targetLines).toHaveLength(2);
+    expect(targetStyle?.textContent).toContain("stroke: currentColor");
     expect(targetIcon.style.color).toBe("rgb(0, 255, 0)");
 
     expect(meterGlyph).toBeTruthy();

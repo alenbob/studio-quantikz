@@ -1362,8 +1362,6 @@ select,
 .horizontal-segment-hit,
 .horizontal-segment-stroke,
 .horizontal-segment-stroke line,
-.target-plus line,
-.target-plus circle,
 .swap-x line,
 .control-dot {
   stroke: rgba(31, 27, 23, 0.92);
