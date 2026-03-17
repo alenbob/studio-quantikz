@@ -657,6 +657,39 @@ describe("editorReducer selection workflows", () => {
     expect(next.items.find((item) => item.id === "line-v")).toMatchObject({ wireType: "classical" });
   });
 
+  it("updates multiple selected vertical wires and swap crosses to the same color", () => {
+    const state = {
+      ...initialState,
+      items: [
+        ...initialState.items,
+        {
+          id: "line-v",
+          type: "verticalConnector" as const,
+          point: { row: 0, col: 2 },
+          length: 1,
+          wireType: "quantum" as const,
+          color: null
+        },
+        {
+          id: "swap-1",
+          type: "swapX" as const,
+          point: { row: 1, col: 2 },
+          color: null
+        }
+      ],
+      selectedItemIds: ["line-v", "swap-1"]
+    };
+
+    const next = editorReducer(state, {
+      type: "updateItemColorBatch",
+      itemIds: ["line-v", "swap-1"],
+      color: "#0000FF"
+    });
+
+    expect(next.items.find((item) => item.id === "line-v")).toMatchObject({ color: "#0000FF" });
+    expect(next.items.find((item) => item.id === "swap-1")).toMatchObject({ color: "#0000FF" });
+  });
+
   it("updates row-level wire types independently from item selection", () => {
     const next = editorReducer(initialState, {
       type: "updateRowWireType",

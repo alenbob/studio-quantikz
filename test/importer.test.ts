@@ -198,6 +198,21 @@ describe("importFromQuantikz", () => {
     expect(connector && connector.type === "verticalConnector" ? connector.wireType : "").toBe("classical");
   });
 
+  it("imports xcolor-prefixed named colors for swaps and vertical wires", () => {
+    const code = String.raw`\begin{quantikz}
+& \color{blue}\swap[style={draw=blue},wire style={draw=blue}]{1} \\
+& \color{blue}\targX[style={draw=blue}]{}
+\end{quantikz}`;
+
+    const imported = importFromQuantikz(code);
+    const swapItems = imported.items.filter((item) => item.type === "swapX");
+    const connector = imported.items.find((item) => item.type === "verticalConnector");
+
+    expect(swapItems).toHaveLength(2);
+    expect(swapItems.every((item) => item.type === "swapX" && item.color === "#0000FF")).toBe(true);
+    expect(connector && connector.type === "verticalConnector" ? connector.color : null).toBe("#0000FF");
+  });
+
   it("imports vqw and vcw connectors as vertical wires", () => {
     const code = String.raw`\begin{quantikz}
 \lstick{$\ket{0}$} & \vqw{1} & \vcw{1} \\

@@ -61,6 +61,7 @@ describe("renderQuantikzPdf", () => {
     const payload = JSON.parse(String(request?.body)) as { document: string; format: string };
     expect(payload.format).toBe("pdf");
     expect(payload.document).toContain("\\usetikzlibrary{quantikz2}");
+    expect(payload.document).toContain("\\usepackage{xcolor}");
     expect(payload.document).toContain("\\usepackage{amsmath}");
     expect(payload.document).toContain("\\usepackage{amssymb}");
     expect(payload.document).toContain("\\usepackage{amsfonts}");

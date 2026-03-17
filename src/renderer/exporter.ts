@@ -17,7 +17,7 @@ import {
   isAbsentHorizontalSegment,
   wireKey
 } from "./horizontalWires";
-import { mixHexWithWhite, toTikzRgb } from "./color";
+import { mixHexWithWhite, toTikzColor } from "./color";
 import {
   formatGateLabelForQuantikz,
   formatLabelForQuantikz,
@@ -159,8 +159,8 @@ function gateStyleOptions(color?: string | null, minimumWidthCm?: number | null)
   const styleParts: string[] = [];
 
   if (color) {
-    const tikzColor = toTikzRgb(color);
-    const fillColor = toTikzRgb(mixHexWithWhite(color, 0.9));
+    const tikzColor = toTikzColor(color);
+    const fillColor = toTikzColor(mixHexWithWhite(color, 0.9));
     styleParts.push(`draw=${tikzColor}`, `text=${tikzColor}`, `fill=${fillColor}`);
     options.push(`label style={text=${tikzColor}}`);
   }
@@ -177,7 +177,7 @@ function gateStyleOptions(color?: string | null, minimumWidthCm?: number | null)
 }
 
 function labelColorOption(color?: string | null): string {
-  return color ? `label style={text=${toTikzRgb(color)}}` : "";
+  return color ? `label style={text=${toTikzColor(color)}}` : "";
 }
 
 function frameStyleOptions(frame: FrameItem): string {
@@ -193,7 +193,7 @@ function frameStyleOptions(frame: FrameItem): string {
     styleParts.push(`inner xsep=${frame.innerXSepPt}pt`);
   }
   if (frame.color) {
-    styleParts.push(`draw=${toTikzRgb(frame.color)}`);
+    styleParts.push(`draw=${toTikzColor(frame.color)}`);
   }
 
   const options = [
@@ -212,7 +212,7 @@ function sliceOptions(slice: SliceItem): string {
   const options: string[] = [];
 
   if (slice.color) {
-    styleParts.push(`draw=${toTikzRgb(slice.color)}`);
+    styleParts.push(`draw=${toTikzColor(slice.color)}`);
   }
   if (styleParts.length > 0) {
     options.push(`style={${styleParts.join(",")}}`);
@@ -228,8 +228,8 @@ function meterStyleOptions(color?: string | null): string {
   const styleParts: string[] = [];
 
   if (color) {
-    const tikzColor = toTikzRgb(color);
-    const fillColor = toTikzRgb(mixHexWithWhite(color, 0.9));
+    const tikzColor = toTikzColor(color);
+    const fillColor = toTikzColor(mixHexWithWhite(color, 0.9));
     styleParts.push(`draw=${tikzColor}`, `text=${tikzColor}`, `fill=${fillColor}`);
   }
 
@@ -248,7 +248,7 @@ function commandColorOptions(
     return "";
   }
 
-  const tikzColor = toTikzRgb(color);
+  const tikzColor = toTikzColor(color);
   const fillPart =
     options.fill === "solid"
       ? `,fill=${tikzColor}`
@@ -265,7 +265,7 @@ function commandColorOptions(
 }
 
 function wireStyleOption(color?: string | null): string {
-  return color ? `draw=${toTikzRgb(color)}` : "";
+  return color ? `draw=${toTikzColor(color)}` : "";
 }
 
 function appendConnectorWireOption(options: string[], wireType: WireType): void {

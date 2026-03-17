@@ -219,6 +219,57 @@ describe("exportToQuantikz", () => {
     expect(code).toContain("\\ctrl[style={draw={rgb,255:red,15;green,106;blue,109},fill={rgb,255:red,15;green,106;blue,109}},wire style={draw={rgb,255:red,15;green,106;blue,109}}]{1}");
   });
 
+  it("uses named-color style options for selected swatch wires and swap crosses", () => {
+    const code = exportToQuantikz(
+      makeState({
+        items: [
+          {
+            id: "swap-top",
+            type: "swapX",
+            point: { row: 0, col: 1 },
+            color: "#0000FF"
+          },
+          {
+            id: "swap-wire",
+            type: "verticalConnector",
+            point: { row: 0, col: 1 },
+            length: 1,
+            wireType: "quantum",
+            color: "#0000FF"
+          },
+          {
+            id: "swap-bottom",
+            type: "swapX",
+            point: { row: 1, col: 1 },
+            color: "#0000FF"
+          }
+        ]
+      })
+    );
+
+    expect(code).toContain("\\swap[style={draw=blue},wire style={draw=blue}]{1}");
+    expect(code).toContain("\\targX[style={draw=blue}]{}");
+  });
+
+  it("styles standalone vertical wires without redundant xcolor prefixes", () => {
+    const code = exportToQuantikz(
+      makeState({
+        items: [
+          {
+            id: "line-green",
+            type: "verticalConnector",
+            point: { row: 0, col: 2 },
+            length: 2,
+            wireType: "quantum",
+            color: "#00FF00"
+          }
+        ]
+      })
+    );
+
+    expect(code).toContain("\\wire[d][2][draw=green]{q}");
+  });
+
   it("exports a controlled-not from dot, connector, and plus", () => {
     const code = exportToQuantikz(
       makeState({

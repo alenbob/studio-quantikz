@@ -1,6 +1,7 @@
 export const DEFAULT_EXPORT_PREAMBLE = [
   "\\documentclass[tikz,border=4pt]{standalone}",
   "\\usepackage{tikz}",
+  "\\usepackage{xcolor}",
   "\\usetikzlibrary{quantikz2}",
   "\\usepackage{amsmath}",
   "\\usepackage{amssymb}",

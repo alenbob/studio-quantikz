@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import meterBlackIcon from "../assets/meter_black.svg";
+import meterBlackSvg from "../assets/meter_black.svg?raw";
 import meterOrangeIcon from "../assets/meter_orange.svg";
+import crossBlackSvg from "../assets/cross_black.svg?raw";
 import crossOrangeIcon from "../assets/cross_orange.svg";
-import targBlackIcon from "../assets/targ_black.svg";
+import targBlackSvg from "../assets/targ_black.svg?raw";
 import targOrangeIcon from "../assets/targ_orange.svg";
 import { canPasteClipboardAt, instantiateClipboardItems } from "../clipboard";
 import {
@@ -124,6 +125,41 @@ interface DragState {
 type ItemOutlineTone = "selected" | "preview" | "invalid-preview";
 
 const INVALID_SWAP_COLOR = "#c24038";
+
+function extractSvgViewBox(svg: string): string {
+  const match = svg.match(/viewBox="([^"]+)"/i);
+  return match?.[1] ?? "0 0 309 314";
+}
+
+function extractSvgInnerMarkup(svg: string): string {
+  return svg
+    .replace(/^<\?xml[^>]*>\s*/i, "")
+    .replace(/^<svg[^>]*>/i, "")
+    .replace(/<\/svg>\s*$/i, "");
+}
+
+function renderInlineAssetSvg(
+  svg: string,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  color: string,
+  className?: string
+): JSX.Element {
+  return (
+    <svg
+      x={x}
+      y={y}
+      width={width}
+      height={height}
+      viewBox={extractSvgViewBox(svg)}
+      className={className}
+      style={{ color, overflow: "visible" }}
+      dangerouslySetInnerHTML={{ __html: extractSvgInnerMarkup(svg) }}
+    />
+  );
+}
 const SELECTION_ORANGE = "#F68F44";
 const SELECTED_OVERLAY_INSET = 0;
 
@@ -286,7 +322,7 @@ function getItemBounds(
   }
 
   if (item.type === "verticalConnector") {
-    const width = item.wireType === "classical" ? 26 : 20;
+    const width = 20;
     const x = getCellCenterX(item.point.col, layout, columnMetrics) - (width / 2);
     const y = getRowY(item.point.row, layout);
     return {
@@ -327,9 +363,9 @@ function getItemBounds(
 function getItemOutlinePadding(item: CircuitItem): { x: number; y: number; radius: number } {
   switch (item.type) {
     case "horizontalSegment":
-      return { x: 2, y: 2, radius: 6 };
+      return { x: 0, y: 0, radius: 6 };
     case "verticalConnector":
-      return { x: 3, y: 2, radius: 6 };
+      return { x: 0, y: 0, radius: 6 };
     case "slice":
       return { x: 2, y: 2, radius: 4 };
     case "controlDot":
@@ -837,9 +873,9 @@ function renderWireStroke(
 ): JSX.Element {
   if (wireType === "classical") {
     return (
-      <g className={className} style={style}>
-        <line x1={x1} x2={x2} y1={y - 3} y2={y - 3} />
-        <line x1={x1} x2={x2} y1={y + 3} y2={y + 3} />
+      <g className={className}>
+        <line x1={x1} x2={x2} y1={y - 3} y2={y - 3} style={style} />
+        <line x1={x1} x2={x2} y1={y + 3} y2={y + 3} style={style} />
       </g>
     );
   }
@@ -924,15 +960,7 @@ function renderMeter(item: MeterItem, isSelected: boolean, layout: CircuitLayout
           fill: item.color ? mixHexWithWhite(color, 0.9) : "rgba(255, 254, 250, 1)"
         }}
       />
-      <image
-        href={meterBlackIcon}
-        x={iconX}
-        y={iconY}
-        width={iconSize}
-        height={iconSize}
-        preserveAspectRatio="xMidYMid meet"
-        className="meter-glyph"
-      />
+      {renderInlineAssetSvg(meterBlackSvg, iconX, iconY, iconSize, iconSize, color, "meter-glyph")}
     </g>
   );
 }
@@ -1016,11 +1044,12 @@ function renderVerticalConnector(
 
   if (item.wireType === "classical") {
     return (
-      <g className={className} style={style}>
+      <g className={className}>
         {segments.map((segment) => (
           <g key={`${item.id}-${segment.y1}`}>
-            <line x1={x - 3} x2={x - 3} y1={segment.y1} y2={segment.y2} />
-            <line x1={x + 3} x2={x + 3} y1={segment.y1} y2={segment.y2} />
+            <rect x={x - 10} y={segment.y1} width={20} height={Math.max(segment.y2 - segment.y1, 4)} className="vertical-connector-hit" />
+            <line x1={x - 3} x2={x - 3} y1={segment.y1} y2={segment.y2} style={style} />
+            <line x1={x + 3} x2={x + 3} y1={segment.y1} y2={segment.y2} style={style} />
           </g>
         ))}
       </g>
@@ -1028,15 +1057,12 @@ function renderVerticalConnector(
   }
 
   return (
-    <g className={className} style={style}>
+    <g className={className}>
       {segments.map((segment) => (
-        <line
-          key={`${item.id}-${segment.y1}`}
-          x1={x}
-          x2={x}
-          y1={segment.y1}
-          y2={segment.y2}
-        />
+        <g key={`${item.id}-${segment.y1}`}>
+          <rect x={x - 10} y={segment.y1} width={20} height={Math.max(segment.y2 - segment.y1, 4)} className="vertical-connector-hit" />
+          <line x1={x} x2={x} y1={segment.y1} y2={segment.y2} style={style} />
+        </g>
       ))}
     </g>
   );
@@ -1072,21 +1098,14 @@ function renderMarker(
   if (item.type === "targetPlus") {
     const iconSize = 28;
     return (
-      <g className={`target-plus ${isSelected ? "is-selected" : ""}`} style={{ stroke: color }}>
-        <image
-          href={targBlackIcon}
-          x={cx - (iconSize / 2)}
-          y={cy - (iconSize / 2)}
-          width={iconSize}
-          height={iconSize}
-          preserveAspectRatio="xMidYMid meet"
-        />
+      <g className={`target-plus ${isSelected ? "is-selected" : ""}`}>
+        {renderInlineAssetSvg(targBlackSvg, cx - (iconSize / 2), cy - (iconSize / 2), iconSize, iconSize, color, "target-plus-icon")}
       </g>
     );
   }
 
   return (
-    <g className={`swap-x ${isSelected ? "is-selected" : ""} ${invalidSwap ? "is-invalid" : ""}`} style={{ stroke: color }}>
+    <g className={`swap-x ${isSelected ? "is-selected" : ""} ${invalidSwap ? "is-invalid" : ""}`}>
       {invalidSwap && (
         <rect
           x={cx - 10}
@@ -1097,8 +1116,7 @@ function renderMarker(
           className="swap-x-border"
         />
       )}
-      <line x1={cx - 8} x2={cx + 8} y1={cy - 8} y2={cy + 8} />
-      <line x1={cx - 8} x2={cx + 8} y1={cy + 8} y2={cy - 8} />
+      {renderInlineAssetSvg(crossBlackSvg, cx - 11, cy - 11, 22, 22, color, "swap-x-icon")}
     </g>
   );
 }
@@ -1623,6 +1641,16 @@ export function Workspace({
     }
   }
 
+  function startMarqueeFromPointer(clientX: number, clientY: number): boolean {
+    const point = getClampedContentPoint(clientX, clientY);
+    if (!point) {
+      return false;
+    }
+
+    setMarquee({ start: point, current: point });
+    return true;
+  }
+
   function renderInteractiveItem(item: CircuitItem): JSX.Element {
     const selected = selectionSet.has(item.id);
     const swapStatus = item.type === "swapX" ? swapStatuses.get(item.id) : null;
@@ -1690,11 +1718,13 @@ export function Workspace({
             return;
           }
 
+          if (item.type === "horizontalSegment" && !state.horizontalSegmentsUnlocked) {
+            startMarqueeFromPointer(event.clientX, event.clientY);
+            return;
+          }
+
           if (event.altKey) {
-            const point = getClampedContentPoint(event.clientX, event.clientY);
-            if (point) {
-              setMarquee({ start: point, current: point });
-            }
+            startMarqueeFromPointer(event.clientX, event.clientY);
             return;
           }
 
@@ -2130,12 +2160,9 @@ export function Workspace({
             return;
           }
 
-          const point = getClampedContentPoint(event.clientX, event.clientY);
-          if (!point) {
+          if (!startMarqueeFromPointer(event.clientX, event.clientY)) {
             return;
           }
-
-          setMarquee({ start: point, current: point });
         }}
         onPointerMove={(event) => {
           lastPointerRef.current = { clientX: event.clientX, clientY: event.clientY };
@@ -2386,32 +2413,31 @@ export function Workspace({
                     return;
                   }
 
+                  if (isPasteMode) {
                     event.preventDefault();
                     event.stopPropagation();
+                    onPasteAt({ kind: "segment", row, col });
+                    return;
+                  }
 
-                    if (isPasteMode) {
-                      onPasteAt({ kind: "segment", row, col });
-                      return;
-                    }
+                  if (state.activeTool !== "select") {
+                    return;
+                  }
 
-                    if (state.activeTool !== "select") {
-                      return;
-                    }
+                  const maskKey = wireKey(row, col);
+                  const segmentSelectable =
+                    state.horizontalSegmentsUnlocked &&
+                    state.wireMask[maskKey] !== "absent" &&
+                    !meterSuppressedKeys.has(maskKey);
 
-                    if (!state.horizontalSegmentsUnlocked) {
-                      onSelectionChange([]);
-                      setHoverPlacement(null);
-                      return;
-                    }
+                  if (!segmentSelectable) {
+                    return;
+                  }
 
-                    const maskKey = wireKey(row, col);
-                    if (state.wireMask[maskKey] === "absent" || meterSuppressedKeys.has(maskKey)) {
-                      onSelectionChange([]);
-                      return;
-                    }
-
-                    onSelectHorizontalSegment(row, col, event.shiftKey || event.metaKey || event.ctrlKey);
-                  }}
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onSelectHorizontalSegment(row, col, event.shiftKey || event.metaKey || event.ctrlKey);
+                }}
                 />
               );
             })

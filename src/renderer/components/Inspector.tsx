@@ -812,7 +812,7 @@ export function Inspector({
               <div className="selected-pill selected-pill-name">{selectedCount} elements</div>
             </div>
             <p className="empty-panel-copy">
-              Group selection is active. Shared color changes apply to all selected objects, and matching object types expose shared properties.
+              Group selection is active.
             </p>
             {renderBulkSelectionInspector()}
             {renderSelectionColorEditor()}

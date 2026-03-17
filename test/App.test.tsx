@@ -158,7 +158,99 @@ describe("App smoke tests", () => {
 
     const output = (screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value;
     expect(output.match(/\\gate(?:\[[^\]]+\])?\{H\}/g)?.length).toBe(2);
-    expect(output).toContain("draw={rgb,255:red,255;green,0;blue,0}");
+    expect(output).toContain("draw=red");
+    expect(output).toContain("label style={text=red}");
+  });
+
+  it("lets a mixed multi-selection color a vertical connector and swap crosses together", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText(/quantikz output/i), {
+      target: {
+        value: String.raw`\begin{quantikz}
+& \swap{1} \\
+& \targX{}
+\end{quantikz}`
+      }
+    });
+
+    await user.click(screen.getByRole("button", { name: /convert to visual/i }));
+
+    await user.click(screen.getByRole("button", { name: /^select$/i }));
+    fireEvent.keyDown(window, { key: "a", ctrlKey: true });
+
+    fireEvent.change(screen.getByLabelText(/element color hex/i), {
+      target: { value: "#0000FF" }
+    });
+
+    await user.click(screen.getByRole("button", { name: /convert to quantikz/i }));
+
+    const output = (screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value;
+    expect(output).toContain("\\swap[style={draw=blue},wire style={draw=blue}]{1}");
+    expect(output).toContain("\\targX[style={draw=blue}]{}");
+  });
+
+  it("renders colorized target and meter glyphs directly in the visual editor", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+
+    await user.click(screen.getByRole("button", { name: /^target plus$/i }));
+    await user.click(screen.getByTestId("grid-cell-0-0"));
+    await user.click(screen.getByRole("button", { name: /^meter$/i }));
+    await user.click(screen.getByTestId("grid-cell-0-1"));
+    await user.click(screen.getByRole("button", { name: /^select$/i }));
+
+    fireEvent.keyDown(window, { key: "a", ctrlKey: true });
+    fireEvent.change(screen.getByLabelText(/element color hex/i), {
+      target: { value: "#00FF00" }
+    });
+
+    const targetGlyph = container.querySelector(".target-plus") as SVGGElement;
+    const targetIcon = container.querySelector(".target-plus-icon") as SVGSVGElement;
+    const meterGlyph = container.querySelector(".meter-glyph") as SVGSVGElement;
+
+    expect(targetGlyph).toBeTruthy();
+    expect(targetGlyph.querySelector("image")).toBeNull();
+    expect(targetIcon).toBeTruthy();
+    expect(targetIcon.querySelector("circle")).toBeTruthy();
+    expect(targetIcon.style.color).toBe("rgb(0, 255, 0)");
+
+    expect(meterGlyph).toBeTruthy();
+    expect(meterGlyph.querySelector("image")).toBeNull();
+    expect(meterGlyph.querySelector("path")).toBeTruthy();
+    expect(meterGlyph.style.color).toBe("rgb(0, 255, 0)");
+  });
+
+  it("renders colored wire and swap strokes directly on the SVG primitives", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+
+    fireEvent.change(screen.getByLabelText(/quantikz output/i), {
+      target: {
+        value: String.raw`\begin{quantikz}
+& \swap{1} \\
+& \targX{}
+\end{quantikz}`
+      }
+    });
+
+    await user.click(screen.getByRole("button", { name: /convert to visual/i }));
+    await user.click(screen.getByRole("button", { name: /^select$/i }));
+    fireEvent.keyDown(window, { key: "a", ctrlKey: true });
+
+    fireEvent.change(screen.getByLabelText(/element color hex/i), {
+      target: { value: "#0000FF" }
+    });
+
+    const connectorLine = container.querySelector(".vertical-connector line") as SVGLineElement;
+    const swapIcon = container.querySelector(".swap-x-icon") as SVGSVGElement;
+
+    expect(connectorLine).toBeTruthy();
+    expect(connectorLine.style.stroke).toBe("#0000FF");
+    expect(swapIcon).toBeTruthy();
+    expect(swapIcon.querySelector("line")).toBeTruthy();
+    expect(swapIcon.style.color).toBe("rgb(0, 0, 255)");
   });
 
   it("lets a multi-selection of controls switch between c1 and c0 together", async () => {
@@ -456,6 +548,19 @@ describe("App smoke tests", () => {
     expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain("\\wireoverride{c}");
   });
 
+  it("uses a 20px selection band for horizontal wires", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+
+    await user.click(screen.getByRole("button", { name: /unlock wires/i }));
+    await user.click(screen.getByRole("button", { name: /^select$/i }));
+    await user.click(screen.getByTestId("segment-slot-0-1"));
+
+    const outline = container.querySelector(".item-outline-selected") as SVGRectElement;
+    expect(outline).toBeTruthy();
+    expect(outline.getAttribute("height")).toBe("20");
+  });
+
   it("does not select a horizontal segment while wires are locked", async () => {
     const user = userEvent.setup();
     render(<App />);
@@ -465,6 +570,78 @@ describe("App smoke tests", () => {
 
     expect(screen.queryByLabelText(/segment mode/i)).toBeNull();
     expect(screen.queryByLabelText(/horizontal wire style/i)).toBeNull();
+  });
+
+  it("starts marquee selection from a locked horizontal wire hit area", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+    const board = container.querySelector(".workspace-board") as HTMLDivElement;
+    mockBoardRect(board);
+
+    await user.click(screen.getByRole("button", { name: /^gate$/i }));
+    await user.click(screen.getByTestId("grid-cell-0-0"));
+    await user.click(screen.getByRole("button", { name: /^select$/i }));
+
+    await user.pointer([
+      {
+        target: screen.getByTestId("segment-slot-0-1"),
+        keys: "[MouseLeft>]",
+        coords: {
+          x: getCellCenterX(1, DEFAULT_CIRCUIT_LAYOUT) - 18,
+          y: getRowY(0, DEFAULT_CIRCUIT_LAYOUT)
+        }
+      },
+      {
+        target: board,
+        coords: {
+          x: getCellCenterX(0, DEFAULT_CIRCUIT_LAYOUT) - 32,
+          y: getRowY(0, DEFAULT_CIRCUIT_LAYOUT) + 28
+        }
+      },
+      { keys: "[/MouseLeft]" }
+    ]);
+
+    await waitFor(() => {
+      expect(screen.getByText(/object controls/i)).toBeInTheDocument();
+    });
+    expect(screen.getByLabelText(/gate label/i)).toBeInTheDocument();
+  });
+
+  it("starts marquee selection from a meter-suppressed horizontal slot", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+    const board = container.querySelector(".workspace-board") as HTMLDivElement;
+    mockBoardRect(board);
+
+    await user.click(screen.getByRole("button", { name: /^meter$/i }));
+    await user.click(screen.getByTestId("grid-cell-0-0"));
+    await user.click(screen.getByRole("button", { name: /^gate$/i }));
+    await user.click(screen.getByTestId("grid-cell-0-2"));
+    await user.click(screen.getByRole("button", { name: /^select$/i }));
+
+    await user.pointer([
+      {
+        target: screen.getByTestId("segment-slot-0-1"),
+        keys: "[MouseLeft>]",
+        coords: {
+          x: getCellCenterX(1, DEFAULT_CIRCUIT_LAYOUT) - 18,
+          y: getRowY(0, DEFAULT_CIRCUIT_LAYOUT)
+        }
+      },
+      {
+        target: board,
+        coords: {
+          x: getCellCenterX(2, DEFAULT_CIRCUIT_LAYOUT) + 30,
+          y: getRowY(0, DEFAULT_CIRCUIT_LAYOUT) + 28
+        }
+      },
+      { keys: "[/MouseLeft]" }
+    ]);
+
+    await waitFor(() => {
+      expect(screen.getByText(/object controls/i)).toBeInTheDocument();
+    });
+    expect(screen.getByLabelText(/gate label/i)).toBeInTheDocument();
   });
 
   it("automatically removes only the horizontal wires to the right of a meter", async () => {
@@ -656,20 +833,81 @@ describe("App smoke tests", () => {
     mockBoardRect(board);
 
     await user.click(screen.getByRole("button", { name: /^wires$/i }));
-    fireEvent.pointerDown(screen.getByTestId("grid-cell-0-0"), {
-      button: 0,
-      clientX: getCellCenterX(0, DEFAULT_CIRCUIT_LAYOUT),
-      clientY: getRowY(0, DEFAULT_CIRCUIT_LAYOUT)
-    });
-    fireEvent.pointerDown(screen.getByTestId("grid-cell-2-0"), {
-      button: 0,
-      clientX: getCellCenterX(0, DEFAULT_CIRCUIT_LAYOUT),
-      clientY: getRowY(2, DEFAULT_CIRCUIT_LAYOUT)
-    });
+    await user.pointer([
+      {
+        target: screen.getByTestId("grid-cell-0-0"),
+        keys: "[MouseLeft>]",
+        coords: {
+          x: getCellCenterX(0, DEFAULT_CIRCUIT_LAYOUT),
+          y: getRowY(0, DEFAULT_CIRCUIT_LAYOUT)
+        }
+      },
+      { keys: "[/MouseLeft]" },
+      {
+        target: screen.getByTestId("grid-cell-2-0"),
+        keys: "[MouseLeft>]",
+        coords: {
+          x: getCellCenterX(0, DEFAULT_CIRCUIT_LAYOUT),
+          y: getRowY(2, DEFAULT_CIRCUIT_LAYOUT)
+        }
+      },
+      { keys: "[/MouseLeft]" }
+    ]);
 
     await waitFor(() => {
       expect(container.querySelectorAll(".vertical-connector")).toHaveLength(2);
     });
+  });
+
+  it("lets you select a vertical connector from near the wire", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+    const board = container.querySelector(".workspace-board") as HTMLDivElement;
+    mockBoardRect(board);
+
+    await user.click(screen.getByRole("button", { name: /^wires$/i }));
+    await user.pointer([
+      {
+        target: screen.getByTestId("grid-cell-0-0"),
+        keys: "[MouseLeft>]",
+        coords: {
+          x: getCellCenterX(0, DEFAULT_CIRCUIT_LAYOUT),
+          y: getRowY(0, DEFAULT_CIRCUIT_LAYOUT)
+        }
+      },
+      { keys: "[/MouseLeft]" },
+      {
+        target: screen.getByTestId("grid-cell-2-0"),
+        keys: "[MouseLeft>]",
+        coords: {
+          x: getCellCenterX(0, DEFAULT_CIRCUIT_LAYOUT),
+          y: getRowY(2, DEFAULT_CIRCUIT_LAYOUT)
+        }
+      },
+      { keys: "[/MouseLeft]" }
+    ]);
+
+    await waitFor(() => {
+      expect(container.querySelectorAll(".vertical-connector")).toHaveLength(2);
+    });
+
+    await user.click(screen.getByRole("button", { name: /^select$/i }));
+
+    const hitTarget = container.querySelector(".vertical-connector-hit") as SVGLineElement;
+    fireEvent.pointerDown(hitTarget, {
+      button: 0,
+      clientX: getCellCenterX(0, DEFAULT_CIRCUIT_LAYOUT) + 9,
+      clientY: (getRowY(0, DEFAULT_CIRCUIT_LAYOUT) + getRowY(1, DEFAULT_CIRCUIT_LAYOUT)) / 2
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/object controls/i)).toBeInTheDocument();
+    });
+    expect(screen.getByLabelText(/vertical wire style/i)).toBeInTheDocument();
+
+    const outline = container.querySelector(".item-outline-selected") as SVGRectElement;
+    expect(outline).toBeTruthy();
+    expect(outline.getAttribute("width")).toBe("20");
   });
 
   it("supports undo and redo from the keyboard", async () => {

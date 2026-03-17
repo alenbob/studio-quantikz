@@ -8,10 +8,10 @@
         stroke: #e79659;
         stroke-linecap: round;
         stroke-miterlimit: 10;
-        stroke-width: 12px;
+        stroke-width: 10px;
       }
     </style>
   </defs>
-  <line class="st0" x1="76" y1="78.5" x2="233" y2="235.5"/>
-  <line class="st0" x1="233" y1="78.5" x2="76" y2="235.5"/>
+  <line class="st0" x1="46" y1="48.5" x2="263" y2="265.5"/>
+  <line class="st0" x1="263" y1="48.5" x2="46" y2="265.5"/>
 </svg>

@@ -1,5 +1,5 @@
 import { measureGateWidth, DEFAULT_CIRCUIT_LAYOUT, clampColumnSepCm, clampRowSepCm } from "./layout.js";
-import { normalizeHexColor } from "./color.js";
+import { latexNamedColorToHex, normalizeHexColor } from "./color.js";
 import { normalizeWireLabels } from "./wireLabels.js";
 import type {
   CircuitItem,
@@ -417,11 +417,43 @@ function toHexColor(red: number, green: number, blue: number): string {
 
 function extractColor(value: string): string | null {
   const match = value.match(/(?:draw|fill|text)\s*=\s*\{rgb,255:red,(\d+);green,(\d+);blue,(\d+)\}/i);
-  if (!match) {
+  if (match) {
+    return normalizeHexColor(toHexColor(Number(match[1]), Number(match[2]), Number(match[3])));
+  }
+
+  const namedMatch = value.match(/(?:draw|fill|text)\s*=\s*([A-Za-z]+)/i);
+  if (!namedMatch) {
     return null;
   }
 
-  return normalizeHexColor(toHexColor(Number(match[1]), Number(match[2]), Number(match[3])));
+  return normalizeHexColor(latexNamedColorToHex(namedMatch[1]));
+}
+
+function extractCommandColor(command: ParsedCommand): string | null {
+  if (command.name !== "color") {
+    return null;
+  }
+
+  const value = (command.args[0] ?? "").trim();
+  if (!value) {
+    return null;
+  }
+
+  const colorModel = (command.options[0] ?? "").trim().toUpperCase();
+  if (!colorModel) {
+    return normalizeHexColor(latexNamedColorToHex(value));
+  }
+
+  if (colorModel === "RGB") {
+    const channels = value.split(",").map((channel) => Number(channel.trim()));
+    if (channels.length !== 3 || channels.some((channel) => !Number.isFinite(channel) || channel < 0 || channel > 255)) {
+      return null;
+    }
+
+    return normalizeHexColor(toHexColor(channels[0], channels[1], channels[2]));
+  }
+
+  return null;
 }
 
 function decodeLabel(value: string): string {
@@ -741,7 +773,7 @@ export function importFromQuantikz(code: string): ImportedCircuit {
         return entry.name === "wire" && ["l", "r"].includes(entry.options[0]?.trim() ?? "");
       });
       const hasSubstantiveCommand = commands.some((entry) => {
-        if (entry.name === "qw" || entry.name === "wireoverride" || entry.name === "setwiretype") {
+        if (entry.name === "qw" || entry.name === "wireoverride" || entry.name === "setwiretype" || entry.name === "color") {
           return false;
         }
 
@@ -767,10 +799,16 @@ export function importFromQuantikz(code: string): ImportedCircuit {
 
       let setWireType: ParsedHorizontalWireToken | null = null;
       let wireOverrideType: ParsedHorizontalWireToken | null = null;
+      let activeColor: string | null = null;
 
       commands.forEach((command) => {
+        if (command.name === "color") {
+          activeColor = extractCommandColor(command) ?? activeColor;
+          return;
+        }
+
         const optionText = command.options.join(",");
-        const color = extractColor(optionText);
+        const color = extractColor(optionText) ?? activeColor;
 
         switch (command.name) {
           case "qw":

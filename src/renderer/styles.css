@@ -1369,15 +1369,21 @@ select,
   fill: none;
 }
 
+.vertical-connector-hit {
+  fill: transparent;
+  stroke: none;
+  pointer-events: all;
+}
+
 .horizontal-segment-hit {
   stroke: transparent;
-  stroke-width: 16;
+  stroke-width: 20;
   pointer-events: stroke;
 }
 
 .absent-override-hit {
   stroke: transparent;
-  stroke-width: 16;
+  stroke-width: 20;
   pointer-events: stroke;
   fill: none;
 }

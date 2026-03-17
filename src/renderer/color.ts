@@ -9,6 +9,20 @@ export const COLOR_SWATCHES = [
   "#00FF00"
 ];
 
+const LATEX_NAMED_COLOR_BY_HEX: Record<string, string> = {
+  "#000000": "black",
+  "#FF0000": "red",
+  "#0000FF": "blue",
+  "#00FF00": "green"
+};
+
+const HEX_BY_LATEX_NAMED_COLOR: Record<string, string> = {
+  black: "#000000",
+  red: "#FF0000",
+  blue: "#0000FF",
+  green: "#00FF00"
+};
+
 export function normalizeHexColor(color: string | null | undefined): string | null {
   if (!color) {
     return null;
@@ -58,7 +72,31 @@ export function mixHexWithWhite(color: string, amount = 0.88): string {
   return `#${mix(red)}${mix(green)}${mix(blue)}`.toUpperCase();
 }
 
+export function toLatexNamedColor(color: string): string | null {
+  const normalized = normalizeHexColor(color);
+  return normalized ? (LATEX_NAMED_COLOR_BY_HEX[normalized] ?? null) : null;
+}
+
+export function latexNamedColorToHex(name: string): string | null {
+  const normalized = name.trim().toLowerCase();
+  return HEX_BY_LATEX_NAMED_COLOR[normalized] ?? null;
+}
+
 export function toTikzRgb(color: string): string {
   const { red, green, blue } = hexToRgb(color);
   return `{rgb,255:red,${red};green,${green};blue,${blue}}`;
+}
+
+export function toTikzColor(color: string): string {
+  return toLatexNamedColor(color) ?? toTikzRgb(color);
+}
+
+export function toLatexColorCommand(color: string): string {
+  const namedColor = toLatexNamedColor(color);
+  if (namedColor) {
+    return `\\color{${namedColor}}`;
+  }
+
+  const { red, green, blue } = hexToRgb(color);
+  return `\\color[RGB]{${red},${green},${blue}}`;
 }

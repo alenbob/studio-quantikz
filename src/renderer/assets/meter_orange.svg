@@ -11,7 +11,7 @@
         stroke: #e79659;
         stroke-linecap: round;
         stroke-linejoin: round;
-        stroke-width: 3px;
+        stroke-width: 6px;
       }
 
       .st2 {
