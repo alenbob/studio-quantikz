@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildClipboard } from "../src/renderer/clipboard";
+import { getMeterSuppressedHorizontalKeys } from "../src/renderer/horizontalWires";
 import { editorReducer, initialState } from "../src/renderer/reducer";
 
 describe("editorReducer selection workflows", () => {
@@ -300,6 +301,8 @@ describe("editorReducer selection workflows", () => {
       endRow: 1
     });
 
+    const suppressed = getMeterSuppressedHorizontalKeys(next.items, next.steps);
+
     for (let col = 0; col <= next.steps; col += 1) {
       const expectedSuppressed = col > 1;
       const firstRowSegment = next.items.find(
@@ -325,6 +328,8 @@ describe("editorReducer selection workflows", () => {
       expect(secondRowSegment && "autoSuppressed" in secondRowSegment ? secondRowSegment.autoSuppressed : undefined).toBe(
         expectedSuppressed ? true : undefined
       );
+      expect(suppressed.has(`0:${col}`)).toBe(expectedSuppressed);
+      expect(suppressed.has(`1:${col}`)).toBe(expectedSuppressed);
       expect(next.wireMask[`0:${col}`]).toBe(expectedSuppressed ? "absent" : "present");
       expect(next.wireMask[`1:${col}`]).toBe(expectedSuppressed ? "absent" : "present");
     }
@@ -350,10 +355,26 @@ describe("editorReducer selection workflows", () => {
     ).toMatchObject({
       type: "horizontalSegment",
       point: { row: 0, col: 2 },
-      mode: "present",
-      autoSuppressed: false
+      mode: "present"
     });
     expect(restored.wireMask["0:2"]).toBe("present");
+  });
+
+  it("draws a vertical wire between two snapped grid points", () => {
+    const next = editorReducer(initialState, {
+      type: "drawWire",
+      start: { row: 0, col: 2 },
+      end: { row: 2, col: 2 }
+    });
+
+    expect(next.items).toContainEqual({
+      id: expect.any(String),
+      type: "verticalConnector",
+      point: { row: 0, col: 2 },
+      length: 2,
+      wireType: "quantum",
+      color: null
+    });
   });
 
   it("creates a frame from a dragged annotation area and a slice from a click", () => {
@@ -421,15 +442,17 @@ describe("editorReducer selection workflows", () => {
   it("turns selected horizontal segments into absent overrides when deleting", () => {
     const state = {
       ...initialState,
-      items: initialState.items.map((item) =>
-        item.type === "horizontalSegment" && item.point.row === 0 && item.point.col === 0
-          ? {
-              ...item,
-              id: "line-1",
-              color: "#C85D2D" as const
-            }
-          : item
-      ),
+      items: [
+        ...initialState.items,
+        {
+          id: "line-1",
+          type: "horizontalSegment" as const,
+          point: { row: 0, col: 0 },
+          mode: "present" as const,
+          wireType: "quantum" as const,
+          color: "#C85D2D" as const
+        }
+      ],
       selectedItemIds: ["line-1"]
     };
 
@@ -451,11 +474,16 @@ describe("editorReducer selection workflows", () => {
     const state = {
       ...initialState,
       horizontalSegmentsUnlocked: true,
-      items: initialState.items.map((item) =>
-        item.type === "horizontalSegment" && item.point.row === 0 && item.point.col === 0
-          ? { ...item, id: "line-1", mode: "absent" as const }
-          : item
-      ).concat([
+      items: [
+        ...initialState.items,
+        {
+          id: "line-1",
+          type: "horizontalSegment" as const,
+          point: { row: 0, col: 0 },
+          mode: "present" as const,
+          wireType: "quantum" as const,
+          color: null
+        },
         {
           id: "gate-1",
           type: "gate" as const,
@@ -464,7 +492,7 @@ describe("editorReducer selection workflows", () => {
           label: "H",
           width: 40
         }
-      ]),
+      ],
       selectedItemIds: ["line-1", "gate-1"]
     };
 

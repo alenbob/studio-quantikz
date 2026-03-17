@@ -7,6 +7,11 @@ import {
   measureGateWidth
 } from "./layout";
 import { normalizeHexColor } from "./color";
+import {
+  getMeterSuppressedHorizontalKeys,
+  isVisibleHorizontalSegment,
+  wireKey
+} from "./horizontalWires";
 import { projectSelectionMove } from "./movement";
 import { canPlaceItemsWithoutOverlap } from "./occupancy";
 import { exportToQuantikz } from "./exporter";
@@ -42,6 +47,7 @@ type Action =
   | { type: "setHorizontalSegmentsUnlocked"; unlocked: boolean }
   | { type: "setSelectedIds"; itemIds: string[] }
   | { type: "selectOrCreateHorizontalSegment"; row: number; col: number; additive?: boolean }
+  | { type: "drawWire"; start: { row: number; col: number }; end: { row: number; col: number } }
   | { type: "addItem"; tool: ItemType; placement: PlacementTarget }
   | { type: "addGateFromArea"; start: { row: number; col: number }; end: { row: number; col: number } }
   | { type: "addMeterFromArea"; start: { row: number; col: number }; endRow: number }
@@ -82,10 +88,6 @@ let idCounter = 0;
 function createId(type: ItemType): string {
   idCounter += 1;
   return `${type}-${idCounter}`;
-}
-
-function wireKey(row: number, col: number): string {
-  return `${row}:${col}`;
 }
 
 function deriveWireMask(items: CircuitItem[]): EditorState["wireMask"] {
@@ -188,34 +190,6 @@ function resizeWireTypes(wireTypes: WireType[], qubits: number): WireType[] {
     ...wireTypes,
     ...Array.from({ length: qubits - wireTypes.length }, () => "quantum" as const)
   ];
-}
-
-function createAbsentHorizontalSegments(
-  rows: number[],
-  segmentCols: number[]
-): HorizontalSegmentItem[] {
-  return rows.flatMap((row) =>
-    segmentCols.map((col) => buildHorizontalSegment(row, col, "absent"))
-  );
-}
-
-function getMeterSuppressedHorizontalKeys(items: CircuitItem[], steps: number): Set<string> {
-  const suppressed = new Set<string>();
-
-  for (const item of items) {
-    if (item.type !== "meter") {
-      continue;
-    }
-
-    const rows = item.span.rows ?? 1;
-    for (let row = item.point.row; row < item.point.row + rows; row += 1) {
-      for (let col = item.point.col + 1; col <= steps; col += 1) {
-        suppressed.add(wireKey(row, col));
-      }
-    }
-  }
-
-  return suppressed;
 }
 
 function normalizeHorizontalSegments(
@@ -505,18 +479,35 @@ function addSegmentsForExpandedGrid(
     return items;
   }
 
-  let nextItems = items;
+  const nextItems = [...items];
+  const existingKeys = new Set(
+    items
+      .filter((item): item is HorizontalSegmentItem => item.type === "horizontalSegment")
+      .map((item) => wireKey(item.point.row, item.point.col))
+  );
 
   if (nextQubits > previousQubits) {
-    const newRows = Array.from({ length: nextQubits - previousQubits }, (_, index) => previousQubits + index);
-    const segmentCols = Array.from({ length: previousSteps + 1 }, (_, index) => index);
-    nextItems = [...nextItems, ...createAbsentHorizontalSegments(newRows, segmentCols)];
+    for (let row = previousQubits; row < nextQubits; row += 1) {
+      for (let col = 0; col <= previousSteps; col += 1) {
+        const key = wireKey(row, col);
+        if (!existingKeys.has(key)) {
+          existingKeys.add(key);
+          nextItems.push(buildHorizontalSegment(row, col, "absent"));
+        }
+      }
+    }
   }
 
   if (nextSteps > previousSteps) {
-    const newSegmentCols = Array.from({ length: nextSteps - previousSteps }, (_, index) => previousSteps + 1 + index);
-    const rows = Array.from({ length: nextQubits }, (_, row) => row);
-    nextItems = [...nextItems, ...createAbsentHorizontalSegments(rows, newSegmentCols)];
+    for (let row = 0; row < nextQubits; row += 1) {
+      for (let col = previousSteps + 1; col <= nextSteps; col += 1) {
+        const key = wireKey(row, col);
+        if (!existingKeys.has(key)) {
+          existingKeys.add(key);
+          nextItems.push(buildHorizontalSegment(row, col, "absent"));
+        }
+      }
+    }
   }
 
   return nextItems;
@@ -587,7 +578,7 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
     case "setHorizontalSegmentsUnlocked": {
       const horizontalSegmentIds = new Set(
         state.items
-          .filter((item) => item.type === "horizontalSegment")
+          .filter((item): item is HorizontalSegmentItem => item.type === "horizontalSegment" && isVisibleHorizontalSegment(item))
           .map((item) => item.id)
       );
 
@@ -606,7 +597,18 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
         selectedItemIds: [...new Set(action.itemIds)]
       };
     case "selectOrCreateHorizontalSegment": {
+      const suppressedKeys = getMeterSuppressedHorizontalKeys(state.items, state.steps);
+      const maskKey = wireKey(action.row, action.col);
       const existing = getHorizontalSegmentAt(state.items, action.row, action.col);
+
+      if (state.wireMask[maskKey] === "absent" || suppressedKeys.has(maskKey)) {
+        return {
+          ...state,
+          selectedItemIds: [],
+          uiMessage: null
+        };
+      }
+
       const nextSelectedIds = action.additive
         ? [...new Set([...(state.selectedItemIds ?? []), existing?.id].filter(Boolean) as string[])]
         : existing
@@ -614,6 +616,14 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
           : [];
 
       if (existing) {
+        if (!isVisibleHorizontalSegment(existing)) {
+          return {
+            ...state,
+            selectedItemIds: [],
+            uiMessage: null
+          };
+        }
+
         return {
           ...state,
           selectedItemIds: nextSelectedIds,
@@ -622,7 +632,7 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
       }
 
       const newItem: HorizontalSegmentItem = {
-        ...buildHorizontalSegment(action.row, action.col),
+        ...buildHorizontalSegment(action.row, action.col, "present", state.wireTypes[action.row] ?? "quantum"),
         id: createId("horizontalSegment"),
         type: "horizontalSegment"
       };
@@ -635,6 +645,85 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
         [...state.items, newItem],
         action.additive ? [...new Set([...state.selectedItemIds, newItem.id])] : [newItem.id]
       );
+    }
+    case "drawWire": {
+      const sameRow = action.start.row === action.end.row;
+      const sameCol = action.start.col === action.end.col;
+
+      if (!sameRow && !sameCol) {
+        return state;
+      }
+
+      if (sameRow && action.start.col === action.end.col) {
+        return state;
+      }
+
+      if (sameCol && action.start.row === action.end.row) {
+        return state;
+      }
+
+      if (sameRow) {
+        const row = action.start.row;
+        const startCol = Math.min(action.start.col, action.end.col) + 1;
+        const endCol = Math.max(action.start.col, action.end.col);
+        const segments = new Map(
+          state.items
+            .filter((item): item is HorizontalSegmentItem => item.type === "horizontalSegment")
+            .map((item) => [wireKey(item.point.row, item.point.col), item])
+        );
+
+        for (let col = startCol; col <= endCol; col += 1) {
+          const key = wireKey(row, col);
+          const existing = segments.get(key);
+
+          if (existing) {
+            segments.set(key, {
+              ...existing,
+              mode: "present",
+              wireType: existing.wireType,
+              autoSuppressed: false
+            });
+            continue;
+          }
+
+          segments.set(key, buildHorizontalSegment(row, col, "present", state.wireTypes[row] ?? "quantum"));
+        }
+
+        const horizontalIds = new Set(
+          state.items
+            .filter((item) => item.type === "horizontalSegment")
+            .map((item) => item.id)
+        );
+        const items = [
+          ...state.items.filter((item) => !horizontalIds.has(item.id)),
+          ...segments.values()
+        ];
+
+        return withItems({
+          ...state,
+          uiMessage: null
+        }, items, []);
+      }
+
+      const topRow = Math.min(action.start.row, action.end.row);
+      const length = Math.abs(action.end.row - action.start.row);
+      const connector: CircuitItem = {
+        id: createId("verticalConnector"),
+        type: "verticalConnector",
+        point: { row: topRow, col: action.start.col },
+        length,
+        wireType: "quantum",
+        color: null
+      };
+
+      if (!canPlaceItemsWithoutOverlap(state.items, [connector])) {
+        return withOverlapMessage(state);
+      }
+
+      return withItems({
+        ...state,
+        uiMessage: null
+      }, [...state.items, connector], [connector.id]);
     }
     case "addItem": {
       const newItem = createItem(action.tool, action.placement, state);
@@ -1008,7 +1097,9 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
         };
       });
 
-      return withItems(state, items, state.selectedItemIds);
+      return withItems(state, items, action.mode === "absent"
+        ? state.selectedItemIds.filter((itemId) => itemId !== action.itemId)
+        : state.selectedItemIds);
     }
     case "updateHorizontalWireType": {
       const items = state.items.map((item) => {
@@ -1138,21 +1229,14 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
       const removedCount = Math.max(0, state.items.length - items.length);
 
       if (nextValue > currentValue && !state.autoWireNewGrid) {
-        if (action.dimension === "qubits") {
-          const newRows = Array.from({ length: nextValue - state.qubits }, (_, index) => state.qubits + index);
-          const segmentCols = Array.from({ length: state.steps + 1 }, (_, index) => index);
-          items = [
-            ...items,
-            ...createAbsentHorizontalSegments(newRows, segmentCols)
-          ];
-        } else {
-          const newSegmentCols = Array.from({ length: nextValue - state.steps }, (_, index) => state.steps + 1 + index);
-          const rows = Array.from({ length: state.qubits }, (_, row) => row);
-          items = [
-            ...items,
-            ...createAbsentHorizontalSegments(rows, newSegmentCols)
-          ];
-        }
+        items = addSegmentsForExpandedGrid(
+          items,
+          state.qubits,
+          state.steps,
+          action.dimension === "qubits" ? nextValue : state.qubits,
+          action.dimension === "steps" ? nextValue : state.steps,
+          false
+        );
       }
 
       return withItems(

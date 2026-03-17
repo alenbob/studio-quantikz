@@ -27,6 +27,11 @@ import {
   DEFAULT_ITEM_COLOR,
   mixHexWithWhite
 } from "../color";
+import {
+  getMeterSuppressedHorizontalKeys,
+  isVisibleHorizontalSegment,
+  wireKey
+} from "../horizontalWires";
 import { projectSelectionMove, selectionHasExternalVerticalLinks } from "../movement";
 import { canPlaceItemsWithoutOverlap } from "../occupancy";
 import { canPlaceCellToolAtRow, getBoardMetrics, placementFromViewportPoint } from "../placement";
@@ -67,12 +72,14 @@ interface WorkspaceProps {
   onSelectWireLabelGroup: (row: number, side: WireLabelSide) => void;
   onMergeWireLabelGroup: (row: number, side: WireLabelSide) => void;
   onPlaceItem: (tool: ItemType, placement: PlacementTarget) => void;
+  onDrawWire: (start: { row: number; col: number }, end: { row: number; col: number }) => void;
   onDrawGate: (start: { row: number; col: number }, end: { row: number; col: number }) => void;
   onDrawMeter: (start: { row: number; col: number }, endRow: number) => void;
   onDrawAnnotation: (start: { row: number; col: number }, end: { row: number; col: number }) => void;
   onPasteAt: (placement: PlacementTarget) => void;
   onMoveItem: (itemId: string, placement: PlacementTarget) => void;
   onMoveSelection: (anchorItemId: string, placement: PlacementTarget) => void;
+  onSelectHorizontalSegment: (row: number, col: number, additive?: boolean) => void;
   onSelectionChange: (itemIds: string[]) => void;
   onResizeGrid: (dimension: "qubits" | "steps", value: number) => void;
   onBoardMetricsChange: (metrics: BoardMetrics | null) => void;
@@ -101,8 +108,9 @@ interface AreaDrawState {
   current: { row: number; col: number };
 }
 
-interface PencilStrokeState {
-  kind: PlacementTarget["kind"];
+interface WireDraftState {
+  start: { row: number; col: number };
+  pointer: ContentPoint;
 }
 
 interface DragState {
@@ -790,27 +798,12 @@ function renderHorizontalSegment(
   const [x1, x2] = getIncomingSegmentRange(item.point.col, steps, layout, columnMetrics);
   const y = getRowY(item.point.row, layout);
   const color = getItemColor(item);
-  const isAbsent = item.mode === "absent" || item.autoSuppressed;
-
-  if (!isAbsent) {
-    return (
-      <g className={`horizontal-segment ${isSelected ? "is-selected" : ""}`}>
-        <line x1={x1} x2={x2} y1={y} y2={y} className="horizontal-segment-hit" />
-        {isSelected && renderWireStroke(x1, x2, y, item.wireType, "horizontal-segment-selection")}
-        {renderWireStroke(x1, x2, y, item.wireType, "horizontal-segment-stroke", { stroke: color })}
-      </g>
-    );
-  }
 
   return (
-    <g className={`absent-override ${isSelected ? "is-selected" : ""}`}>
-      {!item.autoSuppressed && (
-        <>
-          <line x1={x1} x2={x2} y1={y} y2={y} className="absent-override-hit" />
-          <line x1={x1} x2={x2} y1={y} y2={y} className="absent-override-dash" style={{ stroke: color }} />
-        </>
-      )}
-      {isSelected && <line x1={x1} x2={x2} y1={y} y2={y} className="absent-override-selection" />}
+    <g className={`horizontal-segment ${isSelected ? "is-selected" : ""}`}>
+      <line x1={x1} x2={x2} y1={y} y2={y} className="horizontal-segment-hit" />
+      {isSelected && renderWireStroke(x1, x2, y, item.wireType, "horizontal-segment-selection")}
+      {renderWireStroke(x1, x2, y, item.wireType, "horizontal-segment-stroke", { stroke: color })}
     </g>
   );
 }
@@ -865,12 +858,14 @@ export function Workspace({
   onSelectWireLabelGroup,
   onMergeWireLabelGroup,
   onPlaceItem,
+  onDrawWire,
   onDrawGate,
   onDrawMeter,
   onDrawAnnotation,
   onPasteAt,
   onMoveItem,
   onMoveSelection,
+  onSelectHorizontalSegment,
   onSelectionChange,
   onResizeGrid,
   onBoardMetricsChange
@@ -881,9 +876,9 @@ export function Workspace({
   const [marquee, setMarquee] = useState<MarqueeSelection | null>(null);
   const [editingWireLabel, setEditingWireLabel] = useState<{ row: number; side: "left" | "right" } | null>(null);
   const [areaDraw, setAreaDraw] = useState<AreaDrawState | null>(null);
-  const [pencilStroke, setPencilStroke] = useState<PencilStrokeState | null>(null);
+  const [wireDraft, setWireDraft] = useState<WireDraftState | null>(null);
   const [swapTooltip, setSwapTooltip] = useState<{ message: string; x: number; y: number } | null>(null);
-  const pencilVisitedRef = useRef<Set<string>>(new Set());
+  const wireDraftRef = useRef<WireDraftState | null>(null);
   const dragPointerRef = useRef<{ clientX: number; clientY: number } | null>(null);
   const dragGrowRef = useRef({ lastRowGrowAt: 0, lastColGrowAt: 0 });
   const lastPointerRef = useRef<{ clientX: number; clientY: number } | null>(null);
@@ -919,13 +914,20 @@ export function Workspace({
       ? instantiateClipboardItems(pasteClipboard, pasteAnchor)
       : [];
   const marqueeRect = marquee ? normalizeRect(marquee.start, marquee.current) : null;
-  const wireLayerItems = useMemo(() => state.items.filter(isWireLayerItem), [state.items]);
+  const meterSuppressedKeys = useMemo(() => getMeterSuppressedHorizontalKeys(state.items, state.steps), [state.items, state.steps]);
+  const wireLayerItems = useMemo(
+    () => state.items.filter((item) => item.type === "verticalConnector" || (item.type === "horizontalSegment" && isVisibleHorizontalSegment(item))),
+    [state.items]
+  );
   const gateLayerItems = useMemo(() => state.items.filter(isGateLikeItem), [state.items]);
   const annotationBackgroundItems = useMemo(() => state.items.filter(isAnnotationBackgroundItem), [state.items]);
   const annotationOverlayItems = useMemo(() => state.items.filter(isAnnotationOverlayItem), [state.items]);
   const markerLayerItems = useMemo(() => state.items.filter(isMarkerItem), [state.items]);
   const swapStatuses = useMemo(() => getSwapStatusById(state.items), [state.items]);
-  const previewWireItems = useMemo(() => pastePreviewItems.filter(isWireLayerItem), [pastePreviewItems]);
+  const previewWireItems = useMemo(
+    () => pastePreviewItems.filter((item) => item.type === "verticalConnector" || (item.type === "horizontalSegment" && isVisibleHorizontalSegment(item))),
+    [pastePreviewItems]
+  );
   const previewGateItems = useMemo(() => pastePreviewItems.filter(isGateLikeItem), [pastePreviewItems]);
   const previewAnnotationBackgroundItems = useMemo(() => pastePreviewItems.filter(isAnnotationBackgroundItem), [pastePreviewItems]);
   const previewAnnotationOverlayItems = useMemo(() => pastePreviewItems.filter(isAnnotationOverlayItem), [pastePreviewItems]);
@@ -1038,6 +1040,19 @@ export function Workspace({
     }
   }, [editingWireLabel, state.qubits]);
 
+  useEffect(() => {
+    if (state.activeTool !== "pencil" || isPasteMode) {
+      wireDraftRef.current = null;
+      setWireDraft(null);
+      return;
+    }
+
+    if (wireDraft && (wireDraft.start.row >= state.qubits || wireDraft.start.col >= state.steps)) {
+      wireDraftRef.current = null;
+      setWireDraft(null);
+    }
+  }, [isPasteMode, state.activeTool, state.qubits, state.steps, wireDraft]);
+
   function resolvePlacement(clientX: number, clientY: number, tool: ToolType | ItemType): PlacementTarget | null {
     const board = boardRef.current;
     if (!board) {
@@ -1118,7 +1133,69 @@ export function Workspace({
     };
   }
 
+  function getContentPoint(clientX: number, clientY: number): ContentPoint | null {
+    const board = boardRef.current;
+    if (!board) {
+      return null;
+    }
+
+    const metrics = getBoardMetrics(board);
+
+    return {
+      x: clientX - metrics.left + metrics.scrollLeft,
+      y: clientY - metrics.top + metrics.scrollTop
+    };
+  }
+
+  function resolveWireAnchor(clientX: number, clientY: number): { row: number; col: number } | null {
+    const board = boardRef.current;
+    if (!board) {
+      return null;
+    }
+
+    const metrics = getBoardMetrics(board);
+    const placement = placementFromViewportPoint(clientX, clientY, metrics, "gate", state);
+    if (!placement || placement.kind !== "cell") {
+      return null;
+    }
+
+    const point = getContentPoint(clientX, clientY);
+    if (!point) {
+      return null;
+    }
+
+    const centerX = getCellCenterX(placement.col, layout, columnMetrics);
+    const centerY = getRowY(placement.row, layout);
+
+    if (Math.abs(point.x - centerX) > 16 || Math.abs(point.y - centerY) > 16) {
+      return null;
+    }
+
+    return { row: placement.row, col: placement.col };
+  }
+
+  function updateWireDraftFromPointer(clientX: number, clientY: number): void {
+    if (!wireDraftRef.current) {
+      return;
+    }
+
+    const point = getContentPoint(clientX, clientY);
+    if (point) {
+      wireDraftRef.current = { ...wireDraftRef.current, pointer: point };
+      setWireDraft(wireDraftRef.current);
+    }
+
+    const anchor = resolveWireAnchor(clientX, clientY);
+    setHoverPlacement(anchor ? { kind: "cell", row: anchor.row, col: anchor.col } : null);
+  }
+
   function updateHoverFromPointer(clientX: number, clientY: number, tool: ToolType | ItemType): void {
+    if (tool === "pencil") {
+      const anchor = resolveWireAnchor(clientX, clientY);
+      setHoverPlacement(anchor ? { kind: "cell", row: anchor.row, col: anchor.col } : null);
+      return;
+    }
+
     setHoverPlacement(resolvePlacement(clientX, clientY, tool));
   }
 
@@ -1128,37 +1205,6 @@ export function Workspace({
     }
 
     onPlaceItem(tool, placement);
-  }
-
-  function placementKey(placement: PlacementTarget): string {
-    return `${placement.kind}:${placement.row}:${placement.col}`;
-  }
-
-  function applyPencilPlacement(placement: PlacementTarget | null, expectedKind: PlacementTarget["kind"]): void {
-    if (!placement || placement.kind !== expectedKind) {
-      return;
-    }
-
-    const key = placementKey(placement);
-    if (pencilVisitedRef.current.has(key)) {
-      return;
-    }
-    pencilVisitedRef.current.add(key);
-
-    if (placement.kind === "segment") {
-      placeWithTool("horizontalSegment", placement);
-      return;
-    }
-
-    if (canPlaceCellToolAtRow("pencil", placement.row, state.qubits)) {
-      placeWithTool("verticalConnector", placement);
-    }
-  }
-
-  function beginPencilStroke(placement: PlacementTarget): void {
-    pencilVisitedRef.current = new Set();
-    setPencilStroke({ kind: placement.kind });
-    applyPencilPlacement(placement, placement.kind);
   }
 
   function placePastedClipboardFromPointer(clientX: number, clientY: number): void {
@@ -1213,7 +1259,36 @@ export function Workspace({
     }
 
     if (state.activeTool === "pencil") {
-      beginPencilStroke(placement);
+      const anchor = resolveWireAnchor(clientX, clientY);
+      const currentWireDraft = wireDraftRef.current;
+
+      if (!currentWireDraft) {
+        if (!anchor) {
+          return;
+        }
+
+        const pointer = getContentPoint(clientX, clientY);
+        if (!pointer) {
+          return;
+        }
+
+        wireDraftRef.current = { start: anchor, pointer };
+        setWireDraft(wireDraftRef.current);
+        setHoverPlacement({ kind: "cell", row: anchor.row, col: anchor.col });
+        return;
+      }
+
+      if (!anchor) {
+        wireDraftRef.current = null;
+        setWireDraft(null);
+        setHoverPlacement(null);
+        return;
+      }
+
+      onDrawWire(currentWireDraft.start, anchor);
+      wireDraftRef.current = null;
+      setWireDraft(null);
+      setHoverPlacement(null);
       return;
     }
 
@@ -1465,6 +1540,7 @@ export function Workspace({
       } else {
         onSelectionChange(
           state.items
+            .filter((item) => item.type !== "horizontalSegment" || isVisibleHorizontalSegment(item))
             .filter((item) => rectsIntersect(getItemBounds(item, state.steps, state.qubits, layout, columnMetrics), rect))
             .map((item) => item.id)
         );
@@ -1485,32 +1561,20 @@ export function Workspace({
   }, [columnMetrics, layout, marquee, onSelectionChange, state.items, state.qubits, state.steps]);
 
   useEffect(() => {
-    if (!pencilStroke) {
+    if (!wireDraft) {
       return;
     }
 
     const handlePointerMove = (event: PointerEvent) => {
-      const placement = resolvePlacement(event.clientX, event.clientY, "pencil");
-      setHoverPlacement(placement);
-      applyPencilPlacement(placement, pencilStroke.kind);
-    };
-
-    const finishStroke = () => {
-      pencilVisitedRef.current = new Set();
-      setPencilStroke(null);
-      setHoverPlacement(null);
+      updateWireDraftFromPointer(event.clientX, event.clientY);
     };
 
     window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", finishStroke);
-    window.addEventListener("pointercancel", finishStroke);
 
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", finishStroke);
-      window.removeEventListener("pointercancel", finishStroke);
     };
-  }, [pencilStroke, state.activeTool, state.qubits]);
+  }, [wireDraft, state.qubits, state.steps]);
 
   useEffect(() => {
     if (!areaDraw) {
@@ -1642,6 +1706,37 @@ export function Workspace({
     );
   }
 
+  function renderWireDraftPreview(): JSX.Element | null {
+    if (!wireDraft) {
+      return null;
+    }
+
+    const startX = getCellCenterX(wireDraft.start.col, layout, columnMetrics);
+    const startY = getRowY(wireDraft.start.row, layout);
+    const snappedEnd = hoverPlacement?.kind === "cell" ? hoverPlacement : null;
+    const aligned =
+      snappedEnd !== null &&
+      (snappedEnd.row === wireDraft.start.row || snappedEnd.col === wireDraft.start.col) &&
+      !(snappedEnd.row === wireDraft.start.row && snappedEnd.col === wireDraft.start.col);
+    const endX = aligned && snappedEnd ? getCellCenterX(snappedEnd.col, layout, columnMetrics) : wireDraft.pointer.x;
+    const endY = aligned && snappedEnd ? getRowY(snappedEnd.row, layout) : wireDraft.pointer.y;
+
+    return (
+      <g className={`wire-draft ${aligned ? "" : "is-invalid"}`} aria-hidden="true">
+        <circle cx={startX} cy={startY} r={6} className="wire-draft-anchor" />
+        <line x1={startX} x2={endX} y1={startY} y2={endY} className="wire-draft-line" />
+        {snappedEnd && (
+          <circle
+            cx={getCellCenterX(snappedEnd.col, layout, columnMetrics)}
+            cy={getRowY(snappedEnd.row, layout)}
+            r={5}
+            className="wire-draft-target"
+          />
+        )}
+      </g>
+    );
+  }
+
   return (
     <section className="panel workspace-panel">
       <div className="panel-heading">
@@ -1718,7 +1813,12 @@ export function Workspace({
         onPointerMove={(event) => {
           lastPointerRef.current = { clientX: event.clientX, clientY: event.clientY };
 
-          if (dragState || marquee || areaDraw || pencilStroke) {
+          if (wireDraft) {
+            updateWireDraftFromPointer(event.clientX, event.clientY);
+            return;
+          }
+
+          if (dragState || marquee || areaDraw) {
             return;
           }
 
@@ -1732,7 +1832,7 @@ export function Workspace({
           }
         }}
         onPointerLeave={() => {
-          if (!dragState && !marquee && !areaDraw && !pencilStroke) {
+          if (!dragState && !marquee && !areaDraw && !wireDraft) {
             setHoverPlacement(null);
           }
           setSwapTooltip(null);
@@ -1866,32 +1966,16 @@ export function Workspace({
           {state.activeTool === "pencil" && !isPasteMode && (
             <g className="pencil-guide-layer" aria-hidden="true">
               {Array.from({ length: state.qubits }, (_, row) =>
-                Array.from({ length: state.steps + 1 }, (_, col) => {
-                  const [x1, x2] = getIncomingSegmentRange(col, state.steps, layout, columnMetrics);
-                  const y = getRowY(row, layout);
-                  return (
-                    <line
-                      key={`pencil-guide-h-${row}-${col}`}
-                      x1={x1}
-                      x2={x2}
-                      y1={y}
-                      y2={y}
-                      className="pencil-guide pencil-guide-horizontal"
-                    />
-                  );
-                })
-              )}
-              {Array.from({ length: Math.max(state.qubits - 1, 0) }, (_, row) =>
                 Array.from({ length: state.steps }, (_, col) => {
                   const x = getCellCenterX(col, layout, columnMetrics);
+                  const y = getRowY(row, layout);
                   return (
-                    <line
-                      key={`pencil-guide-v-${row}-${col}`}
-                      x1={x}
-                      x2={x}
-                      y1={getRowY(row, layout)}
-                      y2={getRowY(row + 1, layout)}
-                      className="pencil-guide pencil-guide-vertical"
+                    <circle
+                      key={`pencil-guide-point-${row}-${col}`}
+                      cx={x}
+                      cy={y}
+                      r={4}
+                      className="pencil-guide pencil-guide-point"
                     />
                   );
                 })
@@ -1909,17 +1993,6 @@ export function Workspace({
                 width={getColumnRightX(col, layout, columnMetrics) - getColumnLeftX(col, layout, columnMetrics)}
                 height={rowHeight}
                 className="grid-hit-cell"
-                onPointerEnter={() => {
-                  if (state.activeTool !== "pencil" || isPasteMode) {
-                    return;
-                  }
-
-                  const placement = { kind: "cell" as const, row, col };
-                  setHoverPlacement(placement);
-                  if (pencilStroke?.kind === "cell") {
-                    applyPencilPlacement(placement, "cell");
-                  }
-                }}
                 onPointerDown={(event) => {
                   if (event.button !== 0) {
                     return;
@@ -1936,7 +2009,7 @@ export function Workspace({
                     return;
                   }
 
-                  if (!canPlaceCellToolAtRow(state.activeTool, row, state.qubits)) {
+                  if (state.activeTool !== "pencil" && !canPlaceCellToolAtRow(state.activeTool, row, state.qubits)) {
                     return;
                   }
 
@@ -1959,7 +2032,7 @@ export function Workspace({
                   }
 
                   if (state.activeTool === "pencil") {
-                    beginPencilStroke({ kind: "cell", row, col });
+                    handleToolPointerDown(event.clientX, event.clientY);
                     return;
                   }
 
@@ -1981,54 +2054,46 @@ export function Workspace({
                 width={Math.max(x2 - x1, 12)}
                 height={28}
                 className="grid-hit-segment"
-                onPointerEnter={() => {
-                  if (state.activeTool !== "pencil" || isPasteMode) {
-                    return;
-                  }
-
-                  const placement = { kind: "segment" as const, row, col };
-                  setHoverPlacement(placement);
-                  if (pencilStroke?.kind === "segment") {
-                    applyPencilPlacement(placement, "segment");
-                  }
-                }}
                 onPointerDown={(event) => {
                   if (event.button !== 0) {
                     return;
                   }
 
+                    event.preventDefault();
+                    event.stopPropagation();
+
                     if (isPasteMode) {
-                      event.preventDefault();
-                      event.stopPropagation();
                       onPasteAt({ kind: "segment", row, col });
                       return;
                     }
 
-                    if (state.activeTool !== "pencil") {
+                    if (state.activeTool !== "select") {
                       return;
                     }
 
-                    event.preventDefault();
-                    event.stopPropagation();
-                    beginPencilStroke({ kind: "segment", row, col });
+                    if (!state.horizontalSegmentsUnlocked) {
+                      onSelectionChange([]);
+                      setHoverPlacement(null);
+                      return;
+                    }
+
+                    const maskKey = wireKey(row, col);
+                    if (state.wireMask[maskKey] === "absent" || meterSuppressedKeys.has(maskKey)) {
+                      onSelectionChange([]);
+                      return;
+                    }
+
+                    onSelectHorizontalSegment(row, col, event.shiftKey || event.metaKey || event.ctrlKey);
                   }}
                 />
               );
             })
           )}
 
-          {hoverPlacement && !areaDraw && hoverTool !== "select" && (
-            hoverPlacement.kind === "cell" && hoverTool === "pencil" ? (
-              renderVerticalHover(
-                hoverPlacement.row,
-                hoverPlacement.col,
-                state.qubits,
-                layout,
-                columnMetrics,
-                verticalHoverLength,
-                isPasteMode && !pastePreviewValid
-              )
-            ) : hoverPlacement.kind === "cell" ? (
+          {renderWireDraftPreview()}
+
+          {hoverPlacement && !areaDraw && !wireDraft && hoverTool !== "select" && (
+            hoverPlacement.kind === "cell" ? (
               <rect
                 x={getColumnLeftX(hoverPlacement.col, layout, columnMetrics)}
                 y={getRowY(hoverPlacement.row, layout) - (rowHeight / 2)}

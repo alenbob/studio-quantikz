@@ -26,6 +26,7 @@ import {
   type DownloadFormat,
   type ExportAssetSource
 } from "./exportAssets";
+import { isVisibleHorizontalSegment } from "./horizontalWires";
 import { importFromQuantikz } from "./importer";
 import { useRenderedPdf } from "./useRenderedPdf";
 import { editorReducer, initialState, type EditorAction } from "./reducer";
@@ -413,7 +414,10 @@ export default function App(): JSX.Element {
         dispatch({
           type: "setSelectedIds",
           itemIds: stateRef.current.items
-            .filter((item) => stateRef.current.horizontalSegmentsUnlocked || item.type !== "horizontalSegment")
+            .filter((item) =>
+              item.type !== "horizontalSegment" ||
+              (stateRef.current.horizontalSegmentsUnlocked && isVisibleHorizontalSegment(item))
+            )
             .map((item) => item.id)
         });
         dispatch({ type: "setTool", tool: "select" });
@@ -1148,6 +1152,11 @@ export default function App(): JSX.Element {
               dispatch({ type: "setSelectedIds", itemIds: [] });
             }
           }}
+          onDrawWire={(start, end) => {
+            setSelectedWireLabel(null);
+            dispatch({ type: "drawWire", start, end });
+            dispatch({ type: "setSelectedIds", itemIds: [] });
+          }}
           onDrawGate={(start, end) => {
             setSelectedWireLabel(null);
             dispatch({ type: "addGateFromArea", start, end });
@@ -1170,6 +1179,10 @@ export default function App(): JSX.Element {
           onMoveSelection={(anchorItemId: string, placement: PlacementTarget) =>
             dispatch({ type: "moveSelection", anchorItemId, placement })
           }
+          onSelectHorizontalSegment={(row, col, additive) => {
+            setSelectedWireLabel(null);
+            dispatch({ type: "selectOrCreateHorizontalSegment", row, col, additive });
+          }}
           onSelectionChange={(itemIds) => {
             setSelectedWireLabel(null);
             dispatch({ type: "setSelectedIds", itemIds });

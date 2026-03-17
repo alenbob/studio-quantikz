@@ -12,6 +12,11 @@ import type {
   VerticalConnectorItem,
   WireType
 } from "./types";
+import {
+  getMeterSuppressedHorizontalKeys,
+  isAbsentHorizontalSegment,
+  wireKey
+} from "./horizontalWires";
 import { mixHexWithWhite, toTikzRgb } from "./color";
 import {
   formatGateLabelForQuantikz,
@@ -27,10 +32,6 @@ import { getWireLabelBracket, getWireLabelSpan, isWireLabelGroupStart, type Wire
 
 function itemKey(item: CircuitItem): string {
   return item.id;
-}
-
-function wireKey(row: number, col: number): string {
-  return `${row}:${col}`;
 }
 
 function isConsecutive(rows: number[]): boolean {
@@ -61,12 +62,12 @@ function toQuantikzWireType(wireType: WireType): "q" | "c" {
   return wireType === "classical" ? "c" : "q";
 }
 
-function isHorizontalSegmentAbsent(item: HorizontalSegmentItem): boolean {
-  return item.mode === "absent" || item.autoSuppressed === true;
-}
+function horizontalSegmentNeedsCommand(item: HorizontalSegmentItem, implicitlyAbsent = false): boolean {
+  if (isAbsentHorizontalSegment(item)) {
+    return true;
+  }
 
-function horizontalSegmentNeedsCommand(item: HorizontalSegmentItem): boolean {
-  if (isHorizontalSegmentAbsent(item)) {
+  if (implicitlyAbsent) {
     return true;
   }
 
@@ -292,6 +293,7 @@ export function exportToQuantikz(state: EditorState): string {
   const cells = buildMatrix(state.qubits, effectiveSteps);
   const used = new Set<string>();
   const suppressedCells = new Set<string>();
+  const implicitlyAbsentHorizontalKeys = getMeterSuppressedHorizontalKeys(state.items, effectiveSteps);
 
   for (const gate of gates) {
     const formattedLabel = formatGateLabelForQuantikz(gate.label);
@@ -535,7 +537,10 @@ export function exportToQuantikz(state: EditorState): string {
   }
 
   for (const horizontal of horizontals) {
-    if (!horizontalSegmentNeedsCommand(horizontal)) {
+    const key = wireKey(horizontal.point.row, horizontal.point.col);
+    const implicitlyAbsent = implicitlyAbsentHorizontalKeys.has(key);
+
+    if (!horizontalSegmentNeedsCommand(horizontal, implicitlyAbsent)) {
       continue;
     }
 
@@ -544,8 +549,9 @@ export function exportToQuantikz(state: EditorState): string {
       continue;
     }
 
-    if (isHorizontalSegmentAbsent(horizontal)) {
+    if (isAbsentHorizontalSegment(horizontal)) {
       rowCells[horizontal.point.col].unshift("\\wireoverride{n}");
+      implicitlyAbsentHorizontalKeys.delete(key);
       continue;
     }
 
@@ -554,6 +560,7 @@ export function exportToQuantikz(state: EditorState): string {
       cells[horizontal.point.row][horizontal.point.col].unshift(
         `\\wireoverride{${toQuantikzWireType(horizontal.wireType)}}`
       );
+      implicitlyAbsentHorizontalKeys.delete(key);
       continue;
     }
 
@@ -561,6 +568,20 @@ export function exportToQuantikz(state: EditorState): string {
       `\\wire[l][1][${wireOptions}]{${toQuantikzWireType(horizontal.wireType)}}`
     );
     cells[horizontal.point.row][horizontal.point.col].unshift("\\wireoverride{n}");
+    implicitlyAbsentHorizontalKeys.delete(key);
+  }
+
+  for (const key of implicitlyAbsentHorizontalKeys) {
+    const [rowText, colText] = key.split(":");
+    const row = Number(rowText);
+    const col = Number(colText);
+    const rowCells = cells[row];
+
+    if (!rowCells || col < 0 || col >= rowCells.length) {
+      continue;
+    }
+
+    rowCells[col].unshift("\\wireoverride{n}");
   }
 
   const exportedRows = cells.map((rowCells, rowIndex) => {

@@ -18,7 +18,7 @@ export const TOOL_LABELS: Array<{
   shortcutKey?: string;
 }> = [
   { tool: "select", label: "Select", shortLabel: "SELECT", description: "Select and drag existing items.", icon: selectIcon, shortcutKey: "V" },
-  { tool: "pencil", label: "Wires", shortLabel: "WIRES", description: "Paint horizontal or vertical wires.", icon: calygraphicPenIcon, shortcutKey: "P" },
+  { tool: "pencil", label: "Wires", shortLabel: "WIRES", description: "Connect two snapped grid points with a wire.", icon: calygraphicPenIcon, shortcutKey: "W" },
   { tool: "gate", label: "Gate", shortLabel: "Gate", description: "Place an auto-sized gate box.", icon: gateIcon, shortcutKey: "G" },
   { tool: "meter", label: "Meter", shortLabel: "Meas", description: "Place a measurement box.", icon: meterIcon, shortcutKey: "M" },
   { tool: "annotation", label: "Frame/Slice", shortLabel: "Mark", description: "Drag for a frame or click for a slice.", icon: annotationIcon, shortcutKey: "F" },

@@ -145,11 +145,9 @@ describe("App smoke tests", () => {
 
     await user.click(screen.getByRole("button", { name: /^gate$/i }));
     await user.click(screen.getByTestId("grid-cell-0-0"));
-    await user.click(screen.getByRole("button", { name: /^wires$/i }));
-    await user.click(screen.getByTestId("segment-slot-0-0"));
 
     const gateRect = container.querySelector('rect[data-kind="gate-rect"]') as SVGRectElement;
-    const wireSegment = container.querySelector(".horizontal-segment") as SVGGElement;
+    const wireSegment = container.querySelector(".horizontal-segment-passive") as SVGElement;
 
     expect(wireSegment).toBeTruthy();
     expect(wireSegment.compareDocumentPosition(gateRect) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -357,29 +355,26 @@ describe("App smoke tests", () => {
     const user = userEvent.setup();
     const { container } = render(<App />);
 
+    await user.click(screen.getByRole("button", { name: /unlock wires/i }));
     await user.click(screen.getByRole("button", { name: /^select$/i }));
-
-    const horizontalLineHit = container.querySelector(".horizontal-segment-hit") as SVGLineElement;
-    fireEvent.pointerDown(horizontalLineHit, { button: 0 });
+    await user.click(screen.getByTestId("segment-slot-0-1"));
 
     expect(screen.getByLabelText(/segment mode/i)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /delete selected/i }));
     await user.click(screen.getByRole("button", { name: /convert to quantikz/i }));
 
-    expect(container.querySelector(".absent-override")).toBeTruthy();
-    expect(container.querySelector(".absent-override-gap")).toBeNull();
-    expect(container.querySelector(".absent-override circle")).toBeNull();
+    expect(container.querySelector(".absent-override")).toBeNull();
     expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain("\\wireoverride{n}");
   });
 
   it("lets a selected horizontal segment switch to classical wire style", async () => {
     const user = userEvent.setup();
-    const { container } = render(<App />);
+    render(<App />);
 
+    await user.click(screen.getByRole("button", { name: /unlock wires/i }));
     await user.click(screen.getByRole("button", { name: /^select$/i }));
-    const horizontalLineHit = container.querySelector(".horizontal-segment-hit") as SVGLineElement;
-    fireEvent.pointerDown(horizontalLineHit, { button: 0 });
+    await user.click(screen.getByTestId("segment-slot-0-1"));
 
     fireEvent.change(screen.getByLabelText(/horizontal wire style/i), {
       target: { value: "classical" }
@@ -397,35 +392,45 @@ describe("App smoke tests", () => {
     await user.click(screen.getByTestId("grid-cell-0-0"));
     await user.click(screen.getByRole("button", { name: /convert to quantikz/i }));
 
-    expect(container.querySelectorAll(".absent-override").length).toBe(5);
-    expect(container.querySelector(".absent-override-gap")).toBeNull();
+    expect(container.querySelectorAll(".absent-override").length).toBe(0);
     expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain("\\wireoverride{n}");
   });
 
   it("lets you redraw a wire to the right of a meter", async () => {
     const user = userEvent.setup();
     const { container } = render(<App />);
+    const board = container.querySelector(".workspace-board") as HTMLDivElement;
+    mockBoardRect(board);
 
     await user.click(screen.getByRole("button", { name: /^meter$/i }));
     await user.click(screen.getByTestId("grid-cell-0-0"));
 
-    expect(container.querySelectorAll(".absent-override")).toHaveLength(5);
-
     await user.click(screen.getByRole("button", { name: /^wires$/i }));
-    await user.click(screen.getByTestId("segment-slot-0-1"));
+    fireEvent.pointerDown(board, {
+      button: 0,
+      clientX: getCellCenterX(0, DEFAULT_CIRCUIT_LAYOUT),
+      clientY: getRowY(0, DEFAULT_CIRCUIT_LAYOUT)
+    });
+    fireEvent.pointerDown(board, {
+      button: 0,
+      clientX: getCellCenterX(1, DEFAULT_CIRCUIT_LAYOUT),
+      clientY: getRowY(0, DEFAULT_CIRCUIT_LAYOUT)
+    });
+    await user.click(screen.getByRole("button", { name: /convert to quantikz/i }));
 
-    expect(container.querySelectorAll(".absent-override")).toHaveLength(4);
+    expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain("\\wireoverride{q}");
   });
 
   it("can grow the grid without auto-wiring the new row and column", async () => {
     const user = userEvent.setup();
-    const { container } = render(<App />);
+    render(<App />);
 
     await user.click(screen.getByRole("button", { name: /auto wires/i }));
     await user.click(screen.getByRole("button", { name: /increase qubits/i }));
     await user.click(screen.getByRole("button", { name: /increase steps/i }));
+    await user.click(screen.getByRole("button", { name: /convert to quantikz/i }));
 
-    expect(container.querySelectorAll(".absent-override").length).toBeGreaterThan(0);
+    expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain("\\wireoverride{n}");
   });
 
   it("shows row numbers on the far left of the circuit", () => {
@@ -450,6 +455,9 @@ describe("App smoke tests", () => {
 
     fireEvent.keyDown(window, { key: "g" });
     expect(screen.getByRole("button", { name: /^gate$/i })).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.keyDown(window, { key: "w" });
+    expect(screen.getByRole("button", { name: /^wires$/i })).toHaveAttribute("aria-pressed", "true");
 
     fireEvent.keyDown(window, { key: "s" });
     expect(screen.getByRole("button", { name: /^swap x$/i })).toHaveAttribute("aria-pressed", "true");
@@ -539,6 +547,7 @@ describe("App smoke tests", () => {
     await user.click(screen.getByTestId("grid-cell-0-0"));
     await user.click(screen.getByRole("button", { name: /^wires$/i }));
     await user.click(screen.getByTestId("grid-cell-0-0"));
+    await user.click(screen.getByTestId("grid-cell-1-0"));
 
     const invalidSwap = container.querySelector(".swap-x.is-invalid") as SVGGElement;
     expect(invalidSwap).toBeTruthy();
@@ -548,26 +557,25 @@ describe("App smoke tests", () => {
     expect(screen.getByText(/connect this swap x to one other swap x/i)).toBeInTheDocument();
   });
 
-  it("paints multiple vertical connectors in one pencil stroke", async () => {
+  it("creates a vertical connector between two clicked grid points", async () => {
     const user = userEvent.setup();
     const { container } = render(<App />);
     const board = container.querySelector(".workspace-board") as HTMLDivElement;
     mockBoardRect(board);
 
     await user.click(screen.getByRole("button", { name: /^wires$/i }));
-
-    await user.pointer([{ target: screen.getByTestId("grid-cell-0-0"), keys: "[MouseLeft>]" }]);
-    fireEvent.pointerEnter(screen.getByTestId("grid-cell-0-1"), {
-      clientX: getCellCenterX(1, DEFAULT_CIRCUIT_LAYOUT),
-      clientY: getRowY(0, DEFAULT_CIRCUIT_LAYOUT) + 18
+    fireEvent.pointerDown(board, {
+      button: 0,
+      clientX: getCellCenterX(0, DEFAULT_CIRCUIT_LAYOUT),
+      clientY: getRowY(0, DEFAULT_CIRCUIT_LAYOUT)
     });
-    fireEvent.pointerEnter(screen.getByTestId("grid-cell-0-2"), {
-      clientX: getCellCenterX(2, DEFAULT_CIRCUIT_LAYOUT),
-      clientY: getRowY(0, DEFAULT_CIRCUIT_LAYOUT) + 18
+    fireEvent.pointerDown(board, {
+      button: 0,
+      clientX: getCellCenterX(0, DEFAULT_CIRCUIT_LAYOUT),
+      clientY: getRowY(2, DEFAULT_CIRCUIT_LAYOUT)
     });
-    fireEvent.pointerUp(window);
 
-    expect(container.querySelectorAll(".vertical-connector").length).toBeGreaterThanOrEqual(3);
+    expect(container.querySelectorAll(".vertical-connector")).toHaveLength(1);
   });
 
   it("supports undo and redo from the keyboard", async () => {

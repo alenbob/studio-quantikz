@@ -969,6 +969,12 @@ select,
   stroke-linecap: round;
 }
 
+.pencil-guide-point {
+  fill: rgba(20, 115, 230, 0.22);
+  stroke: rgba(20, 115, 230, 0.38);
+  stroke-width: 1.5;
+}
+
 .pencil-guide-vertical {
   stroke: rgba(20, 115, 230, 0.2);
   stroke-width: 3;
@@ -1016,6 +1022,27 @@ select,
 
 .hover-segment.is-invalid {
   stroke: rgba(155, 44, 44, 0.78);
+}
+
+.wire-draft-line {
+  stroke: rgba(200, 93, 45, 0.82);
+  stroke-width: 4;
+  stroke-linecap: round;
+}
+
+.wire-draft.is-invalid .wire-draft-line {
+  stroke: rgba(155, 44, 44, 0.8);
+}
+
+.wire-draft-anchor,
+.wire-draft-target {
+  fill: #fff8ef;
+  stroke: rgba(200, 93, 45, 0.9);
+  stroke-width: 2;
+}
+
+.wire-draft.is-invalid .wire-draft-target {
+  stroke: rgba(155, 44, 44, 0.82);
 }
 
 .item-group {
