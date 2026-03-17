@@ -50,6 +50,7 @@ type DownloadMenuTarget = "main" | `history:${string}` | null;
 
 const TOAST_DURATION_MS = 4000;
 const DOWNLOAD_FORMATS: DownloadFormat[] = ["tex", "pdf"];
+const GITHUB_URL = "https://github.com/alenbob";
 
 const TOOL_SHORTCUTS = TOOL_LABELS.filter((entry): entry is (typeof TOOL_LABELS)[number] & { shortcutKey: string } =>
   Boolean(entry.shortcutKey)
@@ -1297,6 +1298,16 @@ export default function App(): JSX.Element {
           </section>
         </div>
       </main>
+      <a
+        className="corner-profile-link"
+        href={GITHUB_URL}
+        target="_blank"
+        rel="noreferrer"
+        aria-label="Open github/alenbob profile"
+        title="github/alenbob"
+      >
+        github/alenbob
+      </a>
     </div>
   );
 }

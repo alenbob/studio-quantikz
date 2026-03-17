@@ -68,6 +68,8 @@ select,
 }
 
 .app-shell {
+  display: flex;
+  flex-direction: column;
   min-height: 100vh;
   padding: 24px;
 }
@@ -371,6 +373,22 @@ select,
   overflow: hidden;
 }
 
+.corner-profile-link {
+  align-self: flex-end;
+  margin-top: 18px;
+  color: var(--accent-dark);
+  font-size: 0.82rem;
+  font-weight: 500;
+  opacity: 0.62;
+  text-decoration: underline;
+  text-underline-offset: 0.16em;
+}
+
+.corner-profile-link:hover {
+  color: #ffffff;
+  opacity: 0.9;
+}
+
 .message-toast-text {
   display: block;
   line-height: 1.4;
@@ -401,6 +419,7 @@ select,
 
 .app-body {
   display: grid;
+  flex: 1;
   grid-template-columns: var(--left-rail-width) minmax(720px, 1fr) 320px;
   gap: 18px;
   align-items: start;
@@ -1819,6 +1838,11 @@ select,
     right: 16px;
     bottom: 16px;
     max-width: calc(100vw - 32px);
+  }
+
+  .corner-profile-link {
+    right: 16px;
+    bottom: 16px;
   }
 
   .top-bar,
