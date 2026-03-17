@@ -62,6 +62,86 @@ function toQuantikzWireType(wireType: WireType): "q" | "c" {
   return wireType === "classical" ? "c" : "q";
 }
 
+function isOnlyAbsentWireOverride(tokens: string[]): boolean {
+  return tokens.length === 1 && tokens[0] === "\\wireoverride{n}";
+}
+
+function prependToken(tokens: string[], token: string): string[] {
+  if (tokens[0] === token) {
+    return tokens;
+  }
+
+  return [token, ...tokens];
+}
+
+function commandPriority(token: string): number {
+  const match = token.match(/^\\([A-Za-z]+)/);
+  const command = match?.[1] ?? "";
+
+  if (["gate", "meter", "ctrl", "octrl", "control", "ocontrol", "targ", "targX", "swap"].includes(command)) {
+    return 0;
+  }
+
+  if (["wire", "wireoverride", "setwiretype", "vqw", "vcw"].includes(command)) {
+    return 1;
+  }
+
+  if (["gategroup", "slice"].includes(command)) {
+    return 2;
+  }
+
+  return 1;
+}
+
+function orderCellCommands(tokens: string[]): string[] {
+  return tokens
+    .map((token, index) => ({ token, index, priority: commandPriority(token) }))
+    .sort((left, right) => left.priority - right.priority || left.index - right.index)
+    .map(({ token }) => token);
+}
+
+function compactAbsentWireRuns(
+  rowCells: string[][],
+  rowDefaultWireType: WireType,
+  lastIncludedCol: number
+): string[][] {
+  if (lastIncludedCol < 0) {
+    return rowCells;
+  }
+
+  const compacted = rowCells.map((tokens) => [...tokens]);
+  const restoreToken = `\\setwiretype{${toQuantikzWireType(rowDefaultWireType)}}`;
+  const boundedLastIncludedCol = Math.min(lastIncludedCol, compacted.length - 1);
+  let col = 0;
+
+  while (col <= boundedLastIncludedCol) {
+    if (!isOnlyAbsentWireOverride(compacted[col])) {
+      col += 1;
+      continue;
+    }
+
+    let end = col;
+    while (end + 1 <= boundedLastIncludedCol && isOnlyAbsentWireOverride(compacted[end + 1])) {
+      end += 1;
+    }
+
+    if (end > col) {
+      compacted[col] = ["\\setwiretype{n}"];
+      for (let runCol = col + 1; runCol <= end; runCol += 1) {
+        compacted[runCol] = [];
+      }
+
+      if (end + 1 <= boundedLastIncludedCol) {
+        compacted[end + 1] = prependToken(compacted[end + 1], restoreToken);
+      }
+    }
+
+    col = end + 1;
+  }
+
+  return compacted;
+}
+
 function horizontalSegmentNeedsCommand(item: HorizontalSegmentItem, implicitlyAbsent = false): boolean {
   if (isAbsentHorizontalSegment(item)) {
     return true;
@@ -269,6 +349,9 @@ export function exportToQuantikz(state: EditorState): string {
   const connectors = state.items.filter(
     (item): item is VerticalConnectorItem => item.type === "verticalConnector"
   );
+  const horizontalSegmentsByKey = new Map(
+    horizontals.map((item) => [wireKey(item.point.row, item.point.col), item])
+  );
   const normalizedConnectors = normalizeConnectors(connectors);
 
   const maxCellCol = state.items.reduce((maxCol, item) => {
@@ -416,8 +499,10 @@ export function exportToQuantikz(state: EditorState): string {
           ? `\\swap[${wrapOptionBlock(swapStartOptionParts)}]{${bottomSwap.point.row - topSwap.point.row}}`
           : `\\swap{${bottomSwap.point.row - topSwap.point.row}}`
       );
-      cells[bottomSwap.point.row][column].push(swapEndOptions ? `\\targX[${swapEndOptions}]{}`
-        : "\\targX{}");
+      cells[bottomSwap.point.row][column].push(
+        swapEndOptions ? `\\targX[${swapEndOptions}]{}`
+          : "\\targX{}"
+      );
       connector.members.forEach((member) => used.add(itemKey(member)));
       used.add(itemKey(topSwap));
       used.add(itemKey(bottomSwap));
@@ -428,6 +513,96 @@ export function exportToQuantikz(state: EditorState): string {
       ...connectorTargets.map((item) => item.point.row),
       ...(connectorControls.length > 0 ? connectorGateTargets.map((item) => item.point.row) : [])
     ])].sort((left, right) => left - right);
+    const controlRows = connectorControls.map((item) => item.point.row);
+
+    if (
+      connectorControls.length > 0 &&
+      targetRows.length === 1 &&
+      connectorControls.length === connector.length &&
+      controlRows[0] === start &&
+      targetRows[0] === end &&
+      isConsecutive(controlRows)
+    ) {
+      for (const control of connectorControls) {
+        const controlOptionParts: string[] = [];
+        const controlStyle = commandColorOptions(control.color ?? connector.color, {
+          fill: controlStateFor(control) === "open" ? "open" : "solid",
+          wire: true
+        });
+        if (controlStyle) {
+          controlOptionParts.push(controlStyle);
+        }
+        appendConnectorWireOption(controlOptionParts, connector.wireType);
+        const controlCommand = controlStateFor(control) === "open" ? "\\octrl" : "\\ctrl";
+        cells[control.point.row][column].push(
+          controlOptionParts.length > 0
+            ? `${controlCommand}[${wrapOptionBlock(controlOptionParts)}]{1}`
+            : `${controlCommand}{1}`
+        );
+        used.add(itemKey(control));
+      }
+
+      for (const target of connectorTargets) {
+        const targetOptions = commandColorOptions(target.color ?? connector.color);
+        cells[target.point.row][column].push(
+          targetOptions ? `\\targ[${targetOptions}]{}`
+            : "\\targ{}"
+        );
+        used.add(itemKey(target));
+      }
+
+      connector.members.forEach((member) => used.add(itemKey(member)));
+      continue;
+    }
+
+    if (connectorControls.length === 1 && connectorTargets.length > 1) {
+      const control = connectorControls[0];
+      const sortedTargets = [...connectorTargets].sort((left, right) => left.point.row - right.point.row);
+      const firstTarget = sortedTargets.find((target) => target.point.row !== control.point.row);
+
+      if (firstTarget) {
+        const controlOptionParts: string[] = [];
+        const controlStyle = commandColorOptions(control.color ?? connector.color, {
+          fill: controlStateFor(control) === "open" ? "open" : "solid",
+          wire: true
+        });
+        if (controlStyle) {
+          controlOptionParts.push(controlStyle);
+        }
+        appendConnectorWireOption(controlOptionParts, connector.wireType);
+        const controlCommand = controlStateFor(control) === "open" ? "\\octrl" : "\\ctrl";
+        cells[control.point.row][column].push(
+          controlOptionParts.length > 0
+            ? `${controlCommand}[${wrapOptionBlock(controlOptionParts)}]{${firstTarget.point.row - control.point.row}}`
+            : `${controlCommand}{${firstTarget.point.row - control.point.row}}`
+        );
+        used.add(itemKey(control));
+
+        for (let index = 0; index < sortedTargets.length; index += 1) {
+          const target = sortedTargets[index];
+          const targetOptions = commandColorOptions(target.color ?? connector.color);
+          cells[target.point.row][column].push(
+            targetOptions ? `\\targ[${targetOptions}]{}`
+              : "\\targ{}"
+          );
+          used.add(itemKey(target));
+
+          const nextTarget = sortedTargets[index + 1];
+          if (nextTarget) {
+            const span = nextTarget.point.row - target.point.row;
+            const fallbackWireOptions = wireStyleOption(connector.color);
+            cells[target.point.row][column].push(
+              fallbackWireOptions
+                ? `\\wire[d][${span}][${fallbackWireOptions}]{${toQuantikzWireType(connector.wireType)}}`
+                : `\\wire[d][${span}]{${toQuantikzWireType(connector.wireType)}}`
+            );
+          }
+        }
+
+        connector.members.forEach((member) => used.add(itemKey(member)));
+        continue;
+      }
+    }
 
     if (connectorControls.length > 0 && targetRows.length > 0) {
       for (const control of connectorControls) {
@@ -456,40 +631,13 @@ export function exportToQuantikz(state: EditorState): string {
 
       for (const target of connectorTargets) {
         const targetOptions = commandColorOptions(target.color ?? connector.color);
-        cells[target.point.row][column].push(targetOptions ? `\\targ[${targetOptions}]{}`
-          : "\\targ{}");
+        cells[target.point.row][column].push(
+          targetOptions ? `\\targ[${targetOptions}]{}`
+            : "\\targ{}"
+        );
         used.add(itemKey(target));
       }
 
-      connector.members.forEach((member) => used.add(itemKey(member)));
-      continue;
-    }
-
-    const controlRows = connectorControls.map((item) => item.point.row);
-    if (
-      connectorControls.length > 0 &&
-      connectorControls.length === connector.length &&
-      controlRows[0] === start &&
-      isConsecutive(controlRows)
-    ) {
-      for (const control of connectorControls) {
-        const controlOptionParts: string[] = [];
-        const controlStyle = commandColorOptions(control.color ?? connector.color, {
-          fill: controlStateFor(control) === "open" ? "open" : "solid",
-          wire: true
-        });
-        if (controlStyle) {
-          controlOptionParts.push(controlStyle);
-        }
-        appendConnectorWireOption(controlOptionParts, connector.wireType);
-        const controlCommand = controlStateFor(control) === "open" ? "\\octrl" : "\\ctrl";
-        cells[control.point.row][column].push(
-          controlOptionParts.length > 0
-            ? `${controlCommand}[${wrapOptionBlock(controlOptionParts)}]{1}`
-            : `${controlCommand}{1}`
-        );
-        used.add(itemKey(control));
-      }
       connector.members.forEach((member) => used.add(itemKey(member)));
       continue;
     }
@@ -536,68 +684,91 @@ export function exportToQuantikz(state: EditorState): string {
     }
   }
 
-  for (const horizontal of horizontals) {
-    const key = wireKey(horizontal.point.row, horizontal.point.col);
-    const implicitlyAbsent = implicitlyAbsentHorizontalKeys.has(key);
-
-    if (!horizontalSegmentNeedsCommand(horizontal, implicitlyAbsent)) {
-      continue;
-    }
-
-    const rowCells = cells[horizontal.point.row];
-    if (!rowCells || horizontal.point.col < 0 || horizontal.point.col >= rowCells.length) {
-      continue;
-    }
-
-    if (isAbsentHorizontalSegment(horizontal)) {
-      rowCells[horizontal.point.col].unshift("\\wireoverride{n}");
-      implicitlyAbsentHorizontalKeys.delete(key);
-      continue;
-    }
-
-    const wireOptions = wireStyleOption(horizontal.color);
-    if (!wireOptions) {
-      cells[horizontal.point.row][horizontal.point.col].unshift(
-        `\\wireoverride{${toQuantikzWireType(horizontal.wireType)}}`
-      );
-      implicitlyAbsentHorizontalKeys.delete(key);
-      continue;
-    }
-
-    cells[horizontal.point.row][horizontal.point.col].unshift(
-      `\\wire[l][1][${wireOptions}]{${toQuantikzWireType(horizontal.wireType)}}`
-    );
-    cells[horizontal.point.row][horizontal.point.col].unshift("\\wireoverride{n}");
-    implicitlyAbsentHorizontalKeys.delete(key);
-  }
-
-  for (const key of implicitlyAbsentHorizontalKeys) {
-    const [rowText, colText] = key.split(":");
-    const row = Number(rowText);
-    const col = Number(colText);
-    const rowCells = cells[row];
-
-    if (!rowCells || col < 0 || col >= rowCells.length) {
-      continue;
-    }
-
-    rowCells[col].unshift("\\wireoverride{n}");
-  }
-
   const exportedRows = cells.map((rowCells, rowIndex) => {
-    const rendered = rowCells
-      .map((cell, colIndex) => {
-        if (cell.length > 0) {
-          return cell.join(" ").trim();
-        }
+    const rowDefaultWireType = state.wireTypes[rowIndex] ?? "quantum";
+    const renderedCells = rowCells.map((cell, colIndex) => {
+      const key = wireKey(rowIndex, colIndex);
+      const suppressed = suppressedCells.has(key);
+      const tokens = [...cell];
 
-        if (suppressedCells.has(wireKey(rowIndex, colIndex))) {
-          return "";
-        }
+      if (suppressed) {
+        return tokens;
+      }
 
-        return "\\qw";
-      })
-      .join(" & ");
+      const explicitHorizontal = horizontalSegmentsByKey.get(key);
+      const wireSuppressed = explicitHorizontal
+        ? isAbsentHorizontalSegment(explicitHorizontal)
+        : implicitlyAbsentHorizontalKeys.has(key);
+
+      if (wireSuppressed) {
+        return prependToken(tokens, "\\wireoverride{n}");
+      }
+
+      const wireType = explicitHorizontal?.wireType ?? rowDefaultWireType;
+      const wireOptions = wireStyleOption(explicitHorizontal?.color ?? null);
+
+      if (wireOptions) {
+        return [
+          "\\wireoverride{n}",
+          `\\wire[l][1][${wireOptions}]{${toQuantikzWireType(wireType)}}`,
+          ...tokens
+        ];
+      }
+
+      if (wireType !== rowDefaultWireType) {
+        return prependToken(tokens, `\\wireoverride{${toQuantikzWireType(wireType)}}`);
+      }
+
+      return tokens;
+    });
+
+    let lastIncludedCol = -1;
+    for (let colIndex = renderedCells.length - 1; colIndex >= 0; colIndex -= 1) {
+      const key = wireKey(rowIndex, colIndex);
+      const explicitHorizontal = horizontalSegmentsByKey.get(key);
+      const preservesExplicitAbsentOverride = Boolean(
+        explicitHorizontal &&
+          explicitHorizontal.autoSuppressed !== true &&
+          isAbsentHorizontalSegment(explicitHorizontal)
+      );
+      const preservesBlankWire = Boolean(
+        explicitHorizontal &&
+          !isAbsentHorizontalSegment(explicitHorizontal) &&
+          !explicitHorizontal.color &&
+          explicitHorizontal.wireType === rowDefaultWireType
+      );
+
+      if (!preservesExplicitAbsentOverride && !preservesBlankWire) {
+        if (renderedCells[colIndex].length === 0 || isOnlyAbsentWireOverride(renderedCells[colIndex])) {
+          continue;
+        }
+      }
+
+      lastIncludedCol = colIndex;
+      break;
+    }
+
+    const trailingBoundaryCol = lastIncludedCol + 1;
+    const trailingBoundaryKey = wireKey(rowIndex, trailingBoundaryCol);
+    const trailingBoundaryHorizontal = horizontalSegmentsByKey.get(trailingBoundaryKey);
+    const rowEndsWithWire = lastIncludedCol >= 0 && trailingBoundaryCol <= state.steps && !suppressedCells.has(trailingBoundaryKey) && !(
+      trailingBoundaryHorizontal
+        ? isAbsentHorizontalSegment(trailingBoundaryHorizontal)
+        : implicitlyAbsentHorizontalKeys.has(trailingBoundaryKey)
+    );
+
+    const compactedCells = compactAbsentWireRuns(renderedCells, rowDefaultWireType, lastIncludedCol);
+    const renderedParts = lastIncludedCol >= 0
+      ? compactedCells
+        .slice(0, Math.min(lastIncludedCol, compactedCells.length - 1) + 1)
+        .map((tokens) => orderCellCommands(tokens).join(" ").trim())
+      : [];
+
+    if (rowEndsWithWire) {
+      renderedParts.push("");
+    }
+
+    const rendered = renderedParts.join(" & ");
     const leftSpan = getWireLabelSpan(state.wireLabels[rowIndex], "left");
     const rightSpan = getWireLabelSpan(state.wireLabels[rowIndex], "right");
     const leftBracket = getWireLabelBracket(state.wireLabels[rowIndex], "left");
@@ -635,13 +806,17 @@ export function exportToQuantikz(state: EditorState): string {
       return `${leftCell} & ${rendered} & ${rightCell}`;
     }
 
-    return `${leftCell} & ${rendered} &`;
+    return `${leftCell} & ${rendered}`;
   });
 
   const quantikzOptions = [
     `row sep={${formatSpacingCm(state.layout.rowSepCm)},between origins}`,
     `column sep=${formatSpacingCm(state.layout.columnSepCm)}`
   ];
+
+  if (state.wireTypes.some((wireType) => wireType !== "quantum")) {
+    quantikzOptions.push(`wire types={${state.wireTypes.map(toQuantikzWireType).join(",")}}`);
+  }
 
   return [
     `\\begin{quantikz}[${quantikzOptions.join(", ")}]`,

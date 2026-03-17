@@ -69,7 +69,7 @@ describe("importFromQuantikz", () => {
     const imported = importFromQuantikz(exported);
 
     expect(imported.qubits).toBe(3);
-    expect(imported.steps).toBe(4);
+    expect(imported.steps).toBe(3);
     expect(imported.layout).toEqual({ rowSepCm: 1.15, columnSepCm: 0.95 });
     expect(imported.wireLabels[0].left).toBe("\\ket{c}_C");
     expect(imported.items.filter((item) => item.type === "gate")).toHaveLength(3);
@@ -224,6 +224,35 @@ describe("importFromQuantikz", () => {
     expect(classicalConnector && classicalConnector.type === "verticalConnector" ? classicalConnector.wireType : "").toBe("classical");
   });
 
+  it("imports setwiretype runs as persistent horizontal wire changes", () => {
+    const code = String.raw`\begin{quantikz}
+ & \setwiretype{n} &  & \setwiretype{q} \gate{H}
+\end{quantikz}`;
+
+    const imported = importFromQuantikz(code);
+    const absentSegment = imported.items.find(
+      (item) =>
+        item.type === "horizontalSegment" &&
+        item.point.row === 0 &&
+        item.point.col === 0 &&
+        item.mode === "absent"
+    );
+    const restoredSegment = imported.items.find(
+      (item) =>
+        item.type === "horizontalSegment" &&
+        item.point.row === 0 &&
+        item.point.col === 2 &&
+        item.mode === "present"
+    );
+    const restoredGate = imported.items.find(
+      (item) => item.type === "gate" && item.point.row === 0 && item.point.col === 2
+    );
+
+    expect(absentSegment).toBeTruthy();
+    expect(restoredSegment).toBeTruthy();
+    expect(restoredGate).toBeTruthy();
+  });
+
   it("imports merged wire labels with their span metadata", () => {
     const code = String.raw`% quantikzz-wirelabel:left:0:2:brace
 \begin{quantikz}
@@ -268,7 +297,7 @@ describe("importFromQuantikz", () => {
     expect(imported.wireLabels[0].rightBracket).toBe("none");
   });
 
-  it("preserves the logical step count when a trailing wire override needs an auxiliary quantikz cell", () => {
+  it("preserves an explicit trailing wire override when it needs an auxiliary quantikz cell", () => {
     const exported = exportToQuantikz(
       makeState({
         qubits: 2,

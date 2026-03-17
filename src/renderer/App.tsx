@@ -261,6 +261,7 @@ export default function App(): JSX.Element {
     [state.items, state.selectedItemIds]
   );
   const selectedItem = selectedItems.length === 1 ? selectedItems[0] : null;
+  const selectedItemIds = useMemo(() => selectedItems.map((item) => item.id), [selectedItems]);
   const selectedWireLabelGroup = useMemo(
     () =>
       selectedWireLabel
@@ -669,6 +670,38 @@ export default function App(): JSX.Element {
     }
   }
 
+  function handleSelectedItemsColorChange(color: string | null): void {
+    if (selectedItemIds.length === 0) {
+      return;
+    }
+
+    dispatch({ type: "updateItemColorBatch", itemIds: selectedItemIds, color });
+  }
+
+  function handleSelectedGateLabelChange(label: string): void {
+    if (selectedItemIds.length === 0) {
+      return;
+    }
+
+    dispatch({ type: "updateGateLabelBatch", itemIds: selectedItemIds, label });
+  }
+
+  function handleSelectedControlStateChange(controlState: "filled" | "open"): void {
+    if (selectedItemIds.length === 0) {
+      return;
+    }
+
+    dispatch({ type: "updateControlStateBatch", itemIds: selectedItemIds, controlState });
+  }
+
+  function handleSelectedWireTypeChange(wireType: "quantum" | "classical"): void {
+    if (selectedItemIds.length === 0) {
+      return;
+    }
+
+    dispatch({ type: "updateWireTypeBatch", itemIds: selectedItemIds, wireType });
+  }
+
   function handleClearHistory(): void {
     persistExportHistory([]);
     setExportHistoryEntries([]);
@@ -1072,6 +1105,7 @@ export default function App(): JSX.Element {
         {hasSelection ? (
           <Inspector
             selectedItem={selectedItem}
+            selectedItems={selectedItems}
             selectedWireLabelGroup={selectedWireLabelGroup}
             selectedCount={selectedItems.length}
             qubits={state.qubits}
@@ -1098,6 +1132,10 @@ export default function App(): JSX.Element {
               dispatch({ type: "updateHorizontalWireType", itemId, wireType })
             }
             onItemColorChange={(itemId, color) => dispatch({ type: "updateItemColor", itemId, color })}
+            onSelectedItemsColorChange={handleSelectedItemsColorChange}
+            onSelectedGateLabelChange={handleSelectedGateLabelChange}
+            onSelectedControlStateChange={handleSelectedControlStateChange}
+            onSelectedWireTypeChange={handleSelectedWireTypeChange}
             onWireLabelChange={(row, side, label) =>
               dispatch({ type: "updateWireLabel", row, side, label })
             }

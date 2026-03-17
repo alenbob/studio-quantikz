@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import meterBlackIcon from "../assets/meter_black.svg";
+import meterOrangeIcon from "../assets/meter_orange.svg";
+import crossOrangeIcon from "../assets/cross_orange.svg";
 import targBlackIcon from "../assets/targ_black.svg";
+import targOrangeIcon from "../assets/targ_orange.svg";
 import { canPasteClipboardAt, instantiateClipboardItems } from "../clipboard";
 import {
   type ColumnMetrics,
@@ -121,6 +124,8 @@ interface DragState {
 type ItemOutlineTone = "selected" | "preview" | "invalid-preview";
 
 const INVALID_SWAP_COLOR = "#c24038";
+const SELECTION_ORANGE = "#F68F44";
+const SELECTED_OVERLAY_INSET = 0;
 
 function isGateLikeItem(item: CircuitItem): item is GateItem | MeterItem {
   return item.type === "gate" || item.type === "meter";
@@ -357,6 +362,297 @@ function renderItemOutline(
       className={`item-outline item-outline-${tone}`}
     />
   );
+}
+
+function getExpandedItemOutlineBounds(
+  item: CircuitItem,
+  steps: number,
+  qubits: number,
+  layout: CircuitLayout,
+  columnMetrics: ColumnMetrics
+): SelectionRect & { radius: number } {
+  const bounds = getItemBounds(item, steps, qubits, layout, columnMetrics);
+  const padding = getItemOutlinePadding(item);
+
+  return {
+    x: bounds.x - padding.x,
+    y: bounds.y - padding.y,
+    width: bounds.width + (padding.x * 2),
+    height: bounds.height + (padding.y * 2),
+    radius: padding.radius
+  };
+}
+
+function selectionOutlineRectsOverlap(left: SelectionRect, right: SelectionRect, gap = 8): boolean {
+  return !(
+    left.x + left.width + gap < right.x ||
+    right.x + right.width + gap < left.x ||
+    left.y + left.height + gap < right.y ||
+    right.y + right.height + gap < left.y
+  );
+}
+
+function mergeSelectionOutlineRects(
+  items: CircuitItem[],
+  steps: number,
+  qubits: number,
+  layout: CircuitLayout,
+  columnMetrics: ColumnMetrics
+): Array<SelectionRect & { radius: number }> {
+  const outlines = items.map((item) => getExpandedItemOutlineBounds(item, steps, qubits, layout, columnMetrics));
+  const merged: Array<SelectionRect & { radius: number }> = [];
+
+  for (const outline of outlines) {
+    let nextOutline = outline;
+    let mergedIndex = merged.findIndex((candidate) => selectionOutlineRectsOverlap(candidate, nextOutline));
+
+    while (mergedIndex >= 0) {
+      const candidate = merged[mergedIndex];
+      nextOutline = {
+        x: Math.min(candidate.x, nextOutline.x),
+        y: Math.min(candidate.y, nextOutline.y),
+        width: Math.max(candidate.x + candidate.width, nextOutline.x + nextOutline.width) - Math.min(candidate.x, nextOutline.x),
+        height: Math.max(candidate.y + candidate.height, nextOutline.y + nextOutline.height) - Math.min(candidate.y, nextOutline.y),
+        radius: Math.max(candidate.radius, nextOutline.radius)
+      };
+      merged.splice(mergedIndex, 1);
+      mergedIndex = merged.findIndex((candidateRect) => selectionOutlineRectsOverlap(candidateRect, nextOutline));
+    }
+
+    merged.push(nextOutline);
+  }
+
+  return merged;
+}
+
+function renderSelectedOverlay(
+  item: CircuitItem,
+  steps: number,
+  qubits: number,
+  layout: CircuitLayout,
+  columnMetrics: ColumnMetrics
+): JSX.Element | null {
+  if (item.type === "gate") {
+    const rect = getGateRect(item, layout, columnMetrics);
+    const label = normalizeGateLabel(item.label);
+    const texHtml = renderGateDisplayHtml(label);
+    return (
+      <g className="selected-object-overlay selected-gate-overlay">
+        <rect
+          x={rect.x + SELECTED_OVERLAY_INSET}
+          y={rect.y + SELECTED_OVERLAY_INSET}
+          width={Math.max(rect.width - (SELECTED_OVERLAY_INSET * 2), 12)}
+          height={Math.max(rect.height - (SELECTED_OVERLAY_INSET * 2), 12)}
+          rx={0}
+          className="selected-overlay-stroke"
+          style={{ stroke: SELECTION_ORANGE }}
+        />
+        {texHtml ? (
+          <foreignObject
+            x={rect.x + 6}
+            y={rect.y + 6}
+            width={Math.max(rect.width - 12, 18)}
+            height={Math.max(rect.height - 12, 18)}
+            className="gate-label-foreign-object"
+          >
+            <div
+              xmlns="http://www.w3.org/1999/xhtml"
+              className="gate-label-math selected-overlay-label"
+              style={{ color: SELECTION_ORANGE }}
+              dangerouslySetInnerHTML={{ __html: texHtml }}
+            />
+          </foreignObject>
+        ) : (
+          <text
+            x={rect.x + (rect.width / 2)}
+            y={rect.y + (rect.height / 2)}
+            className="gate-label selected-overlay-label"
+            dominantBaseline="middle"
+            textAnchor="middle"
+            style={{ fill: SELECTION_ORANGE }}
+          >
+            {label}
+          </text>
+        )}
+      </g>
+    );
+  }
+
+  if (item.type === "meter") {
+    const rect = getMeterRect(item, layout, columnMetrics);
+    const iconSize = Math.max(rect.width - 12, 12);
+    const iconX = rect.x + ((rect.width - iconSize) / 2);
+    const iconY = rect.y + ((rect.height - iconSize) / 2);
+    return (
+      <g className="selected-object-overlay selected-meter-overlay">
+        <rect
+          x={rect.x + SELECTED_OVERLAY_INSET}
+          y={rect.y + SELECTED_OVERLAY_INSET}
+          width={Math.max(rect.width - (SELECTED_OVERLAY_INSET * 2), 12)}
+          height={Math.max(rect.height - (SELECTED_OVERLAY_INSET * 2), 12)}
+          rx={0}
+          className="selected-overlay-stroke"
+          style={{ stroke: SELECTION_ORANGE }}
+        />
+        <image
+          href={meterOrangeIcon}
+          x={iconX}
+          y={iconY}
+          width={iconSize}
+          height={iconSize}
+          preserveAspectRatio="xMidYMid meet"
+          className="selected-meter-icon"
+        />
+      </g>
+    );
+  }
+
+  if (item.type === "frame") {
+    const rect = getFrameRect(item, layout, columnMetrics);
+    return (
+      <g className="selected-object-overlay selected-frame-overlay">
+        <rect
+          x={rect.x + 3}
+          y={rect.y + 3}
+          width={Math.max(rect.width - 6, 12)}
+          height={Math.max(rect.height - 6, 12)}
+          rx={item.rounded ? 10 : 0}
+          className="selected-overlay-stroke"
+          style={{
+            stroke: SELECTION_ORANGE,
+            strokeDasharray: item.dashed ? "8 6" : undefined
+          }}
+        />
+        <text
+          x={rect.x + (rect.width / 2)}
+          y={rect.y - 8}
+          textAnchor="middle"
+          className="annotation-frame-label selected-overlay-label"
+          style={{ fill: SELECTION_ORANGE }}
+        >
+          {normalizeGateLabel(item.label)}
+        </text>
+      </g>
+    );
+  }
+
+  if (item.type === "slice") {
+    const x = getColumnRightX(item.point.col, layout, columnMetrics);
+    return (
+      <g className="selected-object-overlay selected-slice-overlay">
+        <line
+          x1={x}
+          x2={x}
+          y1={GRID_TOP - 16}
+          y2={getRowY(qubits - 1, layout) + 18}
+          className="selected-overlay-line"
+          style={{ stroke: SELECTION_ORANGE }}
+        />
+        <text
+          x={x + 4}
+          y={GRID_TOP - 24}
+          className="slice-label selected-overlay-label"
+          style={{ fill: SELECTION_ORANGE }}
+        >
+          {normalizeGateLabel(item.label)}
+        </text>
+      </g>
+    );
+  }
+
+  if (item.type === "verticalConnector") {
+    const x = getCellCenterX(item.point.col, layout, columnMetrics);
+    const segments = Array.from({ length: item.length }, (_, index) => ({
+      y1: getRowY(item.point.row + index, layout),
+      y2: getRowY(item.point.row + index + 1, layout)
+    }));
+
+    return (
+      <g className="selected-object-overlay selected-wire-overlay">
+        {segments.map((segment) => (
+          item.wireType === "classical" ? (
+            <g key={`${item.id}-overlay-${segment.y1}`} className="selected-overlay-wire-pair">
+              <line x1={x - 3} x2={x - 3} y1={segment.y1} y2={segment.y2} className="selected-overlay-line" style={{ stroke: SELECTION_ORANGE }} />
+              <line x1={x + 3} x2={x + 3} y1={segment.y1} y2={segment.y2} className="selected-overlay-line" style={{ stroke: SELECTION_ORANGE }} />
+            </g>
+          ) : (
+            <line
+              key={`${item.id}-overlay-${segment.y1}`}
+              x1={x}
+              x2={x}
+              y1={segment.y1}
+              y2={segment.y2}
+              className="selected-overlay-line"
+              style={{ stroke: SELECTION_ORANGE }}
+            />
+          )
+        ))}
+      </g>
+    );
+  }
+
+  if (item.type === "horizontalSegment") {
+    const [x1, x2] = getIncomingSegmentRange(item.point.col, steps, layout, columnMetrics);
+    const y = getRowY(item.point.row, layout);
+    return (
+      <g className="selected-object-overlay selected-wire-overlay">
+        {renderWireStroke(x1, x2, y, item.wireType, "selected-overlay-line", { stroke: SELECTION_ORANGE })}
+      </g>
+    );
+  }
+
+  if (item.type === "controlDot") {
+    const cx = getCellCenterX(item.point.col, layout, columnMetrics);
+    const cy = getRowY(item.point.row, layout);
+    return (
+      <circle
+        cx={cx}
+        cy={cy}
+        r={6}
+        className="selected-object-overlay selected-control-overlay"
+        style={{
+          fill: "transparent",
+          stroke: SELECTION_ORANGE
+        }}
+      />
+    );
+  }
+
+  if (item.type === "targetPlus") {
+    const iconSize = 24;
+    const cx = getCellCenterX(item.point.col, layout, columnMetrics);
+    const cy = getRowY(item.point.row, layout);
+    return (
+      <image
+        href={targOrangeIcon}
+        x={cx - (iconSize / 2)}
+        y={cy - (iconSize / 2)}
+        width={iconSize}
+        height={iconSize}
+        preserveAspectRatio="xMidYMid meet"
+        className="selected-object-overlay selected-target-overlay"
+      />
+    );
+  }
+
+  if (item.type === "swapX") {
+    const iconSize = 22;
+    const cx = getCellCenterX(item.point.col, layout, columnMetrics);
+    const cy = getRowY(item.point.row, layout);
+    return (
+      <image
+        href={crossOrangeIcon}
+        x={cx - (iconSize / 2)}
+        y={cy - (iconSize / 2)}
+        width={iconSize}
+        height={iconSize}
+        preserveAspectRatio="xMidYMid meet"
+        className="selected-object-overlay selected-swap-overlay"
+      />
+    );
+  }
+
+  return null;
 }
 
 function renderEditableWireLabel(
@@ -710,21 +1006,40 @@ function renderVerticalConnector(
   columnMetrics: ColumnMetrics
 ): JSX.Element {
   const x = getCellCenterX(item.point.col, layout, columnMetrics);
-  const y1 = getRowY(item.point.row, layout);
-  const y2 = getRowY(item.point.row + item.length, layout);
   const className = `vertical-connector ${isSelected ? "is-selected" : ""}`;
   const style = { stroke: getItemColor(item) };
+  const segments = Array.from({ length: item.length }, (_, index) => {
+    const y1 = getRowY(item.point.row + index, layout);
+    const y2 = getRowY(item.point.row + index + 1, layout);
+    return { y1, y2 };
+  });
 
   if (item.wireType === "classical") {
     return (
       <g className={className} style={style}>
-        <line x1={x - 3} x2={x - 3} y1={y1} y2={y2} />
-        <line x1={x + 3} x2={x + 3} y1={y1} y2={y2} />
+        {segments.map((segment) => (
+          <g key={`${item.id}-${segment.y1}`}>
+            <line x1={x - 3} x2={x - 3} y1={segment.y1} y2={segment.y2} />
+            <line x1={x + 3} x2={x + 3} y1={segment.y1} y2={segment.y2} />
+          </g>
+        ))}
       </g>
     );
   }
 
-  return <line x1={x} x2={x} y1={y1} y2={y2} className={className} style={style} />;
+  return (
+    <g className={className} style={style}>
+      {segments.map((segment) => (
+        <line
+          key={`${item.id}-${segment.y1}`}
+          x1={x}
+          x2={x}
+          y1={segment.y1}
+          y2={segment.y2}
+        />
+      ))}
+    </g>
+  );
 }
 
 function renderMarker(
@@ -893,6 +1208,17 @@ export function Workspace({
   const height = getGridHeight(state.qubits, layout);
   const wireEndX = getWireEndX(state.steps, layout, columnMetrics);
   const selectionSet = useMemo(() => new Set(state.selectedItemIds), [state.selectedItemIds]);
+  const selectedItems = useMemo(
+    () => state.items.filter((item) => selectionSet.has(item.id)),
+    [selectionSet, state.items]
+  );
+  const hasMultiSelection = selectedItems.length > 1;
+  const mergedSelectionOutlines = useMemo(
+    () => hasMultiSelection
+      ? mergeSelectionOutlineRects(selectedItems, state.steps, state.qubits, layout, columnMetrics)
+      : [],
+    [columnMetrics, hasMultiSelection, layout, selectedItems, state.qubits, state.steps]
+  );
   const draggingItem = useMemo(
     () => state.items.find((item) => item.id === dragState?.anchorItemId) ?? null,
     [dragState, state.items]
@@ -1398,8 +1724,9 @@ export function Workspace({
           updateHoverFromPointer(event.clientX, event.clientY, item.type);
         }}
       >
-        {selected && renderItemOutline(item, "selected", state.steps, state.qubits, layout, columnMetrics)}
+        {selected && !hasMultiSelection && renderItemOutline(item, "selected", state.steps, state.qubits, layout, columnMetrics)}
         {rendered}
+        {selected && renderSelectedOverlay(item, state.steps, state.qubits, layout, columnMetrics)}
       </g>
     );
   }
@@ -2149,6 +2476,17 @@ export function Workspace({
             </g>
           ))}
           {markerLayerItems.map(renderInteractiveItem)}
+          {mergedSelectionOutlines.map((outline, index) => (
+            <rect
+              key={`merged-selection-outline-${index}`}
+              x={outline.x}
+              y={outline.y}
+              width={outline.width}
+              height={outline.height}
+              rx={outline.radius}
+              className="merged-selection-outline"
+            />
+          ))}
           {previewMarkerItems.map((item, index) => renderPreviewItem(item, `paste-preview-marker-${index}`, !pastePreviewValid))}
           {hoverProjectionMarkerItems.map((item, index) => (
             <g key={`hover-projection-marker-${index}`} className={`hover-projection-item ${!dragPreviewValid ? "is-invalid" : ""}`}>

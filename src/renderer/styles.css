@@ -1082,6 +1082,37 @@ select,
   stroke: rgba(246, 143, 68, 0.96);
 }
 
+.merged-selection-outline {
+  pointer-events: none;
+  fill: transparent;
+  stroke: rgba(246, 143, 68, 0.96);
+  stroke-width: 1.35;
+  vector-effect: non-scaling-stroke;
+  shape-rendering: geometricPrecision;
+}
+
+.selected-object-overlay {
+  pointer-events: none;
+}
+
+.selected-overlay-stroke,
+.selected-overlay-line,
+.selected-control-overlay {
+  fill: transparent;
+  stroke-width: 1.2;
+  vector-effect: non-scaling-stroke;
+  shape-rendering: geometricPrecision;
+}
+
+.selected-overlay-label {
+  font-weight: 700;
+}
+
+.selected-overlay-wire-pair,
+.selected-wire-overlay {
+  opacity: 0.96;
+}
+
 .item-outline-preview {
   stroke: rgba(246, 143, 68, 0.92);
   stroke-dasharray: 4 3;
@@ -1572,6 +1603,14 @@ select,
 .color-editor {
   margin: 0 20px 18px;
   padding: 16px 0 0;
+}
+
+.inspector-field-wide {
+  margin: 0 20px 18px;
+}
+
+.inspector-field-wide input {
+  width: 100%;
 }
 
 .inspector-action-button {

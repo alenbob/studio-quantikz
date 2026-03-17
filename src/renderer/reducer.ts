@@ -56,6 +56,7 @@ type Action =
   | { type: "moveSelection"; anchorItemId: string; placement: PlacementTarget }
   | { type: "pasteClipboard"; clipboard: CircuitClipboard; anchor: { row: number; col: number } }
   | { type: "updateGateLabel"; itemId: string; label: string }
+  | { type: "updateGateLabelBatch"; itemIds: string[]; label: string }
   | { type: "updateGateSpan"; itemId: string; rows: number; cols: number }
   | { type: "updateFrameLabel"; itemId: string; label: string }
   | { type: "updateFrameSpan"; itemId: string; rows: number; cols: number }
@@ -64,9 +65,12 @@ type Action =
   | { type: "updateVerticalLength"; itemId: string; length: number }
   | { type: "updateVerticalWireType"; itemId: string; wireType: WireType }
   | { type: "updateControlState"; itemId: string; controlState: ControlState }
+  | { type: "updateControlStateBatch"; itemIds: string[]; controlState: ControlState }
   | { type: "updateHorizontalMode"; itemId: string; mode: HorizontalSegmentMode }
   | { type: "updateHorizontalWireType"; itemId: string; wireType: WireType }
+  | { type: "updateWireTypeBatch"; itemIds: string[]; wireType: WireType }
   | { type: "updateItemColor"; itemId: string; color: string | null }
+  | { type: "updateItemColorBatch"; itemIds: string[]; color: string | null }
   | { type: "updateLayoutSpacing"; dimension: "rowSepCm" | "columnSepCm"; value: number }
   | { type: "updateWireLabel"; row: number; side: "left" | "right"; label: string }
   | { type: "updateWireLabelGroup"; row: number; side: "left" | "right"; span?: number; bracket?: WireLabelBracket }
@@ -111,6 +115,24 @@ function getHorizontalSegmentAt(items: CircuitItem[], row: number, col: number):
   ) ?? null;
 }
 
+function canSelectItem(item: CircuitItem, horizontalSegmentsUnlocked: boolean): boolean {
+  return item.type !== "horizontalSegment" || (horizontalSegmentsUnlocked && isVisibleHorizontalSegment(item));
+}
+
+function filterSelectedItemIds(
+  items: CircuitItem[],
+  selectedItemIds: string[],
+  horizontalSegmentsUnlocked: boolean
+): string[] {
+  const selectableIds = new Set(
+    items
+      .filter((item) => canSelectItem(item, horizontalSegmentsUnlocked))
+      .map((item) => item.id)
+  );
+
+  return [...new Set(selectedItemIds)].filter((itemId) => selectableIds.has(itemId));
+}
+
 function resetExport(state: EditorState): EditorState {
   return {
     ...state,
@@ -134,6 +156,23 @@ function buildHorizontalSegment(
     type: "horizontalSegment",
     point: { row, col },
     mode,
+    wireType,
+    color
+  };
+}
+
+function buildVerticalConnector(
+  row: number,
+  col: number,
+  wireType: WireType = "quantum",
+  color: string | null = null,
+  id = createId("verticalConnector")
+): CircuitItem {
+  return {
+    id,
+    type: "verticalConnector",
+    point: { row, col },
+    length: 1,
     wireType,
     color
   };
@@ -248,6 +287,34 @@ function normalizeHorizontalSegments(
   );
 
   return [...nonHorizontals, ...orderedHorizontals];
+}
+
+function normalizeVerticalConnectors(items: CircuitItem[]): CircuitItem[] {
+  const normalizedItems: CircuitItem[] = [];
+
+  for (const item of items) {
+    if (item.type !== "verticalConnector" || item.length <= 1) {
+      normalizedItems.push(item.type === "verticalConnector"
+        ? {
+            ...item,
+            length: 1
+          }
+        : item);
+      continue;
+    }
+
+    for (let offset = 0; offset < item.length; offset += 1) {
+      normalizedItems.push(buildVerticalConnector(
+        item.point.row + offset,
+        item.point.col,
+        item.wireType,
+        item.color ?? null,
+        offset === 0 ? item.id : createId("verticalConnector")
+      ));
+    }
+  }
+
+  return normalizedItems;
 }
 
 function createItem(tool: ItemType, placement: PlacementTarget, state: EditorState): CircuitItem | null {
@@ -514,13 +581,14 @@ function addSegmentsForExpandedGrid(
 }
 
 function withItems(state: EditorState, items: CircuitItem[], selectedItemIds: string[]): EditorState {
-  const normalizedItems = normalizeHorizontalSegments(items, state.qubits, state.steps, state.wireTypes);
+  const verticallyNormalizedItems = normalizeVerticalConnectors(items);
+  const normalizedItems = normalizeHorizontalSegments(verticallyNormalizedItems, state.qubits, state.steps, state.wireTypes);
   const nextState = resetExport({
     ...state,
     items: normalizedItems,
     wireMask: deriveWireMask(normalizedItems),
     wireTypes: resizeWireTypes(state.wireTypes, state.qubits),
-    selectedItemIds,
+    selectedItemIds: filterSelectedItemIds(normalizedItems, selectedItemIds, state.horizontalSegmentsUnlocked),
     wireLabels: resizeWireLabels(state.wireLabels, state.qubits)
   });
 
@@ -594,9 +662,17 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
     case "setSelectedIds":
       return {
         ...state,
-        selectedItemIds: [...new Set(action.itemIds)]
+        selectedItemIds: filterSelectedItemIds(state.items, action.itemIds, state.horizontalSegmentsUnlocked)
       };
     case "selectOrCreateHorizontalSegment": {
+      if (!state.horizontalSegmentsUnlocked) {
+        return {
+          ...state,
+          selectedItemIds: [],
+          uiMessage: null
+        };
+      }
+
       const suppressedKeys = getMeterSuppressedHorizontalKeys(state.items, state.steps);
       const maskKey = wireKey(action.row, action.col);
       const existing = getHorizontalSegmentAt(state.items, action.row, action.col);
@@ -706,24 +782,20 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
       }
 
       const topRow = Math.min(action.start.row, action.end.row);
-      const length = Math.abs(action.end.row - action.start.row);
-      const connector: CircuitItem = {
-        id: createId("verticalConnector"),
-        type: "verticalConnector",
-        point: { row: topRow, col: action.start.col },
-        length,
-        wireType: "quantum",
-        color: null
-      };
+      const bottomRow = Math.max(action.start.row, action.end.row);
+      const connectors = Array.from(
+        { length: bottomRow - topRow },
+        (_, index) => buildVerticalConnector(topRow + index, action.start.col)
+      );
 
-      if (!canPlaceItemsWithoutOverlap(state.items, [connector])) {
+      if (!canPlaceItemsWithoutOverlap(state.items, connectors)) {
         return withOverlapMessage(state);
       }
 
       return withItems({
         ...state,
         uiMessage: null
-      }, [...state.items, connector], [connector.id]);
+      }, [...state.items, ...connectors], connectors.map((connector) => connector.id));
     }
     case "addItem": {
       const newItem = createItem(action.tool, action.placement, state);
@@ -957,6 +1029,22 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
 
       return withItems(state, items, state.selectedItemIds);
     }
+    case "updateGateLabelBatch": {
+      const selectedIds = new Set(action.itemIds);
+      const items = state.items.map((item) => {
+        if (!selectedIds.has(item.id) || item.type !== "gate") {
+          return item;
+        }
+
+        return {
+          ...item,
+          label: action.label,
+          width: measureGateWidth(action.label)
+        };
+      });
+
+      return withItems(state, items, state.selectedItemIds);
+    }
     case "updateGateSpan": {
       const gate = state.items.find((item) => item.id === action.itemId && item.type === "gate");
       if (!gate || gate.type !== "gate") {
@@ -1050,7 +1138,7 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
 
         return {
           ...item,
-          length: clamp(action.length, 1, state.qubits - item.point.row - 1)
+          length: 1
         };
       });
 
@@ -1073,6 +1161,21 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
     case "updateControlState": {
       const items = state.items.map((item) => {
         if (item.id !== action.itemId || item.type !== "controlDot") {
+          return item;
+        }
+
+        return {
+          ...item,
+          controlState: action.controlState
+        };
+      });
+
+      return withItems(state, items, state.selectedItemIds);
+    }
+    case "updateControlStateBatch": {
+      const selectedIds = new Set(action.itemIds);
+      const items = state.items.map((item) => {
+        if (!selectedIds.has(item.id) || item.type !== "controlDot") {
           return item;
         }
 
@@ -1115,10 +1218,43 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
 
       return withItems(state, items, state.selectedItemIds);
     }
+    case "updateWireTypeBatch": {
+      const selectedIds = new Set(action.itemIds);
+      const items = state.items.map((item) => {
+        if (!selectedIds.has(item.id)) {
+          return item;
+        }
+
+        if (item.type === "horizontalSegment" || item.type === "verticalConnector") {
+          return {
+            ...item,
+            wireType: action.wireType
+          };
+        }
+
+        return item;
+      });
+
+      return withItems(state, items, state.selectedItemIds);
+    }
     case "updateItemColor": {
       const color = normalizeHexColor(action.color);
       const items = state.items.map((item) => (
         item.id === action.itemId
+          ? {
+              ...item,
+              color
+            }
+          : item
+      ));
+
+      return withItems(state, items, state.selectedItemIds);
+    }
+    case "updateItemColorBatch": {
+      const selectedIds = new Set(action.itemIds);
+      const color = normalizeHexColor(action.color);
+      const items = state.items.map((item) => (
+        selectedIds.has(item.id)
           ? {
               ...item,
               color

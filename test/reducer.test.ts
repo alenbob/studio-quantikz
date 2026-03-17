@@ -47,12 +47,18 @@ describe("editorReducer selection workflows", () => {
     expect(next.items.some((item) => item.type === "gate" && item.point.row === 2 && item.point.col === 4)).toBe(true);
   });
 
-  it("materializes and selects an implicit horizontal wire segment", () => {
-    const next = editorReducer(initialState, {
+  it("materializes and selects an implicit horizontal wire segment when wires are unlocked", () => {
+    const next = editorReducer(
+      {
+        ...initialState,
+        horizontalSegmentsUnlocked: true
+      },
+      {
       type: "selectOrCreateHorizontalSegment",
       row: 1,
       col: 2
-    });
+      }
+    );
 
     expect(next.items).toContainEqual({
       id: expect.any(String),
@@ -64,6 +70,16 @@ describe("editorReducer selection workflows", () => {
     });
     expect(next.selectedItemIds).toHaveLength(1);
     expect(next.wireMask["1:2"]).toBe("present");
+  });
+
+  it("does not select a horizontal wire while wires are locked", () => {
+    const next = editorReducer(initialState, {
+      type: "selectOrCreateHorizontalSegment",
+      row: 1,
+      col: 2
+    });
+
+    expect(next.selectedItemIds).toEqual([]);
   });
 
   it("creates a multi-row and multi-column gate from a dragged area", () => {
@@ -367,14 +383,72 @@ describe("editorReducer selection workflows", () => {
       end: { row: 2, col: 2 }
     });
 
-    expect(next.items).toContainEqual({
-      id: expect.any(String),
-      type: "verticalConnector",
-      point: { row: 0, col: 2 },
-      length: 2,
-      wireType: "quantum",
-      color: null
+    expect(
+      next.items.filter((item) => item.type === "verticalConnector" && item.point.col === 2)
+    ).toEqual([
+      {
+        id: expect.any(String),
+        type: "verticalConnector",
+        point: { row: 0, col: 2 },
+        length: 1,
+        wireType: "quantum",
+        color: null
+      },
+      {
+        id: expect.any(String),
+        type: "verticalConnector",
+        point: { row: 1, col: 2 },
+        length: 1,
+        wireType: "quantum",
+        color: null
+      }
+    ]);
+  });
+
+  it("splits imported multi-row vertical connectors into independent unit segments", () => {
+    const loaded = editorReducer(initialState, {
+      type: "loadQuantikz",
+      imported: {
+        qubits: 3,
+        steps: 3,
+        layout: initialState.layout,
+        items: [
+          {
+            id: "line-1",
+            type: "verticalConnector",
+            point: { row: 0, col: 1 },
+            length: 2,
+            wireType: "quantum",
+            color: null
+          }
+        ],
+        wireTypes: Array.from({ length: 3 }, () => "quantum" as const),
+        wireLabels: Array.from({ length: 3 }, () => ({ left: "", right: "" }))
+      },
+      code: "\\begin{quantikz}\\end{quantikz}",
+      preamble: initialState.exportPreamble
     });
+
+    expect(
+      loaded.items.filter((item) => item.type === "verticalConnector" && item.point.col === 1)
+    ).toEqual([
+      {
+        id: "line-1",
+        type: "verticalConnector",
+        point: { row: 0, col: 1 },
+        length: 1,
+        wireType: "quantum",
+        color: null
+      },
+      {
+        id: expect.any(String),
+        type: "verticalConnector",
+        point: { row: 1, col: 1 },
+        length: 1,
+        wireType: "quantum",
+        color: null
+      }
+    ]);
   });
 
   it("creates a frame from a dragged annotation area and a slice from a click", () => {
@@ -503,6 +577,84 @@ describe("editorReducer selection workflows", () => {
 
     expect(next.horizontalSegmentsUnlocked).toBe(false);
     expect(next.selectedItemIds).toEqual(["gate-1"]);
+  });
+
+  it("filters horizontal segments out of generic selection updates while locked", () => {
+    const state = {
+      ...initialState,
+      horizontalSegmentsUnlocked: false,
+      items: [
+        ...initialState.items,
+        {
+          id: "line-1",
+          type: "horizontalSegment" as const,
+          point: { row: 0, col: 1 },
+          mode: "present" as const,
+          wireType: "quantum" as const,
+          color: null
+        },
+        {
+          id: "gate-1",
+          type: "gate" as const,
+          point: { row: 0, col: 0 },
+          span: { rows: 1, cols: 1 },
+          label: "H",
+          width: 40
+        }
+      ]
+    };
+
+    const next = editorReducer(state, {
+      type: "setSelectedIds",
+      itemIds: ["line-1", "gate-1"]
+    });
+
+    expect(next.selectedItemIds).toEqual(["gate-1"]);
+  });
+
+  it("updates multiple selected controls in one reducer step", () => {
+    const state = {
+      ...initialState,
+      items: [
+        ...initialState.items,
+        { id: "dot-1", type: "controlDot" as const, point: { row: 0, col: 0 }, controlState: "filled" as const },
+        { id: "dot-2", type: "controlDot" as const, point: { row: 1, col: 1 }, controlState: "filled" as const }
+      ],
+      selectedItemIds: ["dot-1", "dot-2"]
+    };
+
+    const next = editorReducer(state, {
+      type: "updateControlStateBatch",
+      itemIds: ["dot-1", "dot-2"],
+      controlState: "open"
+    });
+
+    expect(next.items.filter((item) => item.type === "controlDot")).toEqual([
+      { id: "dot-1", type: "controlDot", point: { row: 0, col: 0 }, controlState: "open" },
+      { id: "dot-2", type: "controlDot", point: { row: 1, col: 1 }, controlState: "open" }
+    ]);
+  });
+
+  it("updates multiple selected wires to the same wire type in one reducer step", () => {
+    const state = {
+      ...initialState,
+      horizontalSegmentsUnlocked: true,
+      items: [
+        ...initialState.items,
+        { id: "line-h", type: "horizontalSegment" as const, point: { row: 0, col: 1 }, mode: "present" as const, wireType: "quantum" as const, color: null },
+        { id: "line-v", type: "verticalConnector" as const, point: { row: 0, col: 2 }, length: 1, wireType: "quantum" as const, color: null }
+      ],
+      selectedItemIds: ["line-h", "line-v"]
+    };
+
+    const next = editorReducer(state, {
+      type: "updateWireTypeBatch",
+      itemIds: ["line-h", "line-v"],
+      wireType: "classical"
+    });
+
+    expect(next.items.find((item) => item.id === "line-h")).toMatchObject({ wireType: "classical" });
+    expect(next.items.find((item) => item.id === "line-v")).toMatchObject({ wireType: "classical" });
   });
 
   it("updates row-level wire types independently from item selection", () => {

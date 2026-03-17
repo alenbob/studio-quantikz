@@ -63,6 +63,8 @@ interface ExtractedLabelCommand {
   remainder: string;
 }
 
+type ParsedHorizontalWireToken = WireType | "none";
+
 function isEscapedAt(value: string, index: number): boolean {
   let backslashCount = 0;
 
@@ -237,14 +239,14 @@ function parseCommandSequence(source: string): ParsedCommand[] {
           name !== "slice" && name !== "ctrl" && name !== "octrl" && name !== "swap" &&
           name !== "lstick" && name !== "rstick" && name !== "control" &&
           name !== "ocontrol" && name !== "targ" &&
-          name !== "targX" && name !== "wireoverride") {
+          name !== "targX" && name !== "wireoverride" && name !== "setwiretype") {
         break;
       }
 
       if ((name === "gate" || name === "meter" || name === "gategroup" || name === "slice" ||
           name === "ctrl" || name === "octrl" || name === "swap" ||
           name === "lstick" || name === "rstick" || name === "vqw" || name === "vcw" ||
-          name === "wireoverride") && args.length >= 1) {
+          name === "wireoverride" || name === "setwiretype") && args.length >= 1) {
         break;
       }
 
@@ -516,8 +518,19 @@ function nextId(type: CircuitItem["type"], counter: { value: number }): string {
   return `${type}-import-${counter.value}`;
 }
 
+function parseHorizontalWireToken(token: string | undefined): ParsedHorizontalWireToken {
+  const normalized = token?.trim().toLowerCase();
+
+  if (normalized === "n") {
+    return "none";
+  }
+
+  return normalized === "c" ? "classical" : "quantum";
+}
+
 function parseWireTypeToken(token: string | undefined): WireType {
-  return token?.trim().toLowerCase() === "c" ? "classical" : "quantum";
+  const parsed = parseHorizontalWireToken(token);
+  return parsed === "classical" ? "classical" : "quantum";
 }
 
 function extractVerticalWireType(options: string[]): WireType {
@@ -712,6 +725,8 @@ export function importFromQuantikz(code: string): ImportedCircuit {
 
     steps = Math.max(steps, cells.length);
 
+    let persistentWireType: ParsedHorizontalWireToken = wireTypes[rowIndex] ?? "quantum";
+
     cells.forEach((cell, colIndex) => {
       if (!cell || cell === "\\qw") {
         return;
@@ -719,14 +734,14 @@ export function importFromQuantikz(code: string): ImportedCircuit {
 
       const commands = parseCommandSequence(cell);
       const hasHelperCommand = commands.some((entry) => {
-        if (entry.name === "wireoverride") {
+        if (entry.name === "wireoverride" || entry.name === "setwiretype") {
           return true;
         }
 
         return entry.name === "wire" && ["l", "r"].includes(entry.options[0]?.trim() ?? "");
       });
       const hasSubstantiveCommand = commands.some((entry) => {
-        if (entry.name === "qw" || entry.name === "wireoverride") {
+        if (entry.name === "qw" || entry.name === "wireoverride" || entry.name === "setwiretype") {
           return false;
         }
 
@@ -749,6 +764,9 @@ export function importFromQuantikz(code: string): ImportedCircuit {
         entry.name === "wire" &&
         (entry.options[0]?.trim() === "l" || entry.options[0]?.trim() === "r")
       );
+
+      let setWireType: ParsedHorizontalWireToken | null = null;
+      let wireOverrideType: ParsedHorizontalWireToken | null = null;
 
       commands.forEach((command) => {
         const optionText = command.options.join(",");
@@ -862,6 +880,7 @@ export function importFromQuantikz(code: string): ImportedCircuit {
             });
             break;
           case "wireoverride":
+            wireOverrideType = parseHorizontalWireToken(command.args[0]);
             if (hasHorizontalWireCommand) {
               break;
             }
@@ -869,10 +888,13 @@ export function importFromQuantikz(code: string): ImportedCircuit {
               id: nextId("horizontalSegment", idCounter),
               type: "horizontalSegment",
               point: { row: rowIndex, col: colIndex },
-              mode: command.args[0]?.trim().toLowerCase() === "n" ? "absent" : "present",
-              wireType: parseWireTypeToken(command.args[0]),
+              mode: wireOverrideType === "none" ? "absent" : "present",
+              wireType: wireOverrideType === "classical" ? "classical" : "quantum",
               color: null
             });
+            break;
+          case "setwiretype":
+            setWireType = parseHorizontalWireToken(command.args[0]);
             break;
           case "wire": {
             const direction = command.options[0]?.trim();
@@ -928,6 +950,21 @@ export function importFromQuantikz(code: string): ImportedCircuit {
             throw new Error(`Unsupported Quantikz command '\\${command.name}' at row ${rowIndex + 1}, column ${colIndex + 1}.`);
         }
       });
+
+      if (setWireType !== null && !hasHorizontalWireCommand && wireOverrideType === null && setWireType !== persistentWireType) {
+        items.push({
+          id: nextId("horizontalSegment", idCounter),
+          type: "horizontalSegment",
+          point: { row: rowIndex, col: colIndex },
+          mode: setWireType === "none" ? "absent" : "present",
+          wireType: setWireType === "classical" ? "classical" : "quantum",
+          color: null
+        });
+      }
+
+      if (setWireType !== null) {
+        persistentWireType = setWireType;
+      }
     });
   });
 

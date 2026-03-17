@@ -1,4 +1,4 @@
-import { useEffect, useState, type FocusEvent } from "react";
+import { useEffect, useMemo, useState, type FocusEvent } from "react";
 import { COLOR_SWATCHES, DEFAULT_ITEM_COLOR, normalizeHexColor } from "../color";
 import type { WireLabelSide } from "../wireLabels";
 import type {
@@ -28,6 +28,7 @@ const ITEM_LABELS: Record<CircuitItem["type"], string> = {
 
 interface InspectorProps {
   selectedItem: CircuitItem | null;
+  selectedItems: CircuitItem[];
   selectedWireLabelGroup?: {
     row: number;
     side: WireLabelSide;
@@ -50,6 +51,10 @@ interface InspectorProps {
   onHorizontalModeChange: (itemId: string, mode: HorizontalSegmentItem["mode"]) => void;
   onHorizontalWireTypeChange: (itemId: string, wireType: WireType) => void;
   onItemColorChange: (itemId: string, color: string | null) => void;
+  onSelectedItemsColorChange: (color: string | null) => void;
+  onSelectedGateLabelChange: (label: string) => void;
+  onSelectedControlStateChange: (controlState: ControlState) => void;
+  onSelectedWireTypeChange: (wireType: WireType) => void;
   onWireLabelChange: (row: number, side: "left" | "right", label: string) => void;
   onWireLabelGroupChange?: (
     row: number,
@@ -65,6 +70,8 @@ interface InspectorProps {
   heading?: string;
   panelClassName?: string;
 }
+
+type BulkSelectionKind = "gate" | "controlDot" | "wire" | null;
 
 function selectNumericField(event: FocusEvent<HTMLInputElement>): void {
   event.currentTarget.select();
@@ -375,44 +382,23 @@ function renderSliceInspector(
 
 function renderVerticalInspector(
   item: VerticalConnectorItem,
-  qubits: number,
-  onVerticalLengthChange: InspectorProps["onVerticalLengthChange"],
+  _qubits: number,
+  _onVerticalLengthChange: InspectorProps["onVerticalLengthChange"],
   onVerticalWireTypeChange: InspectorProps["onVerticalWireTypeChange"]
 ): JSX.Element {
   return (
     <>
-      <div className="inspector-field-row">
-        <label className="inspector-field">
-          <span>Line length</span>
-          <input
-            aria-label="Line length"
-            type="text"
-            inputMode="numeric"
-            pattern="[0-9]*"
-            value={item.length}
-            onFocus={selectNumericField}
-            onChange={(event) => {
-              const value = parsePositiveInteger(event.target.value);
-              if (value === null) {
-                return;
-              }
-
-              onVerticalLengthChange(item.id, value);
-            }}
-          />
-        </label>
-        <label className="inspector-field">
-          <span>Wire style</span>
-          <select
-            aria-label="Vertical wire style"
-            value={item.wireType}
-            onChange={(event) => onVerticalWireTypeChange(item.id, event.target.value as WireType)}
-          >
-            <option value="quantum">Quantum</option>
-            <option value="classical">Classical</option>
-          </select>
-        </label>
-      </div>
+      <label className="inspector-field">
+        <span>Wire style</span>
+        <select
+          aria-label="Vertical wire style"
+          value={item.wireType}
+          onChange={(event) => onVerticalWireTypeChange(item.id, event.target.value as WireType)}
+        >
+          <option value="quantum">Quantum</option>
+          <option value="classical">Classical</option>
+        </select>
+      </label>
       <dl className="inspector-meta">
         <div>
           <dt>Orientation</dt>
@@ -503,6 +489,7 @@ function renderControlInspector(
 
 export function Inspector({
   selectedItem,
+  selectedItems,
   selectedWireLabelGroup = null,
   selectedCount,
   qubits,
@@ -519,6 +506,10 @@ export function Inspector({
   onHorizontalModeChange,
   onHorizontalWireTypeChange,
   onItemColorChange,
+  onSelectedItemsColorChange,
+  onSelectedGateLabelChange,
+  onSelectedControlStateChange,
+  onSelectedWireTypeChange,
   onWireLabelChange,
   onWireLabelGroupChange,
   onWireLabelGroupUnmerge,
@@ -532,17 +523,232 @@ export function Inspector({
 }: InspectorProps): JSX.Element {
   const [hexInput, setHexInput] = useState("");
   const showingWireLabelGroup = Boolean(selectedWireLabelGroup);
+  const bulkSelectionKind = useMemo<BulkSelectionKind>(() => {
+    if (selectedItems.length <= 1) {
+      return null;
+    }
+
+    if (selectedItems.every((item) => item.type === "gate")) {
+      return "gate";
+    }
+
+    if (selectedItems.every((item) => item.type === "controlDot")) {
+      return "controlDot";
+    }
+
+    if (selectedItems.every((item) => item.type === "horizontalSegment" || item.type === "verticalConnector")) {
+      return "wire";
+    }
+
+    return null;
+  }, [selectedItems]);
+  const bulkColor = useMemo(() => {
+    if (selectedItems.length === 0) {
+      return null;
+    }
+
+    const firstColor = selectedItems[0].color ?? null;
+    return selectedItems.every((item) => (item.color ?? null) === firstColor) ? firstColor : null;
+  }, [selectedItems]);
+  const bulkGateLabel = useMemo(() => {
+    if (bulkSelectionKind !== "gate") {
+      return "";
+    }
+
+    const firstLabel = (selectedItems[0] as GateItem).label;
+    return selectedItems.every((item) => item.type === "gate" && item.label === firstLabel) ? firstLabel : "";
+  }, [bulkSelectionKind, selectedItems]);
+  const bulkControlState = useMemo(() => {
+    if (bulkSelectionKind !== "controlDot") {
+      return "";
+    }
+
+    const firstState = (selectedItems[0].type === "controlDot" ? (selectedItems[0].controlState ?? "filled") : "filled");
+    return selectedItems.every((item) => item.type === "controlDot" && (item.controlState ?? "filled") === firstState)
+      ? firstState
+      : "";
+  }, [bulkSelectionKind, selectedItems]);
+  const bulkWireType = useMemo(() => {
+    if (bulkSelectionKind !== "wire") {
+      return "";
+    }
+
+    const firstType = selectedItems[0].type === "horizontalSegment" || selectedItems[0].type === "verticalConnector"
+      ? selectedItems[0].wireType
+      : "quantum";
+    return selectedItems.every((item) =>
+      (item.type === "horizontalSegment" || item.type === "verticalConnector") && item.wireType === firstType
+    )
+      ? firstType
+      : "";
+  }, [bulkSelectionKind, selectedItems]);
 
   useEffect(() => {
+    if (selectedItems.length > 1) {
+      setHexInput(bulkColor ?? "");
+      return;
+    }
+
     setHexInput(selectedItem?.color ?? "");
-  }, [selectedItem?.id, selectedItem?.color]);
+  }, [bulkColor, selectedItem?.color, selectedItem?.id, selectedItems.length]);
 
   function applyColor(color: string | null): void {
+    if (selectedItems.length > 1) {
+      onSelectedItemsColorChange(color);
+      return;
+    }
+
     if (!selectedItem) {
       return;
     }
 
     onItemColorChange(selectedItem.id, color);
+  }
+
+  function renderSelectionColorEditor(): JSX.Element | null {
+    if (showingWireLabelGroup || (!selectedItem && selectedItems.length === 0)) {
+      return null;
+    }
+
+    const activeColor = selectedItems.length > 1 ? bulkColor : (selectedItem?.color ?? null);
+
+    return (
+      <div className="color-editor">
+        <div className="subsection-heading">
+          <h3>{selectedItems.length > 1 ? "Selected color" : "Element color"}</h3>
+          <p>Choose a swatch or enter a hex code.</p>
+        </div>
+        <div className="color-swatch-grid" role="list" aria-label="Color swatches">
+          {COLOR_SWATCHES.map((color) => (
+            <button
+              key={color}
+              type="button"
+              className={`color-swatch ${activeColor === color ? "is-active" : ""}`}
+              style={{ backgroundColor: color }}
+              aria-label={`Set color ${color}`}
+              onClick={() => {
+                setHexInput(color);
+                applyColor(color);
+              }}
+            />
+          ))}
+        </div>
+        <div className="color-input-row">
+          <button
+            type="button"
+            className={`secondary-button color-reset-button ${!activeColor ? "is-active" : ""}`}
+            onClick={() => {
+              setHexInput("");
+              applyColor(null);
+            }}
+          >
+            Default
+          </button>
+          <input
+            aria-label="Element color picker"
+            className="native-color-input"
+            type="color"
+            value={activeColor ?? DEFAULT_ITEM_COLOR}
+            onChange={(event) => {
+              setHexInput(event.target.value.toUpperCase());
+              applyColor(event.target.value);
+            }}
+          />
+          <input
+            aria-label="Element color hex"
+            type="text"
+            spellCheck={false}
+            placeholder="#C85D2D"
+            value={hexInput}
+            onChange={(event) => {
+              const nextValue = event.target.value.toUpperCase();
+              setHexInput(nextValue);
+              const normalized = normalizeHexColor(nextValue);
+              if (normalized || nextValue === "") {
+                applyColor(normalized);
+              }
+            }}
+            onBlur={() => {
+              const normalized = normalizeHexColor(hexInput);
+              setHexInput(normalized ?? "");
+              if (hexInput === "") {
+                applyColor(null);
+              }
+            }}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  function renderBulkSelectionInspector(): JSX.Element | null {
+    if (selectedItems.length <= 1) {
+      return null;
+    }
+
+    if (bulkSelectionKind === "gate") {
+      return (
+        <label className="inspector-field inspector-field-wide">
+          <span>Gate label / TeX</span>
+          <input
+            aria-label="Gate label"
+            type="text"
+            value={bulkGateLabel}
+            spellCheck={false}
+            placeholder="\theta_0"
+            onChange={(event) => onSelectedGateLabelChange(event.target.value)}
+          />
+        </label>
+      );
+    }
+
+    if (bulkSelectionKind === "controlDot") {
+      return (
+        <label className="inspector-field">
+          <span>Control type</span>
+          <select
+            aria-label="Control type"
+            value={bulkControlState}
+            onChange={(event) => {
+              if (event.target.value === "") {
+                return;
+              }
+
+              onSelectedControlStateChange(event.target.value as ControlState);
+            }}
+          >
+            <option value="">Mixed</option>
+            <option value="filled">Filled (c1)</option>
+            <option value="open">Open (c0)</option>
+          </select>
+        </label>
+      );
+    }
+
+    if (bulkSelectionKind === "wire") {
+      return (
+        <label className="inspector-field">
+          <span>Wire style</span>
+          <select
+            aria-label="Horizontal wire style"
+            value={bulkWireType}
+            onChange={(event) => {
+              if (event.target.value === "") {
+                return;
+              }
+
+              onSelectedWireTypeChange(event.target.value as WireType);
+            }}
+          >
+            <option value="">Mixed</option>
+            <option value="quantum">Quantum</option>
+            <option value="classical">Classical</option>
+          </select>
+        </label>
+      );
+    }
+
+    return null;
   }
 
   const sectionDivider = showWireLabels && showSelectionControls;
@@ -606,8 +812,10 @@ export function Inspector({
               <div className="selected-pill selected-pill-name">{selectedCount} elements</div>
             </div>
             <p className="empty-panel-copy">
-              Group selection is active. Use copy/paste to duplicate it or delete to remove the whole group.
+              Group selection is active. Shared color changes apply to all selected objects, and matching object types expose shared properties.
             </p>
+            {renderBulkSelectionInspector()}
+            {renderSelectionColorEditor()}
             <button type="button" className="danger-button" onClick={onDelete}>
               Delete selected
             </button>
@@ -670,73 +878,7 @@ export function Inspector({
                 </dl>
               )}
 
-            {!showingWireLabelGroup && selectedItem && (
-            <div className="color-editor">
-              <div className="subsection-heading">
-                <h3>Element color</h3>
-                <p>Choose a swatch or enter a hex code.</p>
-              </div>
-              <div className="color-swatch-grid" role="list" aria-label="Color swatches">
-                {COLOR_SWATCHES.map((color) => (
-                  <button
-                    key={color}
-                    type="button"
-                    className={`color-swatch ${selectedItem.color === color ? "is-active" : ""}`}
-                    style={{ backgroundColor: color }}
-                    aria-label={`Set color ${color}`}
-                    onClick={() => {
-                      setHexInput(color);
-                      applyColor(color);
-                    }}
-                  />
-                ))}
-              </div>
-              <div className="color-input-row">
-                <button
-                  type="button"
-                  className={`secondary-button color-reset-button ${!selectedItem.color ? "is-active" : ""}`}
-                  onClick={() => {
-                    setHexInput("");
-                    applyColor(null);
-                  }}
-                >
-                  Default
-                </button>
-                <input
-                  aria-label="Element color picker"
-                  className="native-color-input"
-                  type="color"
-                  value={selectedItem.color ?? DEFAULT_ITEM_COLOR}
-                  onChange={(event) => {
-                    setHexInput(event.target.value.toUpperCase());
-                    applyColor(event.target.value);
-                  }}
-                />
-                <input
-                  aria-label="Element color hex"
-                  type="text"
-                  spellCheck={false}
-                  placeholder="#C85D2D"
-                  value={hexInput}
-                  onChange={(event) => {
-                    const nextValue = event.target.value.toUpperCase();
-                    setHexInput(nextValue);
-                    const normalized = normalizeHexColor(nextValue);
-                    if (normalized || nextValue === "") {
-                      applyColor(normalized);
-                    }
-                  }}
-                  onBlur={() => {
-                    const normalized = normalizeHexColor(hexInput);
-                    setHexInput(normalized ?? "");
-                    if (hexInput === "") {
-                      applyColor(null);
-                    }
-                  }}
-                />
-              </div>
-            </div>
-            )}
+            {renderSelectionColorEditor()}
 
             {showingWireLabelGroup ? (
               <button

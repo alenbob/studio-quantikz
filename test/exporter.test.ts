@@ -77,6 +77,7 @@ describe("exportToQuantikz", () => {
     );
 
     expect(code).toContain("\\meter{}");
+    expect(code).not.toContain("\\qw");
   });
 
   it("exports a wide gate with an explicit minimum width", () => {
@@ -246,10 +247,9 @@ describe("exportToQuantikz", () => {
       })
     );
 
-    expect(code).toContain("\\ctrl{2}");
-    expect(code).toContain("\\ctrl{1}");
+    expect(code.match(/\\ctrl\{1\}/g)?.length).toBe(2);
     expect(code).toContain("\\targ{}");
-    expect(code).not.toContain("\\wire[d][1]{q}");
+    expect(code).not.toContain("\\ctrl{2}");
   });
 
   it("exports open controls as c0 controls", () => {
@@ -296,7 +296,7 @@ describe("exportToQuantikz", () => {
     );
 
     expect(code).toContain("\\swap{2}");
-    expect(code).toContain("\\targX{}");
+    expect(code.match(/\\targX\{\}/g)?.length).toBe(1);
   });
 
   it("exports a controlled swap gate with a shared connector", () => {
@@ -317,7 +317,7 @@ describe("exportToQuantikz", () => {
 
     expect(code).toContain("\\ctrl{1}");
     expect(code).toContain("\\swap{2}");
-    expect(code).toContain("\\targX{}");
+    expect(code.match(/\\targX\{\}/g)?.length).toBe(1);
   });
 
   it("falls back to a raw wire command for a standalone connector", () => {
@@ -362,6 +362,21 @@ describe("exportToQuantikz", () => {
     expect(code).toContain("\\wire[d][1]{q}");
   });
 
+  it("merges a long raw vertical connector into one quantikz wire command", () => {
+    const code = exportToQuantikz(
+      makeState({
+        qubits: 3,
+        steps: 2,
+        items: [
+          { id: "line-1", type: "verticalConnector", point: { row: 0, col: 0 }, length: 2, wireType: "quantum" }
+        ]
+      })
+    );
+
+    expect(code).toContain("\\wire[d][2]{q}");
+    expect(code).not.toContain("\\wire[d][1]{q}");
+  });
+
   it("exports right and left corner shorthand through wire overrides", () => {
     const code = exportToQuantikz(
       makeState({
@@ -383,7 +398,8 @@ describe("exportToQuantikz", () => {
       })
     );
 
-    expect(code.match(/\\ctrl\{1\}/g)?.length).toBeGreaterThanOrEqual(4);
+    const controlCommandCount = code.match(/\\(?:o?ctrl\{1\}|o?control\{\})/g)?.length ?? 0;
+    expect(controlCommandCount).toBeGreaterThanOrEqual(4);
     expect(code.match(/\\wireoverride\{n\}/g)?.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -423,6 +439,7 @@ describe("exportToQuantikz", () => {
     expect(code).toContain("\\gate[wires=2]{U}");
     expect(code).toContain("\\ctrl{2}");
     expect(code).toContain("\\swap{1}");
+    expect(code.match(/\\targX\{\}/g)?.length).toBe(1);
   });
 
   it("exports frames and slices with quantikz annotations", () => {
@@ -456,6 +473,74 @@ describe("exportToQuantikz", () => {
     expect(code).toContain("\\slice{prepare}");
   });
 
+  it("places gate-like commands before raw vertical wires and slices in the same cell", () => {
+    const code = exportToQuantikz(
+      makeState({
+        qubits: 2,
+        steps: 2,
+        items: [
+          {
+            id: "gate-top",
+            type: "gate",
+            point: { row: 0, col: 0 },
+            span: { rows: 1, cols: 1 },
+            label: "A",
+            width: 40
+          },
+          {
+            id: "gate-bottom",
+            type: "gate",
+            point: { row: 1, col: 0 },
+            span: { rows: 1, cols: 1 },
+            label: "B",
+            width: 40
+          },
+          { id: "line-1", type: "verticalConnector", point: { row: 0, col: 0 }, length: 1, wireType: "quantum" },
+          { id: "slice-1", type: "slice", point: { row: 0, col: 0 }, label: "mark" }
+        ]
+      })
+    );
+
+    expect(code).toContain("\\gate{A} \\wire[d][1]{q} \\slice{mark}");
+  });
+
+  it("places control and target commands before same-cell annotations and horizontal wires", () => {
+    const code = exportToQuantikz(
+      makeState({
+        qubits: 2,
+        steps: 2,
+        items: [
+          { id: "dot-1", type: "controlDot", point: { row: 0, col: 0 } },
+          { id: "line-1", type: "verticalConnector", point: { row: 0, col: 0 }, length: 1, wireType: "quantum" },
+          { id: "plus-1", type: "targetPlus", point: { row: 1, col: 0 } },
+          { id: "slice-1", type: "slice", point: { row: 0, col: 0 }, label: "s" },
+          {
+            id: "segment-c",
+            type: "horizontalSegment",
+            point: { row: 1, col: 0 },
+            mode: "present",
+            wireType: "classical",
+            color: null
+          },
+          {
+            id: "frame-1",
+            type: "frame",
+            point: { row: 1, col: 0 },
+            span: { rows: 1, cols: 1 },
+            label: "G",
+            rounded: false,
+            dashed: false,
+            background: false,
+            innerXSepPt: 0
+          }
+        ]
+      })
+    );
+
+    expect(code).toContain("\\ctrl{1} \\slice{s}");
+    expect(code).toContain("\\targ{} \\wireoverride{c} \\gategroup[1,steps=1]{G}");
+  });
+
   it("exports one control connected to multiple targets in the same column", () => {
     const code = exportToQuantikz(
       makeState({
@@ -471,7 +556,8 @@ describe("exportToQuantikz", () => {
     );
 
     expect(code).toContain("\\ctrl{1}");
-    expect(code).toContain("\\ctrl{2}");
+    expect(code).not.toContain("\\ctrl{2}");
+    expect(code).toContain("\\targ{} \\wire[d][1]{q}");
     expect(code.match(/\\targ\{\}/g)?.length).toBe(2);
   });
 
@@ -503,6 +589,140 @@ describe("exportToQuantikz", () => {
 
     expect(code).toContain("\\wireoverride{c}");
     expect(code).toContain("\\wireoverride{n}");
+  });
+
+  it("uses empty quantikz cells instead of explicit qw commands for default wires", () => {
+    const code = exportToQuantikz(
+      makeState({
+        qubits: 2,
+        steps: 3,
+        items: [
+          {
+            id: "gate-1",
+            type: "gate",
+            point: { row: 0, col: 0 },
+            span: { rows: 1, cols: 1 },
+            label: "H",
+            width: 40
+          },
+          { id: "dot-1", type: "controlDot", point: { row: 0, col: 1 } },
+          { id: "line-1", type: "verticalConnector", point: { row: 0, col: 1 }, length: 1, wireType: "quantum" },
+          { id: "plus-1", type: "targetPlus", point: { row: 1, col: 1 } }
+        ]
+      })
+    );
+
+    expect(code).not.toContain("\\qw");
+    expect(code).toContain("\\gate{H} & \\ctrl{1}");
+    expect(code).toContain("& \\targ{}");
+  });
+
+  it("omits the trailing auxiliary cell after a row ends in a meter", () => {
+    const code = exportToQuantikz(
+      makeState({
+        qubits: 1,
+        steps: 4,
+        wireLabels: [{ left: "", right: "" }],
+        items: [
+          {
+            id: "meter-1",
+            type: "meter",
+            point: { row: 0, col: 2 },
+            span: { rows: 1, cols: 1 }
+          }
+        ]
+      })
+    );
+
+    const meterRow = code.split("\n")[1]?.trim() ?? "";
+
+    expect(meterRow).toContain("\\meter{}");
+    expect(meterRow.endsWith("&")).toBe(false);
+  });
+
+  it("does not pad entirely empty rows just because auto wires are present", () => {
+    const code = exportToQuantikz(
+      makeState({
+        qubits: 3,
+        steps: 5,
+        items: [
+          {
+            id: "meter-1",
+            type: "meter",
+            point: { row: 0, col: 0 },
+            span: { rows: 1, cols: 1 }
+          }
+        ]
+      })
+    );
+
+    const rows = code.split("\n").slice(1, -1).map((row) => row.trim());
+
+    expect(rows[1].startsWith("&")).toBe(true);
+    expect(rows[2]).toBe("&");
+  });
+
+  it("adds a single trailing empty cell only when the row ends with a live wire", () => {
+    const code = exportToQuantikz(
+      makeState({
+        qubits: 1,
+        steps: 4,
+        wireLabels: [{ left: "", right: "" }],
+        items: [
+          {
+            id: "gate-1",
+            type: "gate",
+            point: { row: 0, col: 0 },
+            span: { rows: 1, cols: 1 },
+            label: "H",
+            width: 40
+          }
+        ]
+      })
+    );
+
+    const gateRow = code.split("\n")[1]?.trim() ?? "";
+
+    expect(gateRow).toBe("& \\gate{H} &");
+  });
+
+  it("compacts consecutive absent helper cells with setwiretype", () => {
+    const code = exportToQuantikz(
+      makeState({
+        qubits: 1,
+        steps: 4,
+        wireLabels: [{ left: "", right: "" }],
+        items: [
+          {
+            id: "gap-1",
+            type: "horizontalSegment",
+            point: { row: 0, col: 1 },
+            mode: "absent",
+            wireType: "quantum",
+            color: null
+          },
+          {
+            id: "gap-2",
+            type: "horizontalSegment",
+            point: { row: 0, col: 2 },
+            mode: "absent",
+            wireType: "quantum",
+            color: null
+          },
+          {
+            id: "gate-1",
+            type: "gate",
+            point: { row: 0, col: 3 },
+            span: { rows: 1, cols: 1 },
+            label: "H",
+            width: 40
+          }
+        ]
+      })
+    );
+
+    expect(code).toContain("\\setwiretype{n}");
+    expect(code).toContain("\\gate{H} \\setwiretype{q}");
   });
 
   it("exports classical connectors with the proper Quantikz option", () => {

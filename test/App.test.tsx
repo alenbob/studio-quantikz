@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import App from "../src/renderer/App";
@@ -107,7 +107,22 @@ describe("App smoke tests", () => {
     expect(screen.getByRole("button", { name: /^gate$/i })).toBeInTheDocument();
   });
 
-  it("draws a tight outline around each selected object", async () => {
+  it("renders the orange selected-object overlay for a single selected gate", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+
+    await user.click(screen.getByRole("button", { name: /^gate$/i }));
+    await user.click(screen.getByTestId("grid-cell-0-0"));
+    await user.click(screen.getByRole("button", { name: /^select$/i }));
+
+    const gateRect = container.querySelector('rect[data-kind="gate-rect"]') as SVGRectElement;
+    fireEvent.pointerDown(gateRect, { button: 0 });
+
+    expect(container.querySelectorAll(".item-outline-selected")).toHaveLength(1);
+    expect(container.querySelectorAll(".selected-gate-overlay")).toHaveLength(1);
+  });
+
+  it("merges the contour around multiple selected objects and draws orange overlays on top", async () => {
     const user = userEvent.setup();
     const { container } = render(<App />);
 
@@ -118,8 +133,65 @@ describe("App smoke tests", () => {
 
     fireEvent.keyDown(window, { key: "a", ctrlKey: true });
 
-    expect(container.querySelectorAll(".merged-selection-outline")).toHaveLength(0);
-    expect(container.querySelectorAll(".item-outline-selected")).toHaveLength(2);
+    expect(container.querySelectorAll(".merged-selection-outline")).toHaveLength(1);
+    expect(container.querySelectorAll(".item-outline-selected")).toHaveLength(0);
+    expect(container.querySelectorAll(".selected-gate-overlay")).toHaveLength(2);
+  });
+
+  it("lets a multi-selection of gates change label and color together", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: /^gate$/i }));
+    await user.click(screen.getByTestId("grid-cell-0-0"));
+    await user.click(screen.getByTestId("grid-cell-0-1"));
+    await user.click(screen.getByRole("button", { name: /^select$/i }));
+
+    fireEvent.keyDown(window, { key: "a", ctrlKey: true });
+    fireEvent.change(screen.getByLabelText(/gate label/i), {
+      target: { value: "H" }
+    });
+    fireEvent.change(screen.getByLabelText(/element color hex/i), {
+      target: { value: "#FF0000" }
+    });
+    await user.click(screen.getByRole("button", { name: /convert to quantikz/i }));
+
+    const output = (screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value;
+    expect(output.match(/\\gate(?:\[[^\]]+\])?\{H\}/g)?.length).toBe(2);
+    expect(output).toContain("draw={rgb,255:red,255;green,0;blue,0}");
+  });
+
+  it("lets a multi-selection of controls switch between c1 and c0 together", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+
+    await user.click(screen.getByRole("button", { name: /^control dot$/i }));
+    await user.click(screen.getByTestId("grid-cell-0-0"));
+    await user.click(screen.getByTestId("grid-cell-1-1"));
+    await user.click(screen.getByRole("button", { name: /^select$/i }));
+
+    fireEvent.keyDown(window, { key: "a", ctrlKey: true });
+    fireEvent.change(screen.getByLabelText(/control type/i), {
+      target: { value: "open" }
+    });
+
+    expect(container.querySelectorAll(".control-dot-open")).toHaveLength(2);
+  });
+
+  it("keeps the selected control overlay hollow for filled controls", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+
+    await user.click(screen.getByRole("button", { name: /^control dot$/i }));
+    await user.click(screen.getByTestId("grid-cell-0-0"));
+    await user.click(screen.getByRole("button", { name: /^select$/i }));
+
+    const controlDot = container.querySelector(".control-dot") as SVGCircleElement;
+    fireEvent.pointerDown(controlDot, { button: 0 });
+
+    const overlay = container.querySelector(".selected-control-overlay") as SVGCircleElement;
+    expect(overlay).toBeTruthy();
+    expect(overlay.style.fill).toBe("transparent");
   });
 
   it("renders gate labels through KaTeX automatically", async () => {
@@ -147,7 +219,7 @@ describe("App smoke tests", () => {
     await user.click(screen.getByTestId("grid-cell-0-0"));
 
     const gateRect = container.querySelector('rect[data-kind="gate-rect"]') as SVGRectElement;
-    const wireSegment = container.querySelector(".horizontal-segment-passive") as SVGElement;
+    const wireSegment = container.querySelector(".horizontal-segment-stroke") as SVGElement;
 
     expect(wireSegment).toBeTruthy();
     expect(wireSegment.compareDocumentPosition(gateRect) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -384,6 +456,17 @@ describe("App smoke tests", () => {
     expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain("\\wireoverride{c}");
   });
 
+  it("does not select a horizontal segment while wires are locked", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: /^select$/i }));
+    await user.click(screen.getByTestId("segment-slot-0-1"));
+
+    expect(screen.queryByLabelText(/segment mode/i)).toBeNull();
+    expect(screen.queryByLabelText(/horizontal wire style/i)).toBeNull();
+  });
+
   it("automatically removes only the horizontal wires to the right of a meter", async () => {
     const user = userEvent.setup();
     const { container } = render(<App />);
@@ -393,7 +476,10 @@ describe("App smoke tests", () => {
     await user.click(screen.getByRole("button", { name: /convert to quantikz/i }));
 
     expect(container.querySelectorAll(".absent-override").length).toBe(0);
-    expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain("\\wireoverride{n}");
+    const output = (screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value;
+
+    expect(output).toContain("\\meter{}");
+    expect(output).not.toContain("\\wireoverride{n}");
   });
 
   it("lets you redraw a wire to the right of a meter", async () => {
@@ -418,7 +504,10 @@ describe("App smoke tests", () => {
     });
     await user.click(screen.getByRole("button", { name: /convert to quantikz/i }));
 
-    expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain("\\wireoverride{q}");
+    const output = (screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value;
+
+    expect(output).toContain("\\meter{}");
+    expect(output).not.toContain("\\wireoverride{q}");
   });
 
   it("can grow the grid without auto-wiring the new row and column", async () => {
@@ -430,7 +519,10 @@ describe("App smoke tests", () => {
     await user.click(screen.getByRole("button", { name: /increase steps/i }));
     await user.click(screen.getByRole("button", { name: /convert to quantikz/i }));
 
-    expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain("\\wireoverride{n}");
+    const output = (screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value;
+
+    expect(output).toContain("\\wireoverride{n}");
+    expect(output).not.toContain("\\qw");
   });
 
   it("shows row numbers on the far left of the circuit", () => {
@@ -564,18 +656,20 @@ describe("App smoke tests", () => {
     mockBoardRect(board);
 
     await user.click(screen.getByRole("button", { name: /^wires$/i }));
-    fireEvent.pointerDown(board, {
+    fireEvent.pointerDown(screen.getByTestId("grid-cell-0-0"), {
       button: 0,
       clientX: getCellCenterX(0, DEFAULT_CIRCUIT_LAYOUT),
       clientY: getRowY(0, DEFAULT_CIRCUIT_LAYOUT)
     });
-    fireEvent.pointerDown(board, {
+    fireEvent.pointerDown(screen.getByTestId("grid-cell-2-0"), {
       button: 0,
       clientX: getCellCenterX(0, DEFAULT_CIRCUIT_LAYOUT),
       clientY: getRowY(2, DEFAULT_CIRCUIT_LAYOUT)
     });
 
-    expect(container.querySelectorAll(".vertical-connector")).toHaveLength(1);
+    await waitFor(() => {
+      expect(container.querySelectorAll(".vertical-connector")).toHaveLength(2);
+    });
   });
 
   it("supports undo and redo from the keyboard", async () => {
