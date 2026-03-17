@@ -1,10 +1,10 @@
 # Quantikz Guide
 
-## SVG preview backend
+## PDF preview backend
 
-The website SVG preview backend now uses a single remote full-TeX rendering path for both plain TikZ and Quantikz.
+The website preview now uses a single remote full-TeX PDF rendering path for both plain TikZ and Quantikz.
 
-The left-hand code panel in the Quantikz output window posts directly to `/api/render-svg`, and that endpoint forwards a full LaTeX document to the configured renderer service. When the source contains a `quantikz` environment, the document must load the `quantikz2` TikZ library together with `braket`, `amsmath`, `amssymb`, and `amsfonts`.
+The left-hand code panel in the Quantikz output window posts directly to `/api/render-pdf`, and that endpoint forwards a full LaTeX document to the configured renderer service. The default public backend is `https://texlive.net/cgi-bin/latexcgi`, which accepts multipart form submissions and returns a compiled PDF. When the source contains a `quantikz` environment, the document must load the `quantikz2` TikZ library together with `braket`, `amsmath`, `amssymb`, and `amsfonts`.
 
 This guide is a practical introduction to drawing quantum circuits with Quantikz in LaTeX.
 
@@ -20,6 +20,8 @@ For the remote full-TeX backend, load Quantikz like this:
 ```
 
 The renderer can still accept a complete document that already declares its own Quantikz setup, but the default app preamble now uses `\usetikzlibrary{quantikz2}` together with the AMS and `braket` packages so the same full-TeX source can be sent to the remote backend in local development and on Vercel.
+
+The dormant `/api/render-svg` path is no longer used for preview. It currently reports that SVG rendering is unavailable and points callers to the PDF preview instead.
 
 ## Minimal working example
 

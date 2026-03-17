@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
+import { renderPdfBlobToPngBlob } from "./pdfRaster";
 
 type RenderedPdfState = "idle" | "loading" | "ready" | "error";
 
 interface RenderedPdfResult {
   pdfUrl: string | null;
+  previewImageUrl: string | null;
   state: RenderedPdfState;
   error: string | null;
 }
@@ -42,18 +44,29 @@ async function renderWithApi(code: string, preamble: string, signal: AbortSignal
 
 export function useRenderedPdf(code: string, preamble: string): RenderedPdfResult {
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
   const [state, setState] = useState<RenderedPdfState>("idle");
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
+  function clearPreviewUrls(): void {
+    setPdfUrl((currentUrl) => {
+      if (currentUrl) {
+        URL.revokeObjectURL(currentUrl);
+      }
+      return null;
+    });
+    setPreviewImageUrl((currentUrl) => {
+      if (currentUrl) {
+        URL.revokeObjectURL(currentUrl);
+      }
+      return null;
+    });
+  }
+
   useEffect(() => {
     if (!code.trim()) {
-      setPdfUrl((currentUrl) => {
-        if (currentUrl) {
-          URL.revokeObjectURL(currentUrl);
-        }
-        return null;
-      });
+      clearPreviewUrls();
       setError(null);
       setState("idle");
       return;
@@ -70,13 +83,22 @@ export function useRenderedPdf(code: string, preamble: string): RenderedPdfResul
     setError(null);
 
     void renderWithApi(code, preamble, controller.signal)
-      .then((pdfBlob) => {
-        const nextUrl = URL.createObjectURL(pdfBlob);
+      .then(async (pdfBlob) => {
+        const pngBlob = await renderPdfBlobToPngBlob(pdfBlob);
+        const nextPdfUrl = URL.createObjectURL(pdfBlob);
+        const nextPreviewImageUrl = URL.createObjectURL(pngBlob);
+
         setPdfUrl((currentUrl) => {
           if (currentUrl) {
             URL.revokeObjectURL(currentUrl);
           }
-          return nextUrl;
+          return nextPdfUrl;
+        });
+        setPreviewImageUrl((currentUrl) => {
+          if (currentUrl) {
+            URL.revokeObjectURL(currentUrl);
+          }
+          return nextPreviewImageUrl;
         });
         setError(null);
         setState("ready");
@@ -86,12 +108,7 @@ export function useRenderedPdf(code: string, preamble: string): RenderedPdfResul
           return;
         }
 
-        setPdfUrl((currentUrl) => {
-          if (currentUrl) {
-            URL.revokeObjectURL(currentUrl);
-          }
-          return null;
-        });
+        clearPreviewUrls();
         setError(err instanceof Error ? err.message : "Failed to render preview.");
         setState("error");
       });
@@ -108,10 +125,8 @@ export function useRenderedPdf(code: string, preamble: string): RenderedPdfResul
   }, []);
 
   useEffect(() => () => {
-    if (pdfUrl) {
-      URL.revokeObjectURL(pdfUrl);
-    }
-  }, [pdfUrl]);
+    clearPreviewUrls();
+  }, []);
 
-  return { pdfUrl, state, error };
+  return { pdfUrl, previewImageUrl, state, error };
 }

@@ -6,7 +6,7 @@ export interface ExportHistoryEntry {
   createdAt: string;
   code: string;
   preamble: string;
-  svg: string;
+  previewImage?: string;
 }
 
 function isExportHistoryEntry(value: unknown): value is ExportHistoryEntry {
@@ -20,7 +20,7 @@ function isExportHistoryEntry(value: unknown): value is ExportHistoryEntry {
     typeof entry.createdAt === "string" &&
     typeof entry.code === "string" &&
     typeof entry.preamble === "string" &&
-    typeof entry.svg === "string"
+    (typeof entry.previewImage === "undefined" || typeof entry.previewImage === "string")
   );
 }
 

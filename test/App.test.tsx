@@ -5,6 +5,10 @@ import App from "../src/renderer/App";
 import { DEFAULT_CIRCUIT_LAYOUT, getCellCenterX, getGridHeight, getGridWidth, getRowY } from "../src/renderer/layout";
 import * as renderedPdfModule from "../src/renderer/useRenderedPdf";
 
+vi.mock("../src/renderer/pdfRaster", () => ({
+  renderPdfBlobToPngBlob: vi.fn(async () => new Blob(["png-preview"], { type: "image/png" }))
+}));
+
 function mockBoardRect(board: HTMLDivElement, steps = 5, qubits = 3): void {
   const width = getGridWidth(steps, DEFAULT_CIRCUIT_LAYOUT);
   const height = getGridHeight(qubits, DEFAULT_CIRCUIT_LAYOUT);
@@ -216,6 +220,9 @@ describe("App smoke tests", () => {
       pdfUrl: code.includes(String.raw`\begin{quantikz}`)
         ? "blob:quantikz-preview"
         : null,
+      previewImageUrl: code.includes(String.raw`\begin{quantikz}`)
+        ? "blob:quantikz-preview-image"
+        : null,
       state: code.includes(String.raw`\begin{quantikz}`) ? "ready" : "idle",
       error: null
     }));
@@ -235,10 +242,85 @@ describe("App smoke tests", () => {
         expect.stringContaining(String.raw`\begin{quantikz}`),
         expect.stringContaining(String.raw`\usetikzlibrary{quantikz2}`)
       );
-      expect(screen.getByTitle(/rendered quantikz pdf preview/i)).toBeInTheDocument();
+      expect(screen.getByTitle(/rendered quantikz figure preview/i)).toBeInTheDocument();
+      expect(screen.getByTitle(/rendered quantikz figure preview/i)).toHaveAttribute("draggable", "true");
       expect(screen.queryByText(/generate or paste quantikz code/i)).not.toBeInTheDocument();
     } finally {
       useRenderedPdfSpy.mockRestore();
+    }
+  });
+
+  it("copies the rendered figure to the clipboard", async () => {
+    const user = userEvent.setup();
+    const pdfBlob = new Blob(["%PDF-test"], { type: "application/pdf" });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(pdfBlob, {
+        status: 200,
+        headers: { "Content-Type": "application/pdf" }
+      })
+    );
+    const clipboardWrite = vi.fn().mockResolvedValue(undefined);
+    const originalClipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    const originalClipboardItem = globalThis.ClipboardItem;
+
+    class MockClipboardItem {
+      readonly items: Record<string, Blob>;
+
+      constructor(items: Record<string, Blob>) {
+        this.items = items;
+      }
+    }
+
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { write: clipboardWrite }
+    });
+    Object.defineProperty(globalThis, "ClipboardItem", {
+      configurable: true,
+      value: MockClipboardItem
+    });
+
+    try {
+      render(<App />);
+
+      fireEvent.change(screen.getByLabelText(/quantikz output/i), {
+        target: {
+          value: String.raw`\begin{quantikz}
+\lstick{$\ket{0}$} & \gate{H}
+\end{quantikz}`
+        }
+      });
+
+      await user.click(screen.getByRole("button", { name: /copy image/i }));
+      
+      const clipboardItems = clipboardWrite.mock.calls[0]?.[0] as MockClipboardItem[];
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/render-pdf",
+        expect.objectContaining({ method: "POST" })
+      );
+      expect(clipboardWrite).toHaveBeenCalledTimes(1);
+      expect(clipboardItems).toHaveLength(1);
+      const copiedBlob = clipboardItems[0]?.items["image/png"];
+      expect(copiedBlob.type).toBe("image/png");
+      expect(copiedBlob.size).toBeGreaterThan(0);
+    } finally {
+      fetchMock.mockRestore();
+
+      if (originalClipboardDescriptor) {
+        Object.defineProperty(navigator, "clipboard", originalClipboardDescriptor);
+      } else {
+        delete (navigator as Navigator & { clipboard?: Navigator["clipboard"] }).clipboard;
+      }
+
+      if (typeof originalClipboardItem === "undefined") {
+        delete (globalThis as { ClipboardItem?: typeof ClipboardItem }).ClipboardItem;
+      } else {
+        Object.defineProperty(globalThis, "ClipboardItem", {
+          configurable: true,
+          value: originalClipboardItem
+        });
+      }
     }
   });
 
@@ -403,7 +485,7 @@ describe("App smoke tests", () => {
           createdAt: "2026-03-15T10:00:00.000Z",
           code: "\\begin{quantikz}\n\\lstick{$\\\\ket{0}$} & \\gate{H}\n\\end{quantikz}",
           preamble: "\\documentclass{standalone}\n\\usetikzlibrary{quantikz2}",
-          svg: "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'><rect width='20' height='20' fill='#ffffff'/></svg>"
+          previewImage: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WnJ1l8AAAAASUVORK5CYII="
         }
       ])
     );
@@ -416,6 +498,7 @@ describe("App smoke tests", () => {
     const dialog = screen.getByRole("dialog", { name: /history/i });
     expect(dialog).toBeInTheDocument();
     expect(within(dialog).getByText(/\\begin\{quantikz\}/)).toBeInTheDocument();
+    expect(dialog.querySelector('.history-card-preview-image[src^="data:image/png"]')).toBeTruthy();
 
     await user.click(within(dialog).getByRole("button", { name: /\\begin\{quantikz\}/ }));
 

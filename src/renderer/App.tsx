@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useRef, useState, type FocusEvent, type JSX } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState, type DragEvent, type FocusEvent, type JSX } from "react";
 import { buildClipboard, canPasteClipboardAt } from "./clipboard";
 import cmdIcon from "./assets/cmd.svg";
 import automaticIcon from "./assets/automatic.svg";
@@ -20,6 +20,7 @@ import {
 } from "./exportHistory";
 import {
   buildDownloadBlob,
+  copyQuantikzImageToClipboard,
   downloadBlob,
   getDownloadFilename,
   type DownloadFormat,
@@ -85,20 +86,31 @@ function formatLabelForDownload(format: DownloadFormat): string {
   return format.toUpperCase();
 }
 
-function PdfPreviewFrame({
-  pdfUrl,
-  className,
-  title
-}: {
-  pdfUrl: string;
-  className: string;
-  title: string;
-}): JSX.Element | null {
-  if (!pdfUrl) {
-    return null;
-  }
+function imageUrlToDataUrl(imageUrl: string, maxWidth = 220, maxHeight = 120): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      const scale = Math.min(maxWidth / image.naturalWidth, maxHeight / image.naturalHeight, 1);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
 
-  return <iframe className={className} src={pdfUrl} title={title} />;
+      const context = canvas.getContext("2d");
+      if (!context) {
+        reject(new Error("Canvas rendering is unavailable in this browser."));
+        return;
+      }
+
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL("image/png"));
+    };
+    image.onerror = () => reject(new Error("Unable to prepare the history preview image."));
+    image.src = imageUrl;
+  });
+}
+
+function getPdfViewerSrc(pdfUrl: string): string {
+  return `${pdfUrl}#toolbar=0&navpanes=0&scrollbar=0&zoom=page-width&view=FitH`;
 }
 
 function DownloadMenu({
@@ -264,6 +276,7 @@ export default function App(): JSX.Element {
     resolvedExportSource.preamble
   );
   const pdfPreviewUrl = previewResult.pdfUrl;
+  const previewImageUrl = previewResult.previewImageUrl;
   const pdfPreviewState = previewResult.state;
   const pdfPreviewError = previewResult.error;
 
@@ -355,8 +368,7 @@ export default function App(): JSX.Element {
   function getCurrentExportAssetSource(): ExportAssetSource {
     return {
       code: resolvedExportSource.code,
-      preamble: resolvedExportSource.preamble,
-      svg: ""
+      preamble: resolvedExportSource.preamble
     };
   }
 
@@ -497,20 +509,52 @@ export default function App(): JSX.Element {
       return;
     }
 
-    const nextHistoryEntries = pushExportHistoryEntry(loadExportHistory(), {
-      code: resolvedExportSource.code,
-      preamble: resolvedExportSource.preamble,
-      svg: ""
-    });
+    if (pdfPreviewState !== "ready" || !previewImageUrl) {
+      return;
+    }
 
-    persistExportHistory(nextHistoryEntries);
-    setExportHistoryEntries(nextHistoryEntries);
-    setPendingHistoryCapture(false);
+    let cancelled = false;
+
+    void imageUrlToDataUrl(previewImageUrl)
+      .then((historyPreviewImage) => {
+        if (cancelled) {
+          return;
+        }
+
+        const nextHistoryEntries = pushExportHistoryEntry(loadExportHistory(), {
+          code: resolvedExportSource.code,
+          preamble: resolvedExportSource.preamble,
+          previewImage: historyPreviewImage
+        });
+
+        persistExportHistory(nextHistoryEntries);
+        setExportHistoryEntries(nextHistoryEntries);
+        setPendingHistoryCapture(false);
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+
+        const nextHistoryEntries = pushExportHistoryEntry(loadExportHistory(), {
+          code: resolvedExportSource.code,
+          preamble: resolvedExportSource.preamble
+        });
+
+        persistExportHistory(nextHistoryEntries);
+        setExportHistoryEntries(nextHistoryEntries);
+        setPendingHistoryCapture(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [
     pendingHistoryCapture,
     resolvedExportSource.code,
     resolvedExportSource.preamble,
-    pdfPreviewState
+    pdfPreviewState,
+    previewImageUrl
   ]);
 
   async function handleDownload(
@@ -536,6 +580,47 @@ export default function App(): JSX.Element {
         type: "setMessage",
         message: error instanceof Error ? error.message : "Unable to download the selected export."
       });
+    }
+  }
+
+  function handleOpenPdfPreview(): void {
+    if (!pdfPreviewUrl) {
+      return;
+    }
+
+    window.open(getPdfViewerSrc(pdfPreviewUrl), "_blank", "noopener,noreferrer");
+  }
+
+  async function handleCopyPreviewImage(): Promise<void> {
+    const source = getCurrentExportAssetSource();
+
+    try {
+      await copyQuantikzImageToClipboard(source.code, source.preamble);
+      dispatch({
+        type: "setMessage",
+        message: "Copied the rendered figure as a PNG to the clipboard."
+      });
+    } catch (error) {
+      dispatch({
+        type: "setMessage",
+        message: error instanceof Error ? error.message : "Unable to copy the figure to the clipboard."
+      });
+    }
+  }
+
+  function handlePreviewDragStart(event: DragEvent<HTMLImageElement>): void {
+    if (!previewImageUrl) {
+      return;
+    }
+
+    event.dataTransfer.effectAllowed = "copy";
+    event.dataTransfer.setData("text/uri-list", previewImageUrl);
+    event.dataTransfer.setData("text/plain", previewImageUrl);
+
+    try {
+      event.dataTransfer.setData("DownloadURL", `image/png:quantikz-circuit.png:${previewImageUrl}`);
+    } catch {
+      // Some browsers ignore custom drag payload types; native image dragging still works.
     }
   }
 
@@ -934,7 +1019,16 @@ export default function App(): JSX.Element {
                         onClick={() => handleLoadHistoryEntry(entry)}
                       >
                         <div className="history-card-preview">
-                          <div className="history-card-preview-image" aria-hidden="true" />
+                          {entry.previewImage ? (
+                            <img
+                              className="history-card-preview-image"
+                              src={entry.previewImage}
+                              alt=""
+                              aria-hidden="true"
+                            />
+                          ) : (
+                            <div className="history-card-preview-image history-card-preview-placeholder" aria-hidden="true" />
+                          )}
                         </div>
                         <div className="history-card-copy">
                           <span className="export-field-label">{formatHistoryTimestamp(entry.createdAt)}</span>
@@ -950,8 +1044,7 @@ export default function App(): JSX.Element {
                           onSelect={(format) =>
                             void handleDownload(format, {
                               code: entry.code,
-                              preamble: entry.preamble,
-                              svg: entry.svg
+                              preamble: entry.preamble
                             }, `quantikz-history-${entry.id.slice(0, 8)}`)
                           }
                         />
@@ -1137,9 +1230,28 @@ export default function App(): JSX.Element {
                   )}
                 </div>
               </div>
-              <div className="export-pane svg-preview-panel" aria-live="polite">
+              <div className="export-pane pdf-preview-panel" aria-live="polite">
                 <div className="export-pane-header export-pane-header-preview">
-                  <div className="svg-preview-actions">
+                  <span className="export-field-label">Figure preview</span>
+                  <div className="pdf-preview-actions">
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => {
+                        void handleCopyPreviewImage();
+                      }}
+                      disabled={!currentExportAssetSource.code.trim()}
+                    >
+                      Copy image
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={handleOpenPdfPreview}
+                      disabled={!pdfPreviewUrl}
+                    >
+                      Open PDF
+                    </button>
                     <DownloadMenu
                       isOpen={openDownloadMenuTarget === "main"}
                       onToggle={() => setOpenDownloadMenuTarget((current) => current === "main" ? null : "main")}
@@ -1147,25 +1259,27 @@ export default function App(): JSX.Element {
                     />
                   </div>
                 </div>
-                <div className="svg-preview-surface">
-                  {pdfPreviewState === "ready" && pdfPreviewUrl ? (
-                    <div className="svg-preview-stage">
-                      <PdfPreviewFrame
-                        className="svg-preview-image"
-                        pdfUrl={pdfPreviewUrl}
-                        title="Rendered Quantikz PDF preview"
-                      />
-                    </div>
-                  ) : (
-                    <p className="svg-preview-placeholder">
-                      {pdfPreviewState === "loading"
-                        ? "Rendering preview..."
-                        : pdfPreviewState === "error"
-                          ? pdfPreviewError ?? "Unable to render PDF preview."
-                          : "Generate or paste Quantikz code to preview the circuit."}
-                    </p>
-                  )}
-                </div>
+                {pdfPreviewState === "ready" && previewImageUrl ? (
+                  <div className="pdf-preview-stage">
+                    <img
+                      className="pdf-preview-frame"
+                      src={previewImageUrl}
+                      alt="Rendered Quantikz figure preview"
+                      title="Rendered Quantikz figure preview"
+                      draggable={true}
+                      onDragStart={handlePreviewDragStart}
+                    />
+                    <p className="pdf-preview-drag-hint">Drag the figure into another app or onto the desktop.</p>
+                  </div>
+                ) : (
+                  <p className="pdf-preview-placeholder">
+                    {pdfPreviewState === "loading"
+                      ? "Rendering figure preview..."
+                      : pdfPreviewState === "error"
+                        ? pdfPreviewError ?? "Unable to render the figure preview."
+                        : "Generate or paste Quantikz code to preview the rendered figure."}
+                  </p>
+                )}
               </div>
             </div>
             {state.exportIssues.length > 0 && (

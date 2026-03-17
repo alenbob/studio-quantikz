@@ -88,6 +88,6 @@ describe("renderQuantikzSvg", () => {
     );
 
     expect(result.success).toBe(false);
-    expect(result.statusCode).toBe(503);
+    expect(result.statusCode).toBe(501);
   });
 });

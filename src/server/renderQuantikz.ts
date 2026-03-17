@@ -227,33 +227,6 @@ async function readErrorMessage(response: Response, fallbackMessage: string): Pr
   }
 }
 
-async function requestRemoteRenderer(format: "svg" | "pdf", document: string): Promise<Response | RemoteRendererErrorResult> {
-  const endpoint = resolveRemoteRendererEndpoint(format);
-
-  if (!endpoint) {
-    return missingRemoteRendererResult();
-  }
-
-  try {
-    return await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        document,
-        format
-      })
-    });
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Unable to reach the full TeX renderer.",
-      statusCode: 503
-    };
-  }
-}
-
 async function requestTexlivePdf(document: string): Promise<Response | TexliveRendererErrorResult> {
   const endpoint = resolvePdfRendererEndpoint();
 
@@ -293,6 +266,33 @@ async function requestTexlivePdf(document: string): Promise<Response | TexliveRe
     return {
       success: false,
       error: error instanceof Error ? error.message : "Unable to reach the PDF renderer.",
+      statusCode: 503
+    };
+  }
+}
+
+async function requestRemoteRenderer(format: "svg" | "pdf", document: string): Promise<Response | RemoteRendererErrorResult> {
+  const endpoint = resolveRemoteRendererEndpoint(format);
+
+  if (!endpoint) {
+    return missingRemoteRendererResult();
+  }
+
+  try {
+    return await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        document,
+        format
+      })
+    });
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unable to reach the full TeX renderer.",
       statusCode: 503
     };
   }
@@ -343,6 +343,23 @@ async function parseRemotePdf(response: Response): Promise<RenderQuantikzPdfResu
   }
 }
 
+function hasGraphicPrimitives(svgMarkup: string): boolean {
+  const body = svgMarkup.includes("</defs>") ? svgMarkup.split("</defs>", 2)[1] : svgMarkup;
+  return /<(path|line|rect|circle|ellipse|polygon|polyline|text)\b/.test(body);
+}
+
+function validateSvgMarkup(svgMarkup: string): string {
+  if (!svgMarkup.includes("<svg")) {
+    throw new Error("Renderer did not return SVG markup.");
+  }
+
+  if (!hasGraphicPrimitives(svgMarkup)) {
+    throw new Error("Renderer returned SVG markup without drawing primitives.");
+  }
+
+  return svgMarkup;
+}
+
 async function parseRemoteSvg(response: Response): Promise<RenderQuantikzSvgResult> {
   if (!response.ok) {
     return {
@@ -390,23 +407,6 @@ async function parseRemoteSvg(response: Response): Promise<RenderQuantikzSvgResu
       statusCode: 502
     };
   }
-}
-
-function hasGraphicPrimitives(svgMarkup: string): boolean {
-  const body = svgMarkup.includes("</defs>") ? svgMarkup.split("</defs>", 2)[1] : svgMarkup;
-  return /<(path|line|rect|circle|ellipse|polygon|polyline|text)\b/.test(body);
-}
-
-function validateSvgMarkup(svgMarkup: string): string {
-  if (!svgMarkup.includes("<svg")) {
-    throw new Error("Renderer did not return SVG markup.");
-  }
-
-  if (!hasGraphicPrimitives(svgMarkup)) {
-    throw new Error("Renderer returned SVG markup without drawing primitives.");
-  }
-
-  return svgMarkup;
 }
 
 export async function renderQuantikzSvg(
