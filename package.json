@@ -13,11 +13,9 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@drgrice1/tikzjax": "^1.0.0-beta24",
     "@vercel/analytics": "^2.0.1",
     "@vercel/speed-insights": "^2.0.0",
     "katex": "^0.16.38",
-    "node-tikzjax": "^1.0.5",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

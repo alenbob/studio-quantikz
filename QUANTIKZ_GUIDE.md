@@ -2,22 +2,24 @@
 
 ## SVG preview backend
 
-The website SVG preview backend now uses a Vercel-safe pure Node/WASM TikZ renderer.
+The website SVG preview backend now uses a single remote full-TeX rendering path for both plain TikZ and Quantikz.
 
-Current limitation: `/api/render-svg` supports plain TikZ input, but it does not yet compile Quantikz source because the deployed WASM TeX engine does not support the modern `expl3`/`xparse` stack required by Quantikz 2. The editor preview therefore needs a browser-side fallback when Quantikz source is pasted directly into the textbox.
-
-This is deliberate: the project should not ship a fake circuit renderer, raster wrapper, or a local-only TeX compiler path that cannot run on Vercel.
+The left-hand code panel in the Quantikz output window posts directly to `/api/render-svg`, and that endpoint forwards a full LaTeX document to the configured renderer service. When the source contains a `quantikz` environment, the document must load the `quantikz2` TikZ library together with `braket`, `amsmath`, `amssymb`, and `amsfonts`.
 
 This guide is a practical introduction to drawing quantum circuits with Quantikz in LaTeX.
 
-For current TeX Live installations, load the modern release like this:
+For the remote full-TeX backend, load Quantikz like this:
 
 ```latex
 \usepackage{tikz}
 \usetikzlibrary{quantikz2}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsfonts}
+\usepackage{braket}
 ```
 
-You may still see older examples that use `\usepackage{quantikz}`. That is the legacy package. For new documents, prefer `quantikz2`.
+The renderer can still accept a complete document that already declares its own Quantikz setup, but the default app preamble now uses `\usetikzlibrary{quantikz2}` together with the AMS and `braket` packages so the same full-TeX source can be sent to the remote backend in local development and on Vercel.
 
 ## Minimal working example
 

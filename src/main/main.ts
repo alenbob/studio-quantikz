@@ -59,9 +59,10 @@ function buildStandaloneDocument(code: string): string {
     "\\documentclass[tikz,border=4pt]{standalone}",
     "\\usepackage{tikz}",
     "\\usetikzlibrary{quantikz2}",
-    "\\providecommand{\\ket}[1]{\\left|#1\\right\\rangle}",
-    "\\providecommand{\\bra}[1]{\\left\\langle#1\\right|}",
-    "\\providecommand{\\proj}[1]{\\left|#1\\right\\rangle\\left\\langle#1\\right|}",
+    "\\usepackage{amsmath}",
+    "\\usepackage{amssymb}",
+    "\\usepackage{amsfonts}",
+    "\\usepackage{braket}",
     "\\begin{document}",
     code,
     "\\end{document}"

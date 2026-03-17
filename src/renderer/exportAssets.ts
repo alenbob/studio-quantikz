@@ -1,6 +1,6 @@
 import { buildStandaloneQuantikzDocument } from "./document";
 
-export type DownloadFormat = "tex" | "svg" | "png" | "pdf";
+export type DownloadFormat = "tex" | "pdf";
 
 export interface ExportAssetSource {
   code: string;

@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import App from "../src/renderer/App";
 import { DEFAULT_CIRCUIT_LAYOUT, getCellCenterX, getGridHeight, getGridWidth, getRowY } from "../src/renderer/layout";
-import * as tikzJaxModule from "../src/renderer/useTikzJax";
+import * as renderedPdfModule from "../src/renderer/useRenderedPdf";
 
 function mockBoardRect(board: HTMLDivElement, steps = 5, qubits = 3): void {
   const width = getGridWidth(steps, DEFAULT_CIRCUIT_LAYOUT);
@@ -212,10 +212,10 @@ describe("App smoke tests", () => {
   });
 
   it("routes pasted quantikz in the export textbox into the preview path", async () => {
-    const useTikzJaxSpy = vi.spyOn(tikzJaxModule, "useTikzJax").mockImplementation((code, preamble) => ({
-      svg: code.includes(String.raw`\begin{quantikz}`)
-        ? '<svg xmlns="http://www.w3.org/2000/svg"><text>Quantikz circuit</text></svg>'
-        : "",
+    const useRenderedPdfSpy = vi.spyOn(renderedPdfModule, "useRenderedPdf").mockImplementation((code, preamble) => ({
+      pdfUrl: code.includes(String.raw`\begin{quantikz}`)
+        ? "blob:quantikz-preview"
+        : null,
       state: code.includes(String.raw`\begin{quantikz}`) ? "ready" : "idle",
       error: null
     }));
@@ -231,14 +231,14 @@ describe("App smoke tests", () => {
         }
       });
 
-      expect(useTikzJaxSpy).toHaveBeenLastCalledWith(
+      expect(useRenderedPdfSpy).toHaveBeenLastCalledWith(
         expect.stringContaining(String.raw`\begin{quantikz}`),
         expect.stringContaining(String.raw`\usetikzlibrary{quantikz2}`)
       );
-      expect(screen.getByRole("img", { name: /rendered quantikz preview/i })).toBeInTheDocument();
+      expect(screen.getByTitle(/rendered quantikz pdf preview/i)).toBeInTheDocument();
       expect(screen.queryByText(/generate or paste quantikz code/i)).not.toBeInTheDocument();
     } finally {
-      useTikzJaxSpy.mockRestore();
+      useRenderedPdfSpy.mockRestore();
     }
   });
 

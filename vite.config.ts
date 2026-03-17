@@ -70,7 +70,7 @@ export default defineConfig({
             const body = await readJsonBody(request);
             const result = await renderQuantikzPdf(body.code ?? "", body.preamble ?? "");
             if (!result.success || !result.pdf) {
-              sendJson(response, 400, {
+              sendJson(response, result.statusCode ?? 400, {
                 success: false,
                 error: result.error ?? "Unable to render PDF."
               });

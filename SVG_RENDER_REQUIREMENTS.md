@@ -4,11 +4,11 @@ This file records the required behavior for the website SVG generation path in t
 
 ## Core Requirements
 
-1. The SVG rendering path must use the same method locally and on Vercel. Never use a local TeX compiler for the website SVG API.
+1. The SVG rendering path must use the same method locally and on Vercel.
 2. The rendering method must run inside the deployable Node/Vercel environment.
-3. Local development must not rely on a separate local-only TeX flow if Vercel uses a different rendering path.
-4. The output must be either valid SVG markup for supported TikZ input or an explicit unsupported-input error.
-5. The response must never pretend Quantikz rendered successfully when the backend cannot actually compile it.
+3. Local development must not rely on a different rendering flow than the deployed app.
+4. The output must be valid SVG markup for supported TikZ and Quantikz input, or an explicit backend error.
+5. The response must never pretend rendering succeeded when compilation or PDF-to-SVG conversion failed.
 
 ## Deployment Parity
 
@@ -20,7 +20,8 @@ This file records the required behavior for the website SVG generation path in t
 
 1. The source of truth is TeX/TikZ input.
 2. The project must not replace TeX rendering with a hand-built semantic SVG approximation.
-3. The current Vercel-safe backend is pure Node/WASM and supports plain TikZ, not Quantikz.
+3. The current backend is a remote full-TeX renderer reached by `/api/render-svg` and `/api/render-pdf`.
+4. Quantikz documents must be sent as full LaTeX documents and must load the `quantikz` package when the source uses a `quantikz` environment.
 4. The final API response for supported preview/export requests must be valid SVG markup.
 
 ## Verification Requirements
@@ -33,7 +34,7 @@ The implementation is only acceptable if it is checked against both environments
 2. Confirm the response indicates success.
 3. Confirm the response contains SVG markup.
 4. Confirm the returned SVG corresponds to the diagram and is not blank.
-5. Send a Quantikz example and confirm the response is an explicit unsupported-input error.
+5. Send a Quantikz example and confirm the response also succeeds with SVG output.
 
 ### Vercel Check
 
@@ -41,14 +42,14 @@ The implementation is only acceptable if it is checked against both environments
 2. Confirm the response indicates success.
 3. Confirm the response contains SVG markup.
 4. Confirm the returned SVG corresponds to the same diagram and is not blank.
-5. Send the same Quantikz example and confirm the response is an explicit unsupported-input error.
+5. Send the same Quantikz example and confirm it also returns SVG output.
 
 ## Acceptance Criteria
 
 The SVG rendering work is complete only when all of the following are true:
 
 1. Local and Vercel use the same rendering method.
-2. The method never invokes a local TeX compiler.
-3. The endpoint returns SVG output for supported TikZ input.
-4. Unsupported Quantikz input fails explicitly instead of returning fake or empty output.
+2. The endpoint returns SVG output for supported TikZ input.
+3. The endpoint returns SVG output for supported Quantikz input.
+4. Failures surface as explicit compilation or conversion errors instead of fake or empty output.
 5. The same samples behave consistently in local and deployed environments.

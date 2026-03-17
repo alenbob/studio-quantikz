@@ -35,7 +35,7 @@ export default async function handler(request: any, response: any): Promise<void
     const result = await renderQuantikzPdf(code, preamble);
 
     if (!result.success || !result.pdf) {
-      response.status(400).json({
+      response.status(result.statusCode ?? 400).json({
         success: false,
         error: result.error ?? "Unable to render PDF."
       });

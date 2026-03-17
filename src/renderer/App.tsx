@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useRef, useState, type DragEvent, type FocusEvent, type JSX } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState, type FocusEvent, type JSX } from "react";
 import { buildClipboard, canPasteClipboardAt } from "./clipboard";
 import cmdIcon from "./assets/cmd.svg";
 import automaticIcon from "./assets/automatic.svg";
@@ -20,15 +20,13 @@ import {
 } from "./exportHistory";
 import {
   buildDownloadBlob,
-  copySvgToClipboard,
   downloadBlob,
   getDownloadFilename,
-  svgMarkupToPngBlob,
   type DownloadFormat,
   type ExportAssetSource
 } from "./exportAssets";
 import { importFromQuantikz } from "./importer";
-import { useTikzJax } from "./useTikzJax";
+import { useRenderedPdf } from "./useRenderedPdf";
 import { editorReducer, initialState, type EditorAction } from "./reducer";
 import { getWireLabelGroup, type WireLabelSide } from "./wireLabels";
 import type {
@@ -50,7 +48,7 @@ type ExportEditorTab = "code" | "preamble";
 type DownloadMenuTarget = "main" | `history:${string}` | null;
 
 const TOAST_DURATION_MS = 4000;
-const DOWNLOAD_FORMATS: DownloadFormat[] = ["tex", "svg", "png", "pdf"];
+const DOWNLOAD_FORMATS: DownloadFormat[] = ["tex", "pdf"];
 
 const TOOL_SHORTCUTS = TOOL_LABELS.filter((entry): entry is (typeof TOOL_LABELS)[number] & { shortcutKey: string } =>
   Boolean(entry.shortcutKey)
@@ -87,20 +85,20 @@ function formatLabelForDownload(format: DownloadFormat): string {
   return format.toUpperCase();
 }
 
-function SvgPreviewImage({
-  svgMarkup,
+function PdfPreviewFrame({
+  pdfUrl,
   className,
-  alt
+  title
 }: {
-  svgMarkup: string;
+  pdfUrl: string;
   className: string;
-  alt: string;
+  title: string;
 }): JSX.Element | null {
-  if (!svgMarkup.trim()) {
+  if (!pdfUrl) {
     return null;
   }
 
-  return <div className={className} role="img" aria-label={alt} dangerouslySetInnerHTML={{ __html: svgMarkup }} />;
+  return <iframe className={className} src={pdfUrl} title={title} />;
 }
 
 function DownloadMenu({
@@ -238,8 +236,6 @@ export default function App(): JSX.Element {
   const [pendingHistoryCapture, setPendingHistoryCapture] = useState(false);
   const [toastAnimationKey, setToastAnimationKey] = useState(0);
   const [selectedWireLabel, setSelectedWireLabel] = useState<{ row: number; side: WireLabelSide } | null>(null);
-  const [previewPngBlob, setPreviewPngBlob] = useState<Blob | null>(null);
-  const [previewPngUrl, setPreviewPngUrl] = useState<string | null>(null);
   const stateRef = useRef(state);
   const clipboardRef = useRef<CircuitClipboard | null>(null);
   const shortcutSheetOpenRef = useRef(isShortcutSheetOpen);
@@ -263,13 +259,13 @@ export default function App(): JSX.Element {
     () => splitStandaloneQuantikzSource(state.exportCode, state.exportPreamble),
     [state.exportCode, state.exportPreamble]
   );
-  const tikzJaxResult = useTikzJax(
+  const previewResult = useRenderedPdf(
     resolvedExportSource.code,
     resolvedExportSource.preamble
   );
-  const svgPreviewMarkup = tikzJaxResult.svg;
-  const svgPreviewState = tikzJaxResult.state;
-  const svgPreviewError = tikzJaxResult.error;
+  const pdfPreviewUrl = previewResult.pdfUrl;
+  const pdfPreviewState = previewResult.state;
+  const pdfPreviewError = previewResult.error;
 
   useEffect(() => {
     stateRef.current = state;
@@ -360,7 +356,7 @@ export default function App(): JSX.Element {
     return {
       code: resolvedExportSource.code,
       preamble: resolvedExportSource.preamble,
-      svg: svgPreviewMarkup
+      svg: ""
     };
   }
 
@@ -501,19 +497,10 @@ export default function App(): JSX.Element {
       return;
     }
 
-    if (svgPreviewState === "error") {
-      setPendingHistoryCapture(false);
-      return;
-    }
-
-    if (svgPreviewState !== "ready" || !svgPreviewMarkup) {
-      return;
-    }
-
     const nextHistoryEntries = pushExportHistoryEntry(loadExportHistory(), {
       code: resolvedExportSource.code,
       preamble: resolvedExportSource.preamble,
-      svg: svgPreviewMarkup
+      svg: ""
     });
 
     persistExportHistory(nextHistoryEntries);
@@ -523,61 +510,8 @@ export default function App(): JSX.Element {
     pendingHistoryCapture,
     resolvedExportSource.code,
     resolvedExportSource.preamble,
-    svgPreviewMarkup,
-    svgPreviewState
+    pdfPreviewState
   ]);
-
-  useEffect(() => {
-    let isActive = true;
-    let objectUrl: string | null = null;
-
-    if (svgPreviewState !== "ready" || !svgPreviewMarkup) {
-      setPreviewPngBlob(null);
-      setPreviewPngUrl((currentUrl) => {
-        if (currentUrl) {
-          URL.revokeObjectURL(currentUrl);
-        }
-        return null;
-      });
-      return;
-    }
-
-    void svgMarkupToPngBlob(svgPreviewMarkup)
-      .then((blob) => {
-        if (!isActive) {
-          return;
-        }
-
-        objectUrl = URL.createObjectURL(blob);
-        setPreviewPngBlob(blob);
-        setPreviewPngUrl((currentUrl) => {
-          if (currentUrl) {
-            URL.revokeObjectURL(currentUrl);
-          }
-          return objectUrl;
-        });
-      })
-      .catch(() => {
-        if (!isActive) {
-          return;
-        }
-
-        setPreviewPngBlob(null);
-        setPreviewPngUrl((currentUrl) => {
-          if (currentUrl) {
-            URL.revokeObjectURL(currentUrl);
-          }
-          return null;
-        });
-      });
-
-    return () => {
-      isActive = false;
-      if (objectUrl) {
-        URL.revokeObjectURL(objectUrl);
-      }
-    };
-  }, [svgPreviewMarkup, svgPreviewState]);
 
   async function handleDownload(
     format: DownloadFormat,
@@ -586,11 +520,6 @@ export default function App(): JSX.Element {
   ): Promise<void> {
     if (!source.code.trim()) {
       dispatch({ type: "setMessage", message: "Add Quantikz code before downloading an export." });
-      return;
-    }
-
-    if ((format === "svg" || format === "png") && !source.svg.trim()) {
-      dispatch({ type: "setMessage", message: "Render the Quantikz preview before downloading this format." });
       return;
     }
 
@@ -606,18 +535,6 @@ export default function App(): JSX.Element {
       dispatch({
         type: "setMessage",
         message: error instanceof Error ? error.message : "Unable to download the selected export."
-      });
-    }
-  }
-
-  async function handleCopySvg(): Promise<void> {
-    try {
-      await copySvgToClipboard(svgPreviewMarkup);
-      dispatch({ type: "setMessage", message: "Copied the Quantikz SVG to the clipboard." });
-    } catch (error) {
-      dispatch({
-        type: "setMessage",
-        message: error instanceof Error ? error.message : "Unable to copy the SVG."
       });
     }
   }
@@ -665,28 +582,6 @@ export default function App(): JSX.Element {
   function handleClearHistory(): void {
     persistExportHistory([]);
     setExportHistoryEntries([]);
-  }
-
-  function handlePreviewDragStart(event: DragEvent<HTMLDivElement>): void {
-    if (!previewPngBlob || !previewPngUrl) {
-      event.preventDefault();
-      return;
-    }
-
-    const fileName = getDownloadFilename("quantikz-circuit", "png");
-    const file = new File([previewPngBlob], fileName, { type: "image/png" });
-
-    if (event.dataTransfer.items) {
-      try {
-        event.dataTransfer.items.add(file);
-      } catch {
-        // Chromium still supports DownloadURL as a fallback for dragging files out.
-      }
-    }
-
-    event.dataTransfer.effectAllowed = "copy";
-    event.dataTransfer.setData("text/plain", fileName);
-    event.dataTransfer.setData("DownloadURL", `image/png:${fileName}:${previewPngUrl}`);
   }
 
   function selectNumericField(event: FocusEvent<HTMLInputElement>): void {
@@ -1039,11 +934,7 @@ export default function App(): JSX.Element {
                         onClick={() => handleLoadHistoryEntry(entry)}
                       >
                         <div className="history-card-preview">
-                          <SvgPreviewImage
-                            className="history-card-preview-image"
-                            svgMarkup={entry.svg}
-                            alt="Quantikz history preview"
-                          />
+                          <div className="history-card-preview-image" aria-hidden="true" />
                         </div>
                         <div className="history-card-copy">
                           <span className="export-field-label">{formatHistoryTimestamp(entry.createdAt)}</span>
@@ -1071,7 +962,7 @@ export default function App(): JSX.Element {
               </>
             ) : (
               <p className="history-sheet-empty">
-                No cached Quantikz exports yet. Convert a circuit and a rendered SVG preview will be stored here.
+                No cached Quantikz exports yet. Convert a circuit and its source will be stored here.
               </p>
             )}
           </section>
@@ -1249,14 +1140,6 @@ export default function App(): JSX.Element {
               <div className="export-pane svg-preview-panel" aria-live="polite">
                 <div className="export-pane-header export-pane-header-preview">
                   <div className="svg-preview-actions">
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      onClick={() => void handleCopySvg()}
-                      disabled={!svgPreviewMarkup}
-                    >
-                      Copy SVG
-                    </button>
                     <DownloadMenu
                       isOpen={openDownloadMenuTarget === "main"}
                       onToggle={() => setOpenDownloadMenuTarget((current) => current === "main" ? null : "main")}
@@ -1264,27 +1147,21 @@ export default function App(): JSX.Element {
                     />
                   </div>
                 </div>
-                <div
-                  className={`svg-preview-surface ${svgPreviewState === "ready" ? "is-draggable" : ""}`}
-                  draggable={svgPreviewState === "ready"}
-                  onDragStart={handlePreviewDragStart}
-                  title={svgPreviewState === "ready" ? "Drag out as PNG" : undefined}
-                >
-                  {svgPreviewState === "ready" ? (
+                <div className="svg-preview-surface">
+                  {pdfPreviewState === "ready" && pdfPreviewUrl ? (
                     <div className="svg-preview-stage">
-                      <SvgPreviewImage
+                      <PdfPreviewFrame
                         className="svg-preview-image"
-                        svgMarkup={svgPreviewMarkup}
-                        alt="Rendered Quantikz preview"
+                        pdfUrl={pdfPreviewUrl}
+                        title="Rendered Quantikz PDF preview"
                       />
-                      <p className="svg-preview-drag-hint">Drag out as PNG</p>
                     </div>
                   ) : (
                     <p className="svg-preview-placeholder">
-                      {svgPreviewState === "loading"
+                      {pdfPreviewState === "loading"
                         ? "Rendering preview..."
-                        : svgPreviewState === "error"
-                          ? svgPreviewError ?? "Unable to render SVG preview."
+                        : pdfPreviewState === "error"
+                          ? pdfPreviewError ?? "Unable to render PDF preview."
                           : "Generate or paste Quantikz code to preview the circuit."}
                     </p>
                   )}
