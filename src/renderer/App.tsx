@@ -64,9 +64,12 @@ const TOOL_SHORTCUTS_BY_KEY = new Map<string, ToolType>(
 const GENERAL_SHORTCUTS: Array<{ key: string; description: string }> = [
   { key: "Cmd/Ctrl + A", description: "Select every drawable item in the circuit." },
   { key: "Cmd/Ctrl + C", description: "Copy the current selection." },
+  { key: "Cmd/Ctrl + S", description: "Convert the current visual circuit to Quantikz." },
+  { key: "Cmd/Ctrl + Enter", description: "Convert the current visual circuit to Quantikz." },
   { key: "Cmd/Ctrl + V", description: "Enter paste mode for the copied selection." },
   { key: "Cmd/Ctrl + Z", description: "Undo the last circuit change." },
   { key: "Cmd/Ctrl + Shift + Z", description: "Redo the last undone change." },
+  { key: "Enter", description: "Convert the current visual circuit to Quantikz when focus is not in a field." },
   { key: "H", description: "Open the cached Quantikz export history." },
   { key: "Delete / Backspace", description: "Delete the current selection or wire label." },
   { key: "Escape", description: "Close the open sheet, leave paste mode, and return to select." }
@@ -385,11 +388,16 @@ export default function App(): JSX.Element {
       );
     }
 
+    function isActionElementTarget(target: EventTarget | null): boolean {
+      return target instanceof Element && target.closest("button, a, summary, [role='button']") !== null;
+    }
+
     function onKeyDown(event: KeyboardEvent): void {
       const hasItemSelection = stateRef.current.selectedItemIds.length > 0;
       const selectedLabel = selectedWireLabelRef.current;
       const hasSelection = hasItemSelection || selectedLabel !== null;
       const isFormElement = isEditableTarget(event.target);
+      const isActionElement = isActionElementTarget(event.target);
       const normalizedKey = event.key.toLowerCase();
 
       if (shortcutSheetOpenRef.current || historySheetOpenRef.current) {
@@ -429,6 +437,12 @@ export default function App(): JSX.Element {
         event.preventDefault();
         dispatch({ type: event.shiftKey ? "redo" : "undo" });
         setPasteMode(false);
+        return;
+      }
+
+      if ((event.metaKey || event.ctrlKey) && !event.altKey && (normalizedKey === "s" || event.key === "Enter")) {
+        event.preventDefault();
+        handleConvertToQuantikz();
         return;
       }
 
@@ -491,6 +505,12 @@ export default function App(): JSX.Element {
           dispatch({ type: "setTool", tool: shortcutTool });
           return;
         }
+      }
+
+      if (event.key === "Enter" && !event.metaKey && !event.ctrlKey && !event.altKey && !isFormElement && !isActionElement) {
+        event.preventDefault();
+        handleConvertToQuantikz();
+        return;
       }
 
       if (event.key === "Escape") {
@@ -953,7 +973,7 @@ export default function App(): JSX.Element {
       {isShortcutSheetOpen && (
         <div className="shortcut-sheet-backdrop" onClick={() => setShortcutSheetOpen(false)}>
           <section
-            className="shortcut-sheet"
+            className="shortcut-sheet history-sheet"
             role="dialog"
             aria-modal="true"
             aria-labelledby="shortcut-sheet-title"

@@ -735,6 +735,54 @@ describe("App smoke tests", () => {
     expect(screen.getByRole("button", { name: /^select$/i })).toHaveAttribute("aria-pressed", "true");
   });
 
+  it("converts the current circuit with Ctrl/Cmd+S", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: /^gate$/i }));
+    await user.click(screen.getByTestId("grid-cell-0-0"));
+
+    const output = screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement;
+    fireEvent.keyDown(output, { key: "s", ctrlKey: true });
+
+    expect(output.value).toContain("\\gate{U}");
+  });
+
+  it("converts the current circuit with Ctrl/Cmd+Enter", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: /^gate$/i }));
+    await user.click(screen.getByTestId("grid-cell-0-0"));
+
+    const output = screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement;
+    fireEvent.keyDown(output, { key: "Enter", ctrlKey: true });
+
+    expect(output.value).toContain("\\gate{U}");
+  });
+
+  it("converts the current circuit with Enter outside form fields", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: /^gate$/i }));
+    await user.click(screen.getByTestId("grid-cell-0-0"));
+
+    const output = screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement;
+    fireEvent.keyDown(window, { key: "Enter" });
+
+    expect(output.value).toContain("\\gate{U}");
+  });
+
+  it("does not hijack Enter while editing the export textarea", () => {
+    render(<App />);
+
+    const output = screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement;
+    fireEvent.keyDown(output, { key: "Enter" });
+
+    expect(output.value).toBe("");
+  });
+
   it("shows the shortcuts sheet from the Cmd launcher and closes it with Escape", () => {
     render(<App />);
 
