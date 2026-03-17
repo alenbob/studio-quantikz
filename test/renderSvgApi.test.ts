@@ -147,6 +147,6 @@ describe("render-svg api", () => {
 
     const payload = responseState.payload as { error?: string; svg?: string };
     expect(payload.svg).toBeUndefined();
-    expect(payload.error).toContain("plain TikZ only");
+    expect(payload.error).toContain("expl3 primitives");
   });
 });

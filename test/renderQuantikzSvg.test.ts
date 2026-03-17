@@ -63,6 +63,6 @@ describe("renderQuantikzSvg", () => {
     expect(result.success).toBe(false);
     expect(result.svg).toBeUndefined();
     expect(result.statusCode).toBe(422);
-    expect(result.error).toContain("plain TikZ only");
+    expect(result.error).toContain("expl3 primitives");
   });
 });

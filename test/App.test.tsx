@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import App from "../src/renderer/App";
 import { DEFAULT_CIRCUIT_LAYOUT, getCellCenterX, getGridHeight, getGridWidth, getRowY } from "../src/renderer/layout";
+import * as tikzJaxModule from "../src/renderer/useTikzJax";
 
 function mockBoardRect(board: HTMLDivElement, steps = 5, qubits = 3): void {
   const width = getGridWidth(steps, DEFAULT_CIRCUIT_LAYOUT);
@@ -208,6 +209,37 @@ describe("App smoke tests", () => {
     expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).not.toContain(
       String.raw`\begin{document}`
     );
+  });
+
+  it("routes pasted quantikz in the export textbox into the preview path", async () => {
+    const useTikzJaxSpy = vi.spyOn(tikzJaxModule, "useTikzJax").mockImplementation((code, preamble) => ({
+      svg: code.includes(String.raw`\begin{quantikz}`)
+        ? '<svg xmlns="http://www.w3.org/2000/svg"><text>Quantikz circuit</text></svg>'
+        : "",
+      state: code.includes(String.raw`\begin{quantikz}`) ? "ready" : "idle",
+      error: null
+    }));
+
+    try {
+      render(<App />);
+
+      fireEvent.change(screen.getByLabelText(/quantikz output/i), {
+        target: {
+          value: String.raw`\begin{quantikz}
+\lstick{$\ket{0}$} & \gate{H}
+\end{quantikz}`
+        }
+      });
+
+      expect(useTikzJaxSpy).toHaveBeenLastCalledWith(
+        expect.stringContaining(String.raw`\begin{quantikz}`),
+        expect.stringContaining(String.raw`\usetikzlibrary{quantikz2}`)
+      );
+      expect(screen.getByRole("img", { name: /rendered quantikz preview/i })).toBeInTheDocument();
+      expect(screen.queryByText(/generate or paste quantikz code/i)).not.toBeInTheDocument();
+    } finally {
+      useTikzJaxSpy.mockRestore();
+    }
   });
 
   it("pastes a copied selection back into the circuit", async () => {

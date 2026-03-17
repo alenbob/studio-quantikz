@@ -12,7 +12,7 @@ const DEFAULT_WASM_PREAMBLE = [
   "\\providecommand{\\proj}[1]{\\left|#1\\right\\rangle\\left\\langle#1\\right|}"
 ].join("\n");
 
-const UNSUPPORTED_QUANTIKZ_MESSAGE = "Quantikz SVG rendering is not available in the Vercel/WASM renderer yet. This endpoint currently supports plain TikZ only.";
+const UNSUPPORTED_QUANTIKZ_MESSAGE = "Quantikz SVG rendering is not available in the server WASM renderer because node-tikzjax is missing the expl3 primitives required by Quantikz, even when the Quantikz package files are loaded.";
 const NODE_TIKZJAX_FONT_CSS_URL = "/node-tikzjax/fonts.css";
 
 type TikzJaxRenderOptions = {

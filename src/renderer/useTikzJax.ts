@@ -21,6 +21,10 @@ const BROWSER_RENDER_TIMEOUT_MS = 15000;
 let tikzJaxScriptPromise: Promise<void> | null = null;
 let browserRenderQueue: Promise<void> = Promise.resolve();
 
+export function shouldPreferBrowserTikzJax(code: string, _preamble: string): boolean {
+  return /\\begin\{quantikz\}|\\end\{quantikz\}|\\(lstick|rstick|gate|phase|ctrl|octrl|control|ocontrol|targX?|meter|qw|qwbundle|swap|slice|gategroup|setwiretype|wireoverride)\b/.test(code);
+}
+
 function createAbortError(): Error {
   if (typeof DOMException !== "undefined") {
     return new DOMException("The operation was aborted.", "AbortError");
@@ -221,14 +225,18 @@ export function useTikzJax(code: string, preamble: string): TikzJaxResult {
     abortRef.current = controller;
     setState("loading");
     setError(null);
-    void renderWithApi(code, preamble, controller.signal)
-      .catch(async (apiError: unknown) => {
-        if (controller.signal.aborted) {
-          throw apiError;
-        }
+    const renderPromise = shouldPreferBrowserTikzJax(code, preamble)
+      ? renderWithBrowserTikzJax(code, preamble, controller.signal)
+      : renderWithApi(code, preamble, controller.signal)
+        .catch(async (apiError: unknown) => {
+          if (controller.signal.aborted) {
+            throw apiError;
+          }
 
-        return renderWithBrowserTikzJax(code, preamble, controller.signal);
-      })
+          return renderWithBrowserTikzJax(code, preamble, controller.signal);
+        });
+
+    void renderPromise
       .then((renderedSvg) => {
         setSvg(renderedSvg);
         setError(null);
