@@ -595,6 +595,71 @@ function withItems(state: EditorState, items: CircuitItem[], selectedItemIds: st
   return nextState;
 }
 
+function prioritizeHorizontalSegments(items: CircuitItem[], prioritizedItemIds: Iterable<string>): CircuitItem[] {
+  const prioritizedIds = new Set(prioritizedItemIds);
+  if (prioritizedIds.size === 0) {
+    return items;
+  }
+
+  const leadingItems: CircuitItem[] = [];
+  const prioritizedSegments: CircuitItem[] = [];
+
+  for (const item of items) {
+    if (item.type === "horizontalSegment" && prioritizedIds.has(item.id)) {
+      prioritizedSegments.push(item);
+      continue;
+    }
+
+    leadingItems.push(item);
+  }
+
+  return [...leadingItems, ...prioritizedSegments];
+}
+
+function materializeVacatedHorizontalSources(
+  previousItems: CircuitItem[],
+  nextItems: CircuitItem[],
+  movedHorizontalSegments: HorizontalSegmentItem[]
+): CircuitItem[] {
+  if (movedHorizontalSegments.length === 0) {
+    return nextItems;
+  }
+
+  const movedIds = new Set(movedHorizontalSegments.map((item) => item.id));
+  const previousById = new Map(
+    previousItems
+      .filter((item): item is HorizontalSegmentItem => item.type === "horizontalSegment" && movedIds.has(item.id))
+      .map((item) => [item.id, item])
+  );
+  const destinationKeys = new Set(movedHorizontalSegments.map((item) => wireKey(item.point.row, item.point.col)));
+  const nextKeys = new Set(
+    nextItems
+      .filter((item): item is HorizontalSegmentItem => item.type === "horizontalSegment")
+      .map((item) => wireKey(item.point.row, item.point.col))
+  );
+  const vacatedSegments: HorizontalSegmentItem[] = [];
+
+  for (const movedItem of movedHorizontalSegments) {
+    const previousItem = previousById.get(movedItem.id);
+    if (!previousItem) {
+      continue;
+    }
+
+    const sourceKey = wireKey(previousItem.point.row, previousItem.point.col);
+    if (destinationKeys.has(sourceKey) || nextKeys.has(sourceKey)) {
+      continue;
+    }
+
+    nextKeys.add(sourceKey);
+    vacatedSegments.push({
+      ...buildHorizontalSegment(previousItem.point.row, previousItem.point.col, "absent", previousItem.wireType),
+      color: null
+    });
+  }
+
+  return vacatedSegments.length > 0 ? [...nextItems, ...vacatedSegments] : nextItems;
+}
+
 function withOverlapMessage(state: EditorState, message = "Cannot place objects on top of each other."): EditorState {
   return {
     ...state,
@@ -935,8 +1000,15 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
         return withOverlapMessage(state);
       }
 
-      const items = state.items.map((item) =>
-        item.id === action.itemId ? nextItem : item
+      const items = prioritizeHorizontalSegments(
+        materializeVacatedHorizontalSources(
+          state.items,
+          state.items.map((item) =>
+            item.id === action.itemId ? nextItem : item
+          ),
+          nextItem.type === "horizontalSegment" ? [nextItem] : []
+        ),
+        nextItem.type === "horizontalSegment" ? [action.itemId] : []
       );
 
       return withItems(
@@ -978,6 +1050,17 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
         nextSteps,
         state.autoWireNewGrid
       );
+      const prioritizedItems = prioritizeHorizontalSegments(
+        materializeVacatedHorizontalSources(
+          state.items,
+          grownItems,
+          projection.movedItems
+            .filter((item): item is HorizontalSegmentItem => item.type === "horizontalSegment")
+        ),
+        projection.movedItems
+          .filter((item): item is HorizontalSegmentItem => item.type === "horizontalSegment")
+          .map((item) => item.id)
+      );
 
       return withItems(
         {
@@ -988,7 +1071,7 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
           wireLabels: resizeWireLabels(state.wireLabels, nextQubits),
           uiMessage: null
         },
-        grownItems,
+        prioritizedItems,
         state.selectedItemIds.filter((itemId) => grownItems.some((item) => item.id === itemId))
       );
     }

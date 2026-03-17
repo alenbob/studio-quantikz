@@ -181,6 +181,54 @@ describe("editorReducer selection workflows", () => {
     expect(next.items).toContainEqual({ id: "dot-1", type: "controlDot", point: { row: 2, col: 3 } });
   });
 
+  it("moves a selected horizontal segment to its new slot", () => {
+    const state = {
+      ...initialState,
+      horizontalSegmentsUnlocked: true,
+      selectedItemIds: ["horizontalSegment-2"]
+    };
+
+    const next = editorReducer(state, {
+      type: "moveSelection",
+      anchorItemId: "horizontalSegment-2",
+      placement: { kind: "segment", row: 1, col: 3 }
+    });
+
+    expect(next.items.find((item) => item.id === "horizontalSegment-2")).toMatchObject({
+      type: "horizontalSegment",
+      point: { row: 1, col: 3 }
+    });
+    expect(next.items).toContainEqual(expect.objectContaining({
+      type: "horizontalSegment",
+      point: { row: 0, col: 1 },
+      mode: "absent"
+    }));
+  });
+
+  it("moves a horizontal segment with moveItem without losing it to normalization", () => {
+    const next = editorReducer(
+      {
+        ...initialState,
+        horizontalSegmentsUnlocked: true
+      },
+      {
+        type: "moveItem",
+        itemId: "horizontalSegment-2",
+        placement: { kind: "segment", row: 1, col: 4 }
+      }
+    );
+
+    expect(next.items.find((item) => item.id === "horizontalSegment-2")).toMatchObject({
+      type: "horizontalSegment",
+      point: { row: 1, col: 4 }
+    });
+    expect(next.items).toContainEqual(expect.objectContaining({
+      type: "horizontalSegment",
+      point: { row: 0, col: 1 },
+      mode: "absent"
+    }));
+  });
+
   it("grows the grid when a dragged selection moves below or to the right", () => {
     const state = {
       ...initialState,

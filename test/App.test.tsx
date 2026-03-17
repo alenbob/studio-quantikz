@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import App from "../src/renderer/App";
-import { DEFAULT_CIRCUIT_LAYOUT, getCellCenterX, getGridHeight, getGridWidth, getRowY } from "../src/renderer/layout";
+import { DEFAULT_CIRCUIT_LAYOUT, getCellCenterX, getGridHeight, getGridWidth, getIncomingSegmentRange, getRowY } from "../src/renderer/layout";
 import * as renderedPdfModule from "../src/renderer/useRenderedPdf";
 
 vi.mock("../src/renderer/pdfRaster", () => ({
@@ -575,6 +575,86 @@ describe("App smoke tests", () => {
 
     expect(screen.queryByLabelText(/segment mode/i)).toBeNull();
     expect(screen.queryByLabelText(/horizontal wire style/i)).toBeNull();
+  });
+
+  it("drags a selected horizontal segment from the wide slot hit area", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+    const board = container.querySelector(".workspace-board") as HTMLDivElement;
+    mockBoardRect(board);
+
+    await user.click(screen.getByRole("button", { name: /unlock wires/i }));
+    await user.click(screen.getByRole("button", { name: /^select$/i }));
+    await user.click(screen.getByTestId("segment-slot-0-1"));
+
+    const [destinationX1, destinationX2] = getIncomingSegmentRange(3, 5, DEFAULT_CIRCUIT_LAYOUT);
+
+    await user.pointer([
+      {
+        target: screen.getByTestId("segment-slot-0-1"),
+        keys: "[MouseLeft>]",
+        coords: {
+          x: getCellCenterX(1, DEFAULT_CIRCUIT_LAYOUT) - 18,
+          y: getRowY(0, DEFAULT_CIRCUIT_LAYOUT)
+        }
+      },
+      {
+        target: board,
+        coords: {
+          x: (destinationX1 + destinationX2) / 2,
+          y: getRowY(1, DEFAULT_CIRCUIT_LAYOUT)
+        }
+      },
+      { keys: "[/MouseLeft]" }
+    ]);
+
+    await waitFor(() => {
+      const outline = container.querySelector(".item-outline-selected") as SVGRectElement;
+      expect(outline).toBeTruthy();
+      expect(Number(outline.getAttribute("x"))).toBeCloseTo(destinationX1, 5);
+      expect(Number(outline.getAttribute("y"))).toBeCloseTo(getRowY(1, DEFAULT_CIRCUIT_LAYOUT) - 10, 5);
+    });
+  });
+
+  it("starts dragging an unlocked horizontal segment on the first click-drag gesture", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+    const board = container.querySelector(".workspace-board") as HTMLDivElement;
+    mockBoardRect(board);
+
+    await user.click(screen.getByRole("button", { name: /unlock wires/i }));
+    await user.click(screen.getByRole("button", { name: /^select$/i }));
+
+    const [destinationX1, destinationX2] = getIncomingSegmentRange(4, 5, DEFAULT_CIRCUIT_LAYOUT);
+
+    await user.pointer([
+      {
+        target: screen.getByTestId("segment-slot-0-1"),
+        keys: "[MouseLeft>]",
+        coords: {
+          x: getCellCenterX(1, DEFAULT_CIRCUIT_LAYOUT) - 18,
+          y: getRowY(0, DEFAULT_CIRCUIT_LAYOUT)
+        }
+      },
+      {
+        target: board,
+        coords: {
+          x: (destinationX1 + destinationX2) / 2,
+          y: getRowY(2, DEFAULT_CIRCUIT_LAYOUT)
+        }
+      },
+      { keys: "[/MouseLeft]" }
+    ]);
+
+    await waitFor(() => {
+      const outline = container.querySelector(".item-outline-selected") as SVGRectElement;
+      expect(outline).toBeTruthy();
+      expect(Number(outline.getAttribute("x"))).toBeCloseTo(destinationX1, 5);
+      expect(Number(outline.getAttribute("y"))).toBeCloseTo(getRowY(2, DEFAULT_CIRCUIT_LAYOUT) - 10, 5);
+    });
+
+    await user.click(screen.getByRole("button", { name: /convert to quantikz/i }));
+    expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain("\\wireoverride{n}");
   });
 
   it("starts marquee selection from a locked horizontal wire hit area", async () => {

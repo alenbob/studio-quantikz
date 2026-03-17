@@ -1,2 +1,13 @@
 node_modules
 .vercel
+.DS_Store
+dist/
+dist-electron/
+.latex-build/
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.synctex.gz
+quantikz_example.pdf
+diagram.svg

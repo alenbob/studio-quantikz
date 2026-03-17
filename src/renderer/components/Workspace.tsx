@@ -1464,6 +1464,21 @@ export function Workspace({
     }
   }
 
+  function startItemDrag(itemId: string, clientX: number, clientY: number): void {
+    const item = state.items.find((candidate) => candidate.id === itemId);
+    if (!item) {
+      return;
+    }
+
+    dragPointerRef.current = { clientX, clientY };
+    dragGrowRef.current = { lastRowGrowAt: 0, lastColGrowAt: 0 };
+    setDragState({
+      anchorItemId: item.id,
+      constrainVertical: selectionHasExternalVerticalLinks(state.items, state.selectedItemIds, item.id)
+    });
+    updateHoverFromPointer(clientX, clientY, item.type);
+  }
+
   function getClampedContentPoint(clientX: number, clientY: number): ContentPoint | null {
     const board = boardRef.current;
     if (!board) {
@@ -1745,16 +1760,13 @@ export function Workspace({
 
           if (!alreadySelected) {
             onSelectionChange([item.id]);
+            if (item.type === "horizontalSegment") {
+              startItemDrag(item.id, event.clientX, event.clientY);
+            }
             return;
           }
 
-          dragPointerRef.current = { clientX: event.clientX, clientY: event.clientY };
-          dragGrowRef.current = { lastRowGrowAt: 0, lastColGrowAt: 0 };
-          setDragState({
-            anchorItemId: item.id,
-            constrainVertical: selectionHasExternalVerticalLinks(state.items, state.selectedItemIds, item.id)
-          });
-          updateHoverFromPointer(event.clientX, event.clientY, item.type);
+          startItemDrag(item.id, event.clientX, event.clientY);
         }}
       >
         {selected && !hasMultiSelection && renderItemOutline(item, "selected", state.steps, state.qubits, layout, columnMetrics)}
@@ -2432,14 +2444,36 @@ export function Workspace({
                     state.horizontalSegmentsUnlocked &&
                     state.wireMask[maskKey] !== "absent" &&
                     !meterSuppressedKeys.has(maskKey);
+                  const segmentItem = state.items.find(
+                    (item): item is HorizontalSegmentItem =>
+                      item.type === "horizontalSegment" &&
+                      item.point.row === row &&
+                      item.point.col === col &&
+                      isVisibleHorizontalSegment(item)
+                  ) ?? null;
 
-                  if (!segmentSelectable) {
+                  if (!segmentSelectable || !segmentItem) {
                     return;
                   }
 
                   event.preventDefault();
                   event.stopPropagation();
-                  onSelectHorizontalSegment(row, col, event.shiftKey || event.metaKey || event.ctrlKey);
+
+                  const additive = event.shiftKey || event.metaKey || event.ctrlKey;
+                  const alreadySelected = selectionSet.has(segmentItem.id);
+
+                  if (additive) {
+                    onSelectHorizontalSegment(row, col, additive);
+                    return;
+                  }
+
+                  if (!alreadySelected) {
+                    onSelectionChange([segmentItem.id]);
+                    startItemDrag(segmentItem.id, event.clientX, event.clientY);
+                    return;
+                  }
+
+                  startItemDrag(segmentItem.id, event.clientX, event.clientY);
                 }}
                 />
               );
