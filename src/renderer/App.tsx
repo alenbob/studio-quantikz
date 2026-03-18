@@ -1151,6 +1151,12 @@ export default function App(): JSX.Element {
             onHorizontalWireTypeChange={(itemId, wireType) =>
               dispatch({ type: "updateHorizontalWireType", itemId, wireType })
             }
+            onHorizontalBundledChange={(itemId, bundled) =>
+              dispatch({ type: "updateHorizontalBundled", itemId, bundled })
+            }
+            onHorizontalBundleLabelChange={(itemId, bundleLabel) =>
+              dispatch({ type: "updateHorizontalBundleLabel", itemId, bundleLabel })
+            }
             onItemColorChange={(itemId, color) => dispatch({ type: "updateItemColor", itemId, color })}
             onSelectedItemsColorChange={handleSelectedItemsColorChange}
             onSelectedGateLabelChange={handleSelectedGateLabelChange}

@@ -80,7 +80,9 @@ export function buildClipboard(items: CircuitItem[]): CircuitClipboard | null {
           ...base,
           type: "horizontalSegment",
           mode: item.mode,
-          wireType: item.wireType
+          wireType: item.wireType,
+          bundled: item.bundled ?? false,
+          bundleLabel: item.bundleLabel
         };
       case "controlDot":
         return {
@@ -171,6 +173,8 @@ export function instantiateClipboardItems(
           point,
           mode: item.mode,
           wireType: item.wireType,
+          bundled: item.bundled ?? false,
+          bundleLabel: item.bundleLabel,
           color: item.color ?? null
         };
       case "controlDot":

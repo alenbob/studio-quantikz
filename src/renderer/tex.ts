@@ -128,6 +128,16 @@ function renderKatexHtml(expression: string): string | null {
   }
 }
 
+export function renderMathExpressionHtml(expression: string): string | null {
+  const normalized = normalizeLabel(expression);
+
+  if (!normalized) {
+    return null;
+  }
+
+  return renderKatexHtml(stripMathDelimiters(normalized));
+}
+
 export function stripMathDelimiters(label: string): string {
   const normalized = normalizeLabel(label);
 

@@ -24,6 +24,10 @@ function gateLikeSpanCols(item: CircuitItem): number {
   return item.type === "gate" ? item.span.cols : 1;
 }
 
+function effectiveHorizontalMode(item: HorizontalSegmentItem): "present" | "absent" {
+  return item.autoSuppressed === true ? "absent" : item.mode;
+}
+
 export function validateCircuit(state: EditorState): ExportIssue[] {
   const issues: ExportIssue[] = [];
   const anchors = new Map<string, CircuitItem[]>();
@@ -199,12 +203,27 @@ export function validateCircuit(state: EditorState): ExportIssue[] {
     }
   }
 
+  const horizontalModesByKey = new Map<string, Set<"present" | "absent">>();
+  const horizontalIdsByKey = new Map<string, string[]>();
+
   for (const horizontal of horizontals) {
-    const maskKey = `${horizontal.point.row}:${horizontal.point.col}`;
-    const existingValue = state.wireMask[maskKey];
-    if (existingValue && existingValue !== horizontal.mode) {
-      issues.push(issue(`wiremask-${horizontal.id}`, "Horizontal wire overrides disagree at the same segment.", "warning"));
+    const key = cellKey(horizontal.point.row, horizontal.point.col);
+    const modes = horizontalModesByKey.get(key) ?? new Set<"present" | "absent">();
+    modes.add(effectiveHorizontalMode(horizontal));
+    horizontalModesByKey.set(key, modes);
+
+    const ids = horizontalIdsByKey.get(key) ?? [];
+    ids.push(horizontal.id);
+    horizontalIdsByKey.set(key, ids);
+  }
+
+  for (const [key, modes] of horizontalModesByKey.entries()) {
+    if (modes.size <= 1) {
+      continue;
     }
+
+    const ids = horizontalIdsByKey.get(key) ?? [];
+    issues.push(issue(`wiremask-${ids.join("-") || key}`, "Horizontal wire overrides disagree at the same segment.", "warning"));
   }
 
   for (const [rowIndex, labels] of state.wireLabels.entries()) {

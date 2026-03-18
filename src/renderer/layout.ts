@@ -1,5 +1,5 @@
-import type { CircuitItem, CircuitLayout } from "./types.js";
-import { getLabelMeasurementText, normalizeGateLabel, renderGateLabelHtml } from "./tex.js";
+import type { CircuitItem, CircuitLayout, HorizontalSegmentItem } from "./types.js";
+import { getLabelMeasurementText, normalizeGateLabel, normalizeLabel, renderGateLabelHtml, renderMathExpressionHtml } from "./tex.js";
 
 export const DEFAULT_COLUMN_SEP_CM = 0.7;
 export const DEFAULT_ROW_SEP_CM = 0.9;
@@ -19,6 +19,7 @@ export const GRID_BOTTOM_PADDING = 44;
 const BASE_COLUMN_PADDING = BASE_COLUMN_WIDTH - GATE_MIN_WIDTH;
 const CONNECTOR_CONTENT_WIDTH = 28;
 const MEASUREMENT_ROOT_ID = "quantikzz-gate-measure-root";
+const BUNDLE_LABEL_HORIZONTAL_PADDING = 12;
 
 interface GateLabelMeasurement {
   width: number;
@@ -96,6 +97,37 @@ export function getColumnMetrics(
 
   const padding = getColumnPadding(layout);
   const widths = contentWidths.map((contentWidth) => Math.max(contentWidth + padding, BASE_COLUMN_WIDTH * 0.7));
+
+  for (const item of items) {
+    if (item.type !== "horizontalSegment" || item.bundled !== true || !normalizeLabel(item.bundleLabel ?? "")) {
+      continue;
+    }
+
+    const labelWidth = measureMathLabel(item.bundleLabel ?? "").width + BUNDLE_LABEL_HORIZONTAL_PADDING;
+    if (labelWidth <= 0) {
+      continue;
+    }
+
+    if (item.point.col <= 0) {
+      widths[0] = Math.max(widths[0], Math.ceil(labelWidth * 2));
+      continue;
+    }
+
+    if (item.point.col >= safeSteps) {
+      widths[safeSteps - 1] = Math.max(widths[safeSteps - 1], Math.ceil(labelWidth * 2));
+      continue;
+    }
+
+    const leftIndex = item.point.col - 1;
+    const rightIndex = item.point.col;
+    const currentSpan = (widths[leftIndex] / 2) + (widths[rightIndex] / 2);
+    const deficit = labelWidth - currentSpan;
+    if (deficit > 0) {
+      const increase = Math.ceil(deficit / 2);
+      widths[leftIndex] += increase;
+      widths[rightIndex] += increase;
+    }
+  }
   const starts: number[] = [];
   const centers: number[] = [];
   let cursor = GRID_LEFT;
@@ -213,6 +245,7 @@ export function getIncomingSegmentRange(
 let cachedContext: CanvasRenderingContext2D | null = null;
 let measurementRoot: HTMLDivElement | null = null;
 const gateMeasurementCache = new Map<string, GateLabelMeasurement>();
+const mathMeasurementCache = new Map<string, GateLabelMeasurement>();
 
 function getMeasurementRoot(): HTMLDivElement | null {
   if (typeof document === "undefined") {
@@ -352,4 +385,64 @@ export function measureGateWidth(label: string): number {
 
 export function measureGateHeight(label: string): number {
   return measureGateLabel(label).height;
+}
+
+export function measureMathLabel(label: string): GateLabelMeasurement {
+  const normalized = normalizeLabel(label);
+  if (!normalized) {
+    return { width: 0, height: 0 };
+  }
+
+  const cached = mathMeasurementCache.get(normalized);
+  if (cached) {
+    return cached;
+  }
+
+  const root = getMeasurementRoot();
+  const texHtml = renderMathExpressionHtml(normalized);
+
+  if (root && texHtml) {
+    try {
+      const wrapper = document.createElement("div");
+      Object.assign(wrapper.style, {
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: "max-content",
+        height: "max-content",
+        padding: "0",
+        margin: "0",
+        whiteSpace: "nowrap"
+      });
+      wrapper.innerHTML = texHtml;
+
+      const katexNode = wrapper.querySelector(".katex");
+      if (katexNode instanceof HTMLElement) {
+        katexNode.style.fontSize = "0.98rem";
+        katexNode.style.lineHeight = "1";
+      }
+
+      root.appendChild(wrapper);
+      const rect = wrapper.getBoundingClientRect();
+      root.removeChild(wrapper);
+
+      if (rect.width > 0 && rect.height > 0) {
+        const measured = {
+          width: Math.ceil(rect.width),
+          height: Math.ceil(rect.height)
+        };
+        mathMeasurementCache.set(normalized, measured);
+        return measured;
+      }
+    } catch {
+      measurementRoot = null;
+    }
+  }
+
+  const fallback = {
+    width: Math.max(0, getLabelMeasurementText(normalized).length * 9),
+    height: 18
+  };
+  mathMeasurementCache.set(normalized, fallback);
+  return fallback;
 }

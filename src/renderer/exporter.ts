@@ -82,7 +82,7 @@ function commandPriority(token: string): number {
     return 0;
   }
 
-  if (["wire", "wireoverride", "setwiretype", "vqw", "vcw"].includes(command)) {
+  if (["wire", "wireoverride", "setwiretype", "vqw", "vcw", "qwbundle"].includes(command)) {
     return 1;
   }
 
@@ -155,7 +155,25 @@ function horizontalSegmentNeedsCommand(item: HorizontalSegmentItem, implicitlyAb
     return true;
   }
 
+  if (item.bundled === true) {
+    return true;
+  }
+
   return item.wireType !== "quantum" || Boolean(wireStyleOption(item.color));
+}
+
+function formatBundleLabelForQuantikz(label: string): string {
+  const formatted = formatLabelForQuantikz(label);
+
+  if (formatted.startsWith("$") && formatted.endsWith("$")) {
+    return stripMathDelimiters(formatted);
+  }
+
+  return formatted;
+}
+
+function qwbundleCommand(item: Pick<HorizontalSegmentItem, "bundleLabel">): string {
+  return `\\qwbundle{${formatBundleLabelForQuantikz(item.bundleLabel ?? "")}}`;
 }
 
 function gateStyleOptions(color?: string | null, minimumWidthCm?: number | null): string {
@@ -715,6 +733,23 @@ export function exportToQuantikz(state: EditorState): string {
       const wireType = explicitHorizontal?.wireType ?? rowDefaultWireType;
       const wireOptions = wireStyleOption(explicitHorizontal?.color ?? null);
 
+      if (explicitHorizontal?.bundled === true) {
+        if (wireOptions) {
+          return [
+            "\\wireoverride{n}",
+            `\\wire[l][1][${wireOptions}]{${toQuantikzWireType(wireType)}}`,
+            qwbundleCommand(explicitHorizontal),
+            ...tokens
+          ];
+        }
+
+        if (wireType !== rowDefaultWireType) {
+          return prependToken(prependToken(tokens, qwbundleCommand(explicitHorizontal)), `\\wireoverride{${toQuantikzWireType(wireType)}}`);
+        }
+
+        return prependToken(tokens, qwbundleCommand(explicitHorizontal));
+      }
+
       if (wireOptions) {
         return [
           "\\wireoverride{n}",
@@ -742,6 +777,7 @@ export function exportToQuantikz(state: EditorState): string {
       const preservesBlankWire = Boolean(
         explicitHorizontal &&
           !isAbsentHorizontalSegment(explicitHorizontal) &&
+          explicitHorizontal.bundled !== true &&
           !explicitHorizontal.color &&
           explicitHorizontal.wireType === rowDefaultWireType
       );

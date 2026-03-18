@@ -25,6 +25,7 @@ import {
   getRowHeight,
   getRowY,
   getWireEndX,
+  measureMathLabel,
   measureGateWidth,
   measureGateHeight
 } from "../layout";
@@ -42,7 +43,7 @@ import { projectSelectionMove, selectionHasExternalVerticalLinks } from "../move
 import { canPlaceItemsWithoutOverlap } from "../occupancy";
 import { canPlaceCellToolAtRow, getBoardMetrics, placementFromViewportPoint } from "../placement";
 import { getSwapStatusById } from "../swapAnalysis";
-import { isLikelyTexMath, normalizeGateLabel, normalizeLabel, renderGateDisplayHtml, renderGateLabelHtml } from "../tex";
+import { isLikelyTexMath, normalizeGateLabel, normalizeLabel, renderGateDisplayHtml, renderGateLabelHtml, renderMathExpressionHtml } from "../tex";
 import {
   getWireLabelBracket,
   getWireLabelSpan,
@@ -635,7 +636,7 @@ function renderSelectedOverlay(
     const y = getRowY(item.point.row, layout);
     return (
       <g className="selected-object-overlay selected-wire-overlay">
-        {renderWireStroke(x1, x2, y, item.wireType, "selected-overlay-line", { stroke: SELECTION_ORANGE })}
+        {renderWireStroke(x1, x2, y, item.wireType, item.bundled === true, "selected-overlay-line", { stroke: SELECTION_ORANGE })}
       </g>
     );
   }
@@ -871,14 +872,28 @@ function renderWireStroke(
   x2: number,
   y: number,
   wireType: WireType,
+  bundled: boolean,
   className: string,
   style?: CSSProperties
 ): JSX.Element {
   if (wireType === "classical") {
+    const markerX = (x1 + x2) / 2;
     return (
       <g className={className}>
         <line x1={x1} x2={x2} y1={y - 3} y2={y - 3} style={style} />
         <line x1={x1} x2={x2} y1={y + 3} y2={y + 3} style={style} />
+        {bundled && <line x1={markerX - 6} x2={markerX + 6} y1={y + 7} y2={y - 7} style={style} />}
+      </g>
+    );
+  }
+
+  if (bundled) {
+    const markerX = (x1 + x2) / 2;
+
+    return (
+      <g className={className}>
+        <line x1={x1} x2={x2} y1={y} y2={y} style={style} />
+        <line x1={markerX - 6} x2={markerX + 6} y1={y + 7} y2={y - 7} style={style} />
       </g>
     );
   }
@@ -1134,12 +1149,33 @@ function renderHorizontalSegment(
   const [x1, x2] = getIncomingSegmentRange(item.point.col, steps, layout, columnMetrics);
   const y = getRowY(item.point.row, layout);
   const color = getItemColor(item);
+  const normalizedBundleLabel = normalizeLabel(item.bundleLabel ?? "");
+  const bundleHtml = item.bundled === true && normalizedBundleLabel ? renderMathExpressionHtml(normalizedBundleLabel) : null;
+  const bundleMeasurement = item.bundled === true && normalizedBundleLabel ? measureMathLabel(normalizedBundleLabel) : { width: 0, height: 0 };
+  const bundleX = ((x1 + x2) / 2) - (bundleMeasurement.width / 2);
+  const bundleY = Math.max(y - bundleMeasurement.height - 12, 6);
 
   return (
     <g className={`horizontal-segment ${isSelected ? "is-selected" : ""}`}>
       <line x1={x1} x2={x2} y1={y} y2={y} className="horizontal-segment-hit" />
-      {isSelected && renderWireStroke(x1, x2, y, item.wireType, "horizontal-segment-selection")}
-      {renderWireStroke(x1, x2, y, item.wireType, "horizontal-segment-stroke", { stroke: color })}
+      {isSelected && renderWireStroke(x1, x2, y, item.wireType, item.bundled === true, "horizontal-segment-selection")}
+      {renderWireStroke(x1, x2, y, item.wireType, item.bundled === true, "horizontal-segment-stroke", { stroke: color })}
+      {bundleHtml && (
+        <foreignObject
+          x={bundleX}
+          y={bundleY}
+          width={Math.max(bundleMeasurement.width, 8)}
+          height={Math.max(bundleMeasurement.height + 4, 8)}
+          className="horizontal-segment-bundle-label-foreign-object"
+        >
+          <div
+            xmlns="http://www.w3.org/1999/xhtml"
+            className="horizontal-segment-bundle-label-math"
+            style={{ color }}
+            dangerouslySetInnerHTML={{ __html: bundleHtml }}
+          />
+        </foreignObject>
+      )}
     </g>
   );
 }

@@ -24,4 +24,24 @@ describe("layout column metrics", () => {
   it("gives taller math labels more vertical room than a simple symbol", () => {
     expect(measureGateHeight("\\frac{a}{b}")).toBeGreaterThan(measureGateHeight("H"));
   });
+
+  it("widens adjacent horizontal wire space for bundled math labels", () => {
+    const items: CircuitItem[] = [
+      {
+        id: "bundle-1",
+        type: "horizontalSegment",
+        point: { row: 0, col: 1 },
+        mode: "present",
+        wireType: "quantum",
+        bundled: true,
+        bundleLabel: "\\frac{n_D+1}{2}",
+        color: null
+      }
+    ];
+
+    const metrics = getColumnMetrics(3, items, DEFAULT_CIRCUIT_LAYOUT);
+
+    expect(metrics.widths[0]).toBeGreaterThan(72);
+    expect(metrics.widths[1]).toBeGreaterThan(72);
+  });
 });

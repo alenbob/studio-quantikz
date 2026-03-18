@@ -281,6 +281,33 @@ describe("importFromQuantikz", () => {
     expect(restoredGate).toBeTruthy();
   });
 
+  it("imports qwbundle segments from a multi-register circuit", () => {
+    const code = String.raw`\begin{quantikz}
+        \lstick{$\ket{0}_{succ}$} &&& \gate[4,style={fill=X1!40,rounded corners}]{\hat{\mathcal{U}}_R} \gategroup[4,steps=3,style={dashed,rounded
+			corners,fill=X3!40, inner
+			xsep=0pt},background,label style={label
+			position=above,anchor=north,yshift=0.3cm}]{$\textrm{RIXS}(\omega_I)$} & \gate[4,style={fill=X2!40,rounded corners}]{ \left(\hat{\mathcal{Q}}_R\right)^{K_{A}}} & \meter{0} \\
+        \lstick{$\ket{\vec 0}_{sys}$} & \qwbundle{2N_a} &&&&& \rstick{$\rixs$} \\
+        \lstick{$\ket{\vec{0}}_{anc}$} & \qwbundle{n_D+1} &&&&& \rstick{$\ket{\vec 0}$} \\
+        \lstick{$\ket{\vec{0}}_{W}$} & \qwbundle{n_W} &&&&&
+    \end{quantikz}`;
+
+    const imported = importFromQuantikz(code);
+    const bundles = imported.items.filter((item) => item.type === "horizontalSegment" && item.bundled === true);
+
+    expect(imported.qubits).toBe(4);
+    expect(bundles).toHaveLength(3);
+    expect(bundles.map((item) => item.point.row)).toEqual([1, 2, 3]);
+    expect(bundles.map((item) => item.point.col)).toEqual([0, 0, 0]);
+    expect(bundles.map((item) => item.type === "horizontalSegment" ? item.bundleLabel : "")).toEqual([
+      "2N_a",
+      "n_D+1",
+      "n_W"
+    ]);
+    expect(imported.items.some((item) => item.type === "gate" && item.point.row === 0 && item.point.col === 2)).toBe(true);
+    expect(imported.items.some((item) => item.type === "meter" && item.point.row === 0 && item.point.col === 4)).toBe(true);
+  });
+
   it("imports merged wire labels with their span metadata", () => {
     const code = String.raw`% quantikzz-wirelabel:left:0:2:brace
 \begin{quantikz}

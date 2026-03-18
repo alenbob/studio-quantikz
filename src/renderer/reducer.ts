@@ -68,6 +68,8 @@ type Action =
   | { type: "updateControlStateBatch"; itemIds: string[]; controlState: ControlState }
   | { type: "updateHorizontalMode"; itemId: string; mode: HorizontalSegmentMode }
   | { type: "updateHorizontalWireType"; itemId: string; wireType: WireType }
+  | { type: "updateHorizontalBundled"; itemId: string; bundled: boolean }
+  | { type: "updateHorizontalBundleLabel"; itemId: string; bundleLabel: string }
   | { type: "updateWireTypeBatch"; itemIds: string[]; wireType: WireType }
   | { type: "updateItemColor"; itemId: string; color: string | null }
   | { type: "updateItemColorBatch"; itemIds: string[]; color: string | null }
@@ -149,7 +151,9 @@ function buildHorizontalSegment(
   col: number,
   mode: HorizontalSegmentMode = "present",
   wireType: WireType = "quantum",
-  color: string | null = null
+  color: string | null = null,
+  bundled = false,
+  bundleLabel?: string
 ): HorizontalSegmentItem {
   return {
     id: createId("horizontalSegment"),
@@ -157,7 +161,9 @@ function buildHorizontalSegment(
     point: { row, col },
     mode,
     wireType,
-    color
+    bundled,
+    color,
+    bundleLabel
   };
 }
 
@@ -653,7 +659,9 @@ function materializeVacatedHorizontalSources(
     nextKeys.add(sourceKey);
     vacatedSegments.push({
       ...buildHorizontalSegment(previousItem.point.row, previousItem.point.col, "absent", previousItem.wireType),
-      color: null
+      color: null,
+      bundled: previousItem.bundled ?? false,
+      bundleLabel: previousItem.bundleLabel
     });
   }
 
@@ -1296,6 +1304,35 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
         return {
           ...item,
           wireType: action.wireType
+        };
+      });
+
+      return withItems(state, items, state.selectedItemIds);
+    }
+    case "updateHorizontalBundled": {
+      const items = state.items.map((item) => {
+        if (item.id !== action.itemId || item.type !== "horizontalSegment") {
+          return item;
+        }
+
+        return {
+          ...item,
+          bundled: action.bundled,
+          bundleLabel: action.bundled ? item.bundleLabel ?? "" : undefined
+        };
+      });
+
+      return withItems(state, items, state.selectedItemIds);
+    }
+    case "updateHorizontalBundleLabel": {
+      const items = state.items.map((item) => {
+        if (item.id !== action.itemId || item.type !== "horizontalSegment" || item.bundled !== true) {
+          return item;
+        }
+
+        return {
+          ...item,
+          bundleLabel: action.bundleLabel
         };
       });
 

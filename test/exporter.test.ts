@@ -673,6 +673,30 @@ describe("exportToQuantikz", () => {
     expect(code).toContain("\\wireoverride{n}");
   });
 
+  it("exports qwbundle for bundle-style horizontal segments", () => {
+    const code = exportToQuantikz(
+      makeState({
+        qubits: 4,
+        steps: 6,
+        items: [
+          {
+            id: "bundle-1",
+            type: "horizontalSegment",
+            point: { row: 1, col: 0 },
+            mode: "present",
+            wireType: "quantum",
+            bundled: true,
+            bundleLabel: "2N_a",
+            color: null
+          }
+        ]
+      })
+    );
+
+    expect(code).toContain("\\qwbundle{2N_a}");
+    expect(code).not.toContain("\\wireoverride{c}");
+  });
+
   it("uses empty quantikz cells instead of explicit qw commands for default wires", () => {
     const code = exportToQuantikz(
       makeState({

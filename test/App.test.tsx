@@ -528,7 +528,8 @@ describe("App smoke tests", () => {
     await user.click(screen.getByRole("button", { name: /^select$/i }));
     await user.click(screen.getByTestId("segment-slot-0-1"));
 
-    expect(screen.getByLabelText(/segment mode/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/classical wire/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/bundle wire/i)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /delete selected/i }));
     await user.click(screen.getByRole("button", { name: /convert to quantikz/i }));
@@ -545,12 +546,29 @@ describe("App smoke tests", () => {
     await user.click(screen.getByRole("button", { name: /^select$/i }));
     await user.click(screen.getByTestId("segment-slot-0-1"));
 
-    fireEvent.change(screen.getByLabelText(/horizontal wire style/i), {
-      target: { value: "classical" }
-    });
+    fireEvent.click(screen.getByLabelText(/classical wire/i));
 
     await user.click(screen.getByRole("button", { name: /convert to quantikz/i }));
     expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain("\\wireoverride{c}");
+  });
+
+  it("lets a selected horizontal segment switch on bundle text", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+
+    await user.click(screen.getByRole("button", { name: /unlock wires/i }));
+    await user.click(screen.getByRole("button", { name: /^select$/i }));
+    await user.click(screen.getByTestId("segment-slot-0-1"));
+
+    fireEvent.click(screen.getByLabelText(/bundle wire/i));
+    await user.clear(screen.getByLabelText(/bundle label/i));
+    await user.type(screen.getByLabelText(/bundle label/i), "2N_a");
+
+    const bundleLabel = container.querySelector(".horizontal-segment-bundle-label-math");
+    expect(bundleLabel?.textContent?.replace(/\s+/g, "")).toContain("2N");
+
+    await user.click(screen.getByRole("button", { name: /convert to quantikz/i }));
+    expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain("\\qwbundle{2N_a}");
   });
 
   it("uses a 20px selection band for horizontal wires", async () => {
@@ -573,8 +591,8 @@ describe("App smoke tests", () => {
     await user.click(screen.getByRole("button", { name: /^select$/i }));
     await user.click(screen.getByTestId("segment-slot-0-1"));
 
-    expect(screen.queryByLabelText(/segment mode/i)).toBeNull();
-    expect(screen.queryByLabelText(/horizontal wire style/i)).toBeNull();
+    expect(screen.queryByLabelText(/classical wire/i)).toBeNull();
+    expect(screen.queryByLabelText(/bundle wire/i)).toBeNull();
   });
 
   it("drags a selected horizontal segment from the wide slot hit area", async () => {

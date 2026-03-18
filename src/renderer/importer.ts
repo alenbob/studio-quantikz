@@ -63,7 +63,9 @@ interface ExtractedLabelCommand {
   remainder: string;
 }
 
-type ParsedHorizontalWireToken = WireType | "none";
+type ParsedHorizontalWireToken =
+  | { wireType: WireType; bundled: boolean }
+  | "none";
 
 function isEscapedAt(value: string, index: number): boolean {
   let backslashCount = 0;
@@ -234,7 +236,7 @@ function parseCommandSequence(source: string): ParsedCommand[] {
       args.push(arg);
       cursor = skipWhitespace(source, nextCursor);
 
-      if (name !== "wire" && name !== "vqw" && name !== "vcw" &&
+        if (name !== "wire" && name !== "vqw" && name !== "vcw" && name !== "qwbundle" &&
           name !== "gate" && name !== "meter" && name !== "gategroup" &&
           name !== "slice" && name !== "ghost" && name !== "ctrl" && name !== "octrl" && name !== "swap" &&
           name !== "lstick" && name !== "rstick" && name !== "control" &&
@@ -245,7 +247,7 @@ function parseCommandSequence(source: string): ParsedCommand[] {
 
       if ((name === "gate" || name === "meter" || name === "gategroup" || name === "slice" || name === "ghost" ||
           name === "ctrl" || name === "octrl" || name === "swap" ||
-          name === "lstick" || name === "rstick" || name === "vqw" || name === "vcw" ||
+          name === "lstick" || name === "rstick" || name === "vqw" || name === "vcw" || name === "qwbundle" ||
           name === "wireoverride" || name === "setwiretype") && args.length >= 1) {
         break;
       }
@@ -557,12 +559,34 @@ function parseHorizontalWireToken(token: string | undefined): ParsedHorizontalWi
     return "none";
   }
 
-  return normalized === "c" ? "classical" : "quantum";
+  if (normalized === "b") {
+    return { wireType: "quantum", bundled: true };
+  }
+
+  return {
+    wireType: normalized === "c" ? "classical" : "quantum",
+    bundled: false
+  };
 }
 
 function parseWireTypeToken(token: string | undefined): WireType {
   const parsed = parseHorizontalWireToken(token);
-  return parsed === "classical" ? "classical" : "quantum";
+  return parsed !== "none" && parsed.wireType === "classical" ? "classical" : "quantum";
+}
+
+function sameHorizontalWireStyle(
+  left: ParsedHorizontalWireToken | null,
+  right: ParsedHorizontalWireToken | null
+): boolean {
+  if (left === right) {
+    return true;
+  }
+
+  if (!left || !right || left === "none" || right === "none") {
+    return false;
+  }
+
+  return left.wireType === right.wireType && left.bundled === right.bundled;
 }
 
 function extractVerticalWireType(options: string[]): WireType {
@@ -758,7 +782,10 @@ export function importFromQuantikz(code: string): ImportedCircuit {
 
     steps = Math.max(steps, cells.length);
 
-    let persistentWireType: ParsedHorizontalWireToken = wireTypes[rowIndex] ?? "quantum";
+    let persistentWireType: ParsedHorizontalWireToken = {
+      wireType: wireTypes[rowIndex] ?? "quantum",
+      bundled: false
+    };
     let lastHorizontalGate: GateItem | null = null;
 
     cells.forEach((cell, colIndex) => {
@@ -773,7 +800,7 @@ export function importFromQuantikz(code: string): ImportedCircuit {
           return true;
         }
 
-        return entry.name === "wire" && ["l", "r"].includes(entry.options[0]?.trim() ?? "");
+        return entry.name === "qwbundle" || (entry.name === "wire" && ["l", "r"].includes(entry.options[0]?.trim() ?? ""));
       });
       const hasSubstantiveCommand = commands.some((entry) => {
         if (entry.name === "qw" || entry.name === "wireoverride" || entry.name === "setwiretype" || entry.name === "color") {
@@ -800,8 +827,10 @@ export function importFromQuantikz(code: string): ImportedCircuit {
       }
 
       const hasHorizontalWireCommand = commands.some((entry) =>
-        entry.name === "wire" &&
-        (entry.options[0]?.trim() === "l" || entry.options[0]?.trim() === "r")
+        entry.name === "qwbundle" || (
+          entry.name === "wire" &&
+          (entry.options[0]?.trim() === "l" || entry.options[0]?.trim() === "r")
+        )
       );
 
       let setWireType: ParsedHorizontalWireToken | null = null;
@@ -945,13 +974,32 @@ export function importFromQuantikz(code: string): ImportedCircuit {
               type: "horizontalSegment",
               point: { row: rowIndex, col: colIndex },
               mode: wireOverrideType === "none" ? "absent" : "present",
-              wireType: wireOverrideType === "classical" ? "classical" : "quantum",
+              wireType: wireOverrideType !== "none" ? wireOverrideType.wireType : "quantum",
+              bundled: wireOverrideType !== "none" ? wireOverrideType.bundled : false,
               color: null
             });
             break;
           case "setwiretype":
             setWireType = parseHorizontalWireToken(command.args[0]);
             break;
+          case "qwbundle": {
+            const effectiveWire = wireOverrideType !== null && wireOverrideType !== "none"
+              ? wireOverrideType
+              : persistentWireType !== "none"
+                ? persistentWireType
+                : { wireType: "quantum" as const, bundled: false };
+            items.push({
+              id: nextId("horizontalSegment", idCounter),
+              type: "horizontalSegment",
+              point: { row: rowIndex, col: colIndex },
+              mode: "present",
+              wireType: effectiveWire.wireType,
+              bundled: true,
+              bundleLabel: decodeLabel(command.args[0] ?? ""),
+              color
+            });
+            break;
+          }
           case "wire": {
             const direction = command.options[0]?.trim();
             const length = Number(command.options[1] ?? "1");
@@ -1007,13 +1055,14 @@ export function importFromQuantikz(code: string): ImportedCircuit {
         }
       });
 
-      if (setWireType !== null && !hasHorizontalWireCommand && wireOverrideType === null && setWireType !== persistentWireType) {
+      if (setWireType !== null && !hasHorizontalWireCommand && wireOverrideType === null && !sameHorizontalWireStyle(setWireType, persistentWireType)) {
         items.push({
           id: nextId("horizontalSegment", idCounter),
           type: "horizontalSegment",
           point: { row: rowIndex, col: colIndex },
           mode: setWireType === "none" ? "absent" : "present",
-          wireType: setWireType === "classical" ? "classical" : "quantum",
+          wireType: setWireType !== "none" ? setWireType.wireType : "quantum",
+          bundled: setWireType !== "none" ? setWireType.bundled : false,
           color: null
         });
       }

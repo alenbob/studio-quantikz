@@ -113,7 +113,9 @@ export interface HorizontalSegmentItem extends BaseItem {
   point: GridPoint;
   mode: HorizontalSegmentMode;
   wireType: WireType;
+  bundled?: boolean;
   autoSuppressed?: boolean;
+  bundleLabel?: string;
 }
 
 export interface ControlDotItem extends BaseItem {
@@ -194,6 +196,8 @@ export interface ClipboardHorizontalSegmentItem extends ClipboardBaseItem {
   type: "horizontalSegment";
   mode: HorizontalSegmentMode;
   wireType: WireType;
+  bundled?: boolean;
+  bundleLabel?: string;
 }
 
 export interface ClipboardControlDotItem extends ClipboardBaseItem {

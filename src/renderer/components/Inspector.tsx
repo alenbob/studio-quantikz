@@ -50,6 +50,8 @@ interface InspectorProps {
   onControlStateChange: (itemId: string, controlState: ControlState) => void;
   onHorizontalModeChange: (itemId: string, mode: HorizontalSegmentItem["mode"]) => void;
   onHorizontalWireTypeChange: (itemId: string, wireType: WireType) => void;
+  onHorizontalBundledChange: (itemId: string, bundled: boolean) => void;
+  onHorizontalBundleLabelChange: (itemId: string, bundleLabel: string) => void;
   onItemColorChange: (itemId: string, color: string | null) => void;
   onSelectedItemsColorChange: (color: string | null) => void;
   onSelectedGateLabelChange: (label: string) => void;
@@ -72,6 +74,13 @@ interface InspectorProps {
 }
 
 type BulkSelectionKind = "gate" | "controlDot" | "wire" | null;
+
+function renderVerticalWireTypeOptions(): JSX.Element[] {
+  return [
+    <option key="quantum" value="quantum">Quantum</option>,
+    <option key="classical" value="classical">Classical</option>
+  ];
+}
 
 function selectNumericField(event: FocusEvent<HTMLInputElement>): void {
   event.currentTarget.select();
@@ -395,8 +404,7 @@ function renderVerticalInspector(
           value={item.wireType}
           onChange={(event) => onVerticalWireTypeChange(item.id, event.target.value as WireType)}
         >
-          <option value="quantum">Quantum</option>
-          <option value="classical">Classical</option>
+          {renderVerticalWireTypeOptions()}
         </select>
       </label>
       <dl className="inspector-meta">
@@ -415,37 +423,43 @@ function renderVerticalInspector(
 
 function renderHorizontalInspector(
   item: HorizontalSegmentItem,
-  onHorizontalModeChange: InspectorProps["onHorizontalModeChange"],
-  onHorizontalWireTypeChange: InspectorProps["onHorizontalWireTypeChange"]
+  onHorizontalWireTypeChange: InspectorProps["onHorizontalWireTypeChange"],
+  onHorizontalBundledChange: InspectorProps["onHorizontalBundledChange"],
+  onHorizontalBundleLabelChange: InspectorProps["onHorizontalBundleLabelChange"]
 ): JSX.Element {
   return (
     <>
       <div className="inspector-field-row">
         <label className="inspector-field">
-          <span>Segment mode</span>
-          <select
-            aria-label="Segment mode"
-            value={item.mode}
-            onChange={(event) =>
-              onHorizontalModeChange(item.id, event.target.value as HorizontalSegmentItem["mode"])
-            }
-          >
-            <option value="absent">Absent</option>
-            <option value="present">Present</option>
-          </select>
+          <span>Classical wire</span>
+          <input
+            aria-label="Classical wire"
+            type="checkbox"
+            checked={item.wireType === "classical"}
+            onChange={(event) => onHorizontalWireTypeChange(item.id, event.target.checked ? "classical" : "quantum")}
+          />
         </label>
         <label className="inspector-field">
-          <span>Wire style</span>
-          <select
-            aria-label="Horizontal wire style"
-            value={item.wireType}
-            onChange={(event) => onHorizontalWireTypeChange(item.id, event.target.value as WireType)}
-          >
-            <option value="quantum">Quantum</option>
-            <option value="classical">Classical</option>
-          </select>
+          <span>Bundle</span>
+          <input
+            aria-label="Bundle wire"
+            type="checkbox"
+            checked={item.bundled === true}
+            onChange={(event) => onHorizontalBundledChange(item.id, event.target.checked)}
+          />
         </label>
       </div>
+      <label className="inspector-field">
+        <span>Text above line / Math</span>
+        <input
+          aria-label="Bundle label"
+          type="text"
+          value={item.bundleLabel ?? ""}
+          spellCheck={false}
+          placeholder="2N_a"
+          onChange={(event) => onHorizontalBundleLabelChange(item.id, event.target.value)}
+        />
+      </label>
       <dl className="inspector-meta">
         <div>
           <dt>Orientation</dt>
@@ -505,6 +519,8 @@ export function Inspector({
   onControlStateChange,
   onHorizontalModeChange,
   onHorizontalWireTypeChange,
+  onHorizontalBundledChange,
+  onHorizontalBundleLabelChange,
   onItemColorChange,
   onSelectedItemsColorChange,
   onSelectedGateLabelChange,
@@ -862,7 +878,12 @@ export function Inspector({
             {selectedItem?.type === "controlDot" &&
               renderControlInspector(selectedItem, onControlStateChange)}
             {selectedItem?.type === "horizontalSegment" &&
-              renderHorizontalInspector(selectedItem, onHorizontalModeChange, onHorizontalWireTypeChange)}
+              renderHorizontalInspector(
+                selectedItem,
+                onHorizontalWireTypeChange,
+                onHorizontalBundledChange,
+                onHorizontalBundleLabelChange
+              )}
             {selectedItem &&
               selectedItem.type !== "gate" &&
               selectedItem.type !== "frame" &&

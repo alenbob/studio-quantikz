@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { validateCircuit } from "../src/renderer/validation";
 import type { EditorState } from "../src/renderer/types";
 import { editorReducer, initialState } from "../src/renderer/reducer";
+import { importFromQuantikz } from "../src/renderer/importer";
 
 function makeState(overrides: Partial<EditorState>): EditorState {
   return {
@@ -138,5 +139,23 @@ describe("validateCircuit", () => {
     );
 
     expect(issues).toEqual([]);
+  });
+
+  it("does not warn for imported qwbundle segments in the full circuit", () => {
+    const code = String.raw`\begin{quantikz}
+        \lstick{$\ket{0}_{succ}$} &&& \gate[4,style={fill=X1!40,rounded corners}]{\hat{\mathcal{U}}_R} \gategroup[4,steps=3,style={dashed,rounded
+			corners,fill=X3!40, inner
+			xsep=0pt},background,label style={label
+			position=above,anchor=north,yshift=0.3cm}]{$\textrm{RIXS}(\omega_I)$} & \gate[4,style={fill=X2!40,rounded corners}]{ \left(\hat{\mathcal{Q}}_R\right)^{K_{A}}} & \meter{0} \\
+        \lstick{$\ket{\vec 0}_{sys}$} & \qwbundle{2N_a} &&&&& \rstick{$\rixs$} \\
+        \lstick{$\ket{\vec{0}}_{anc}$} & \qwbundle{n_D+1} &&&&& \rstick{$\ket{\vec 0}$} \\
+        \lstick{$\ket{\vec{0}}_{W}$} & \qwbundle{n_W} &&&&&
+    \end{quantikz}`;
+
+    const imported = importFromQuantikz(code);
+    const state = editorReducer(initialState, { type: "loadQuantikz", imported, code, preamble: "" });
+    const issues = validateCircuit(state);
+
+    expect(issues.some((entry) => entry.message === "Horizontal wire overrides disagree at the same segment.")).toBe(false);
   });
 });
