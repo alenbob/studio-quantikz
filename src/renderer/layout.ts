@@ -1,5 +1,13 @@
 import type { CircuitItem, CircuitLayout, HorizontalSegmentItem } from "./types.js";
-import { getLabelMeasurementText, normalizeGateLabel, normalizeLabel, renderGateLabelHtml, renderMathExpressionHtml } from "./tex.js";
+import {
+  getKatexMacroCacheKey,
+  getLabelMeasurementText,
+  normalizeGateLabel,
+  normalizeLabel,
+  renderGateLabelHtml,
+  renderMathExpressionHtml,
+  type KatexMacroMap
+} from "./tex.js";
 
 export const DEFAULT_COLUMN_SEP_CM = 0.7;
 export const DEFAULT_ROW_SEP_CM = 0.9;
@@ -61,7 +69,8 @@ export function getRowHeight(layout: CircuitLayout): number {
 export function getColumnMetrics(
   steps: number,
   items: CircuitItem[],
-  layout: CircuitLayout
+  layout: CircuitLayout,
+  customMacros?: KatexMacroMap
 ): ColumnMetrics {
   const safeSteps = Math.max(steps, 1);
   const contentWidths = Array.from({ length: safeSteps }, () => GATE_MIN_WIDTH);
@@ -73,7 +82,7 @@ export function getColumnMetrics(
 
     switch (item.type) {
       case "gate": {
-        const contentWidth = Math.max(measureGateWidth(item.label), GATE_MIN_WIDTH);
+        const contentWidth = Math.max(measureGateWidth(item.label, customMacros), GATE_MIN_WIDTH);
         const spanCols = Math.max(item.span.cols, 1);
         const perColumnWidth = Math.max(GATE_MIN_WIDTH, Math.ceil(contentWidth / spanCols));
         for (let col = item.point.col; col < Math.min(item.point.col + spanCols, safeSteps); col += 1) {
@@ -103,7 +112,7 @@ export function getColumnMetrics(
       continue;
     }
 
-    const labelWidth = measureMathLabel(item.bundleLabel ?? "").width + BUNDLE_LABEL_HORIZONTAL_PADDING;
+    const labelWidth = measureMathLabel(item.bundleLabel ?? "", customMacros).width + BUNDLE_LABEL_HORIZONTAL_PADDING;
     if (labelWidth <= 0) {
       continue;
     }
@@ -326,15 +335,16 @@ function fallbackGateMeasurement(label: string): GateLabelMeasurement {
   };
 }
 
-function measureGateLabel(label: string): GateLabelMeasurement {
+function measureGateLabel(label: string, customMacros?: KatexMacroMap): GateLabelMeasurement {
   const normalized = normalizeGateLabel(label);
-  const cached = gateMeasurementCache.get(normalized);
+  const cacheKey = `${getKatexMacroCacheKey(customMacros)}::${normalized}`;
+  const cached = gateMeasurementCache.get(cacheKey);
   if (cached) {
     return cached;
   }
 
   const root = getMeasurementRoot();
-  const texHtml = renderGateLabelHtml(normalized);
+  const texHtml = renderGateLabelHtml(normalized, customMacros);
 
   if (root && texHtml) {
     try {
@@ -366,7 +376,7 @@ function measureGateLabel(label: string): GateLabelMeasurement {
           width: Math.max(GATE_MIN_WIDTH, Math.ceil(rect.width + (GATE_PADDING_X * 2))),
           height: Math.max(GATE_MIN_HEIGHT, Math.ceil(rect.height + (GATE_PADDING_Y * 2)))
         };
-        gateMeasurementCache.set(normalized, measured);
+        gateMeasurementCache.set(cacheKey, measured);
         return measured;
       }
     } catch {
@@ -375,31 +385,32 @@ function measureGateLabel(label: string): GateLabelMeasurement {
   }
 
   const fallback = fallbackGateMeasurement(normalized);
-  gateMeasurementCache.set(normalized, fallback);
+  gateMeasurementCache.set(cacheKey, fallback);
   return fallback;
 }
 
-export function measureGateWidth(label: string): number {
-  return measureGateLabel(label).width;
+export function measureGateWidth(label: string, customMacros?: KatexMacroMap): number {
+  return measureGateLabel(label, customMacros).width;
 }
 
-export function measureGateHeight(label: string): number {
-  return measureGateLabel(label).height;
+export function measureGateHeight(label: string, customMacros?: KatexMacroMap): number {
+  return measureGateLabel(label, customMacros).height;
 }
 
-export function measureMathLabel(label: string): GateLabelMeasurement {
+export function measureMathLabel(label: string, customMacros?: KatexMacroMap): GateLabelMeasurement {
   const normalized = normalizeLabel(label);
   if (!normalized) {
     return { width: 0, height: 0 };
   }
 
-  const cached = mathMeasurementCache.get(normalized);
+  const cacheKey = `${getKatexMacroCacheKey(customMacros)}::${normalized}`;
+  const cached = mathMeasurementCache.get(cacheKey);
   if (cached) {
     return cached;
   }
 
   const root = getMeasurementRoot();
-  const texHtml = renderMathExpressionHtml(normalized);
+  const texHtml = renderMathExpressionHtml(normalized, customMacros);
 
   if (root && texHtml) {
     try {
@@ -431,7 +442,7 @@ export function measureMathLabel(label: string): GateLabelMeasurement {
           width: Math.ceil(rect.width),
           height: Math.ceil(rect.height)
         };
-        mathMeasurementCache.set(normalized, measured);
+        mathMeasurementCache.set(cacheKey, measured);
         return measured;
       }
     } catch {
@@ -443,6 +454,6 @@ export function measureMathLabel(label: string): GateLabelMeasurement {
     width: Math.max(0, getLabelMeasurementText(normalized).length * 9),
     height: 18
   };
-  mathMeasurementCache.set(normalized, fallback);
+  mathMeasurementCache.set(cacheKey, fallback);
   return fallback;
 }

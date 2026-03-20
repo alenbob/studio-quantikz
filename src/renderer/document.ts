@@ -9,6 +9,15 @@ export const DEFAULT_EXPORT_PREAMBLE = [
   "\\usepackage{braket}"
 ].join("\n");
 
+export const DEFAULT_SYMBOLIC_PREAMBLE = [
+  "\\documentclass[varwidth=2400pt,border=4pt]{standalone}",
+  "\\usepackage{xcolor}",
+  "\\usepackage{amsmath}",
+  "\\usepackage{amssymb}",
+  "\\usepackage{amsfonts}",
+  "\\usepackage{braket}"
+].join("\n");
+
 export interface StandaloneQuantikzSource {
   code: string;
   preamble: string;

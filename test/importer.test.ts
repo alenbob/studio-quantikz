@@ -226,6 +226,19 @@ describe("importFromQuantikz", () => {
     expect(connector && connector.type === "verticalConnector" ? connector.color : null).toBe("#0000FF");
   });
 
+  it("resolves preamble-defined colors used in imported gate styles", () => {
+    const code = String.raw`\begin{quantikz}
+& \gate[style={fill=X1!40,draw=X1}]{H}
+\end{quantikz}`;
+
+    const imported = importFromQuantikz(code, {
+      preamble: String.raw`\definecolor{X1}{RGB}{200,93,45}`
+    });
+    const gate = imported.items.find((item) => item.type === "gate");
+
+    expect(gate && gate.type === "gate" ? gate.color : null).toBe("#E9BEAB");
+  });
+
   it("imports vqw and vcw connectors as vertical wires", () => {
     const code = String.raw`\begin{quantikz}
 \lstick{$\ket{0}$} & \vqw{1} & \vcw{1} \\

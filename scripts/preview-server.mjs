@@ -8,9 +8,11 @@ import { fileURLToPath } from "node:url";
 import { compile as compileLatex, isAvailable as isLatexCompilerAvailable } from "node-latex-compiler";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.resolve(__dirname, "..");
 const DIST_DIR = path.resolve(__dirname, "..", "dist");
 const PORT = Number(process.env.PORT || 4173);
 const QUANTIKZ_LIBRARY_FILE = path.resolve(__dirname, "..", "tikzlibraryquantikz2.code.tex");
+const SYMBOLIC_SCRIPT_PATH = path.resolve(__dirname, "..", "quantikz_symbolic_latex.py");
 
 function buildStandaloneDocument(code, preamble) {
   const trimmedCode = code.trim();
@@ -63,6 +65,96 @@ function runBinary(binary, args, cwd) {
       resolve();
     });
   });
+}
+
+function extractSymbolicError(error) {
+  if (!(error instanceof Error)) {
+    return "Unable to generate symbolic LaTeX.";
+  }
+
+  return error.message || "Unable to generate symbolic LaTeX.";
+}
+
+function resolvePythonCandidates() {
+  return [...new Set([process.env.PYTHON_BIN, "python3", "python"].filter(Boolean))];
+}
+
+async function renderSymbolicLatex(code, envIndex = 0) {
+  if (!code.trim()) {
+    return {
+      success: false,
+      error: "Quantikz code is required."
+    };
+  }
+
+  if (!Number.isInteger(envIndex) || envIndex < 0) {
+    return {
+      success: false,
+      error: "The quantikz environment index must be a non-negative integer."
+    };
+  }
+
+  const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "quantikzz-symbolic-"));
+  const inputPath = path.join(workspaceDir, "circuit.tex");
+
+  try {
+    await fs.writeFile(inputPath, code, "utf8");
+
+    for (const binary of resolvePythonCandidates()) {
+      try {
+        const latex = await new Promise((resolve, reject) => {
+          execFile(
+            binary,
+            [SYMBOLIC_SCRIPT_PATH, inputPath, "--env-index", String(envIndex)],
+            {
+              cwd: REPO_ROOT,
+              maxBuffer: 10 * 1024 * 1024
+            },
+            (error, stdout, stderr) => {
+              if (error) {
+                const enrichedError = new Error([stderr.trim(), stdout.trim(), error.message].filter(Boolean).join("\n"));
+                enrichedError.code = error.code;
+                reject(enrichedError);
+                return;
+              }
+
+              resolve(stdout.trim());
+            }
+          );
+        });
+
+        return {
+          success: true,
+          latex,
+          envIndex
+        };
+      } catch (error) {
+        if (error?.code === "ENOENT") {
+          continue;
+        }
+
+        return {
+          success: false,
+          error: extractSymbolicError(error),
+          statusCode: 400
+        };
+      }
+    }
+
+    return {
+      success: false,
+      error: "Python is not available in this environment, so symbolic LaTeX generation cannot run.",
+      statusCode: 503
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: extractSymbolicError(error),
+      statusCode: 500
+    };
+  } finally {
+    await fs.rm(workspaceDir, { recursive: true, force: true });
+  }
 }
 
 async function stageQuantikzCompilerInputs(workspaceDir) {
@@ -302,6 +394,20 @@ const server = createServer(async (request, response) => {
       response.setHeader("Content-Type", "application/pdf");
       response.setHeader("Content-Disposition", "attachment; filename=\"quantikz-circuit.pdf\"");
       response.end(result.pdf);
+      return;
+    }
+
+    if (request.method === "POST" && request.url === "/api/symbolic-latex") {
+      const body = await readJsonBody(request);
+      const result = await renderSymbolicLatex(body.code ?? "", typeof body.envIndex === "number" ? body.envIndex : 0);
+      sendJson(response, result.success ? 200 : (result.statusCode ?? 400), result);
+      return;
+    }
+
+    if (request.method === "POST" && request.url === "/api/symbolic-latex-dev") {
+      const body = await readJsonBody(request);
+      const result = await renderSymbolicLatex(body.code ?? "", typeof body.envIndex === "number" ? body.envIndex : 0);
+      sendJson(response, result.success ? 200 : (result.statusCode ?? 400), result);
       return;
     }
 

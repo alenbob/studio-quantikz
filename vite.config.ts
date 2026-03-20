@@ -2,8 +2,9 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { renderQuantikzPdf, renderQuantikzSvg } from "./src/server/renderQuantikz";
+import { renderSymbolicLatex } from "./src/server/renderSymbolicLatex";
 
-async function readJsonBody(request: IncomingMessage): Promise<{ code?: string; preamble?: string }> {
+async function readJsonBody(request: IncomingMessage): Promise<{ code?: string; preamble?: string; envIndex?: number }> {
   return new Promise((resolve, reject) => {
     let data = "";
 
@@ -82,6 +83,48 @@ export default defineConfig({
             sendJson(response, 500, {
               success: false,
               error: error instanceof Error ? error.message : "Unable to render PDF."
+            });
+          }
+        });
+
+        server.middlewares.use("/api/symbolic-latex", async (request, response, next) => {
+          if (request.method !== "POST") {
+            next();
+            return;
+          }
+
+          try {
+            const body = await readJsonBody(request);
+            const result = await renderSymbolicLatex(
+              body.code ?? "",
+              typeof body.envIndex === "number" ? body.envIndex : 0
+            );
+            sendJson(response, result.success ? 200 : (result.statusCode ?? 400), result);
+          } catch (error) {
+            sendJson(response, 500, {
+              success: false,
+              error: error instanceof Error ? error.message : "Unable to generate symbolic LaTeX."
+            });
+          }
+        });
+
+        server.middlewares.use("/api/symbolic-latex-dev", async (request, response, next) => {
+          if (request.method !== "POST") {
+            next();
+            return;
+          }
+
+          try {
+            const body = await readJsonBody(request);
+            const result = await renderSymbolicLatex(
+              body.code ?? "",
+              typeof body.envIndex === "number" ? body.envIndex : 0
+            );
+            sendJson(response, result.success ? 200 : (result.statusCode ?? 400), result);
+          } catch (error) {
+            sendJson(response, 500, {
+              success: false,
+              error: error instanceof Error ? error.message : "Unable to generate symbolic LaTeX."
             });
           }
         });

@@ -20,7 +20,18 @@ const HEX_BY_LATEX_NAMED_COLOR: Record<string, string> = {
   black: "#000000",
   red: "#FF0000",
   blue: "#0000FF",
-  green: "#00FF00"
+  green: "#00FF00",
+  white: "#FFFFFF",
+  yellow: "#FFFF00",
+  cyan: "#00FFFF",
+  magenta: "#FF00FF",
+  gray: "#808080",
+  grey: "#808080",
+  orange: "#FFA500",
+  purple: "#800080",
+  violet: "#7F00FF",
+  teal: "#008080",
+  brown: "#8B4513"
 };
 
 export function normalizeHexColor(color: string | null | undefined): string | null {
@@ -80,6 +91,64 @@ export function toLatexNamedColor(color: string): string | null {
 export function latexNamedColorToHex(name: string): string | null {
   const normalized = name.trim().toLowerCase();
   return HEX_BY_LATEX_NAMED_COLOR[normalized] ?? null;
+}
+
+function mixHexColors(baseColor: string, otherColor: string, baseWeight: number): string {
+  const clampedWeight = Math.min(1, Math.max(0, baseWeight));
+  const base = hexToRgb(baseColor);
+  const other = hexToRgb(otherColor);
+  const mixChannel = (baseChannel: number, otherChannel: number) =>
+    Math.round((baseChannel * clampedWeight) + (otherChannel * (1 - clampedWeight)))
+      .toString(16)
+      .padStart(2, "0");
+
+  return `#${mixChannel(base.red, other.red)}${mixChannel(base.green, other.green)}${mixChannel(base.blue, other.blue)}`.toUpperCase();
+}
+
+export function resolveLatexColorExpression(
+  expression: string,
+  customColors: Record<string, string> = {}
+): string | null {
+  const normalized = expression.trim().replace(/^[{\s]+|[}\s]+$/g, "");
+  if (!normalized) {
+    return null;
+  }
+
+  const directHex = normalizeHexColor(normalized);
+  if (directHex) {
+    return directHex;
+  }
+
+  const colorLookup = (name: string): string | null => {
+    const lower = name.trim().toLowerCase();
+    return normalizeHexColor(customColors[lower] ?? latexNamedColorToHex(lower));
+  };
+
+  const parts = normalized.split("!").map((part) => part.trim()).filter(Boolean);
+  if (parts.length === 0) {
+    return null;
+  }
+
+  const baseColor = colorLookup(parts[0]);
+  if (!baseColor) {
+    return null;
+  }
+
+  if (parts.length === 1) {
+    return baseColor;
+  }
+
+  const percentage = Number(parts[1]);
+  if (!Number.isFinite(percentage)) {
+    return baseColor;
+  }
+
+  const mixTarget = parts.length >= 3 ? colorLookup(parts[2]) : "#FFFFFF";
+  if (!mixTarget) {
+    return baseColor;
+  }
+
+  return mixHexColors(baseColor, mixTarget, percentage / 100);
 }
 
 export function toTikzRgb(color: string): string {

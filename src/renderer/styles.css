@@ -1749,6 +1749,14 @@ select,
   align-items: center;
   justify-content: space-between;
   min-height: 40px;
+  gap: 12px;
+}
+
+.export-pane-toggle-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .export-pane-body {
@@ -1784,6 +1792,63 @@ select,
 
 .export-editor-tab.is-active {
   background: #1f201d;
+  color: #f4ecdb;
+}
+
+.export-generated-status {
+  margin: 0;
+  color: rgba(31, 27, 23, 0.62);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  text-align: right;
+}
+
+.export-generated-status.is-error {
+  color: var(--danger);
+}
+
+.text-toggle-switch {
+  position: relative;
+  display: inline-grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  min-width: 174px;
+  padding: 4px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(31, 27, 23, 0.08);
+  cursor: pointer;
+}
+
+.text-toggle-thumb {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc(50% - 4px);
+  border-radius: 999px;
+  background: #1f201d;
+  transition: transform 160ms ease;
+}
+
+.text-toggle-switch.is-right .text-toggle-thumb {
+  transform: translateX(100%);
+}
+
+.text-toggle-label {
+  position: relative;
+  z-index: 1;
+  padding: 8px 14px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: center;
+  transition: color 160ms ease;
+}
+
+.text-toggle-label.is-active {
   color: #f4ecdb;
 }
 

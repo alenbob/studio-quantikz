@@ -28,7 +28,9 @@ import {
 } from "./exportAssets";
 import { isVisibleHorizontalSegment } from "./horizontalWires";
 import { importFromQuantikz } from "./importer";
+import { resolveVisualPreambleDefinitions } from "../shared/tikzPreamble";
 import { useRenderedPdf } from "./useRenderedPdf";
+import { useSymbolicLatex } from "./useSymbolicLatex";
 import { editorReducer, initialState, type EditorAction } from "./reducer";
 import { getWireLabelGroup, type WireLabelSide } from "./wireLabels";
 import type {
@@ -46,12 +48,14 @@ interface HistoryState {
 }
 
 type HistoryAction = EditorAction | { type: "undo" } | { type: "redo" };
-type ExportEditorTab = "code" | "preamble";
+type ExportPanelMode = "quantikz" | "symbolic";
+type ExportPaneView = "content" | "preamble";
 type DownloadMenuTarget = "main" | `history:${string}` | null;
 
 const TOAST_DURATION_MS = 4000;
 const DOWNLOAD_FORMATS: DownloadFormat[] = ["tex", "pdf"];
-const GITHUB_URL = "https://github.com/alenbob";
+const REPOSITORY_URL = import.meta.env.VITE_REPOSITORY_URL?.trim() || "https://github.com/alenbob";
+const REPOSITORY_LABEL = import.meta.env.VITE_REPOSITORY_LABEL?.trim() || "github/alenbob";
 
 const TOOL_SHORTCUTS = TOOL_LABELS.filter((entry): entry is (typeof TOOL_LABELS)[number] & { shortcutKey: string } =>
   Boolean(entry.shortcutKey)
@@ -161,6 +165,34 @@ function DownloadMenu({
   );
 }
 
+function TextToggleSwitch({
+  leftLabel,
+  rightLabel,
+  value,
+  onChange,
+  ariaLabel
+}: {
+  leftLabel: string;
+  rightLabel: string;
+  value: ExportPaneView;
+  onChange: (value: ExportPaneView) => void;
+  ariaLabel: string;
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      className={`text-toggle-switch ${value === "preamble" ? "is-right" : "is-left"}`}
+      aria-label={ariaLabel}
+      aria-pressed={value === "preamble"}
+      onClick={() => onChange(value === "content" ? "preamble" : "content")}
+    >
+      <span className="text-toggle-thumb" aria-hidden="true" />
+      <span className={`text-toggle-label ${value === "content" ? "is-active" : ""}`}>{leftLabel}</span>
+      <span className={`text-toggle-label ${value === "preamble" ? "is-active" : ""}`}>{rightLabel}</span>
+    </button>
+  );
+}
+
 function isUndoableAction(action: EditorAction): boolean {
   return ![
     "setTool",
@@ -169,6 +201,7 @@ function isUndoableAction(action: EditorAction): boolean {
     "convert",
     "setExportCode",
     "setExportPreamble",
+    "setExportSymbolicPreamble",
     "clearMessage",
     "setMessage",
     "setAutoWireNewGrid"
@@ -248,7 +281,9 @@ export default function App(): JSX.Element {
   const [isShortcutSheetOpen, setShortcutSheetOpen] = useState(false);
   const [isHistorySheetOpen, setHistorySheetOpen] = useState(false);
   const [exportHistoryEntries, setExportHistoryEntries] = useState<ExportHistoryEntry[]>(() => loadExportHistory());
-  const [exportEditorTab, setExportEditorTab] = useState<ExportEditorTab>("code");
+  const [exportPanelMode, setExportPanelMode] = useState<ExportPanelMode>("quantikz");
+  const [quantikzPaneView, setQuantikzPaneView] = useState<ExportPaneView>("content");
+  const [symbolicPaneView, setSymbolicPaneView] = useState<ExportPaneView>("content");
   const [openDownloadMenuTarget, setOpenDownloadMenuTarget] = useState<DownloadMenuTarget>(null);
   const [pendingHistoryCapture, setPendingHistoryCapture] = useState(false);
   const [toastAnimationKey, setToastAnimationKey] = useState(0);
@@ -277,14 +312,27 @@ export default function App(): JSX.Element {
     () => splitStandaloneQuantikzSource(state.exportCode, state.exportPreamble),
     [state.exportCode, state.exportPreamble]
   );
-  const previewResult = useRenderedPdf(
+  const figurePreviewResult = useRenderedPdf(
     resolvedExportSource.code,
     resolvedExportSource.preamble
   );
-  const pdfPreviewUrl = previewResult.pdfUrl;
-  const previewImageUrl = previewResult.previewImageUrl;
-  const pdfPreviewState = previewResult.state;
-  const pdfPreviewError = previewResult.error;
+  const symbolicLatexResult = useSymbolicLatex(resolvedExportSource.code);
+  const isSymbolicMode = exportPanelMode === "symbolic";
+  const symbolicPreviewResult = useRenderedPdf(
+    isSymbolicMode ? symbolicLatexResult.latex : "",
+    state.exportSymbolicPreamble
+  );
+  const visualPreambleDefinitions = useMemo(
+    () => resolveVisualPreambleDefinitions(resolvedExportSource.preamble),
+    [resolvedExportSource.preamble]
+  );
+  const activePreviewResult = isSymbolicMode ? symbolicPreviewResult : figurePreviewResult;
+  const pdfPreviewUrl = activePreviewResult.pdfUrl;
+  const previewImageUrl = activePreviewResult.previewImageUrl;
+  const pdfPreviewState = activePreviewResult.state;
+  const pdfPreviewError = activePreviewResult.error;
+  const figurePdfPreviewState = figurePreviewResult.state;
+  const figurePreviewImageUrl = figurePreviewResult.previewImageUrl;
 
   useEffect(() => {
     stateRef.current = state;
@@ -372,6 +420,13 @@ export default function App(): JSX.Element {
   }
 
   function getCurrentExportAssetSource(): ExportAssetSource {
+    if (isSymbolicMode) {
+      return {
+        code: symbolicLatexResult.latex,
+        preamble: state.exportSymbolicPreamble
+      };
+    }
+
     return {
       code: resolvedExportSource.code,
       preamble: resolvedExportSource.preamble
@@ -535,13 +590,13 @@ export default function App(): JSX.Element {
       return;
     }
 
-    if (pdfPreviewState !== "ready" || !previewImageUrl) {
+    if (figurePdfPreviewState !== "ready" || !figurePreviewImageUrl) {
       return;
     }
 
     let cancelled = false;
 
-    void imageUrlToDataUrl(previewImageUrl)
+    void imageUrlToDataUrl(figurePreviewImageUrl)
       .then((historyPreviewImage) => {
         if (cancelled) {
           return;
@@ -579,8 +634,8 @@ export default function App(): JSX.Element {
     pendingHistoryCapture,
     resolvedExportSource.code,
     resolvedExportSource.preamble,
-    pdfPreviewState,
-    previewImageUrl
+    figurePdfPreviewState,
+    figurePreviewImageUrl
   ]);
 
   async function handleDownload(
@@ -653,7 +708,7 @@ export default function App(): JSX.Element {
   function handleLoadFromCode(): void {
     try {
       const nextSource = splitStandaloneQuantikzSource(state.exportCode, state.exportPreamble);
-      const imported = importFromQuantikz(nextSource.code);
+      const imported = importFromQuantikz(nextSource.code, { preamble: nextSource.preamble });
       setPasteMode(false);
       setSelectedWireLabel(null);
       dispatch({ type: "loadQuantikz", imported, code: nextSource.code, preamble: nextSource.preamble });
@@ -675,12 +730,13 @@ export default function App(): JSX.Element {
 
   function handleLoadHistoryEntry(entry: ExportHistoryEntry): void {
     try {
-      const imported = importFromQuantikz(entry.code);
+      const imported = importFromQuantikz(entry.code, { preamble: entry.preamble });
       setPasteMode(false);
       setSelectedWireLabel(null);
       setOpenDownloadMenuTarget(null);
       dispatch({ type: "loadQuantikz", imported, code: entry.code, preamble: entry.preamble });
-      setExportEditorTab("code");
+      setExportPanelMode("quantikz");
+      setQuantikzPaneView("content");
       setHistorySheetOpen(false);
     } catch (error) {
       dispatch({
@@ -808,6 +864,24 @@ export default function App(): JSX.Element {
     dispatch({ type: "setTool", tool });
   }
 
+  const symbolicTextareaPlaceholder = !resolvedExportSource.code.trim()
+    ? "Generate or paste Quantikz code to produce slice-by-slice symbolic evolution."
+    : symbolicLatexResult.state === "loading"
+      ? "Generating slice-by-slice symbolic evolution..."
+      : symbolicLatexResult.state === "error"
+        ? symbolicLatexResult.error ?? "Unable to generate symbolic evolution for this circuit."
+        : "Slice-by-slice symbolic evolution will appear here.";
+  const symbolicStatusText = !resolvedExportSource.code.trim()
+    ? "Symbolic evolution is generated from the current Quantikz code."
+    : symbolicLatexResult.state === "loading"
+      ? "Generating slice-by-slice symbolic evolution..."
+      : symbolicLatexResult.state === "error"
+        ? symbolicLatexResult.error ?? "Unable to generate symbolic evolution for this circuit."
+        : "Auto-generated from the current Quantikz circuit.";
+  const activeEditorView = isSymbolicMode ? symbolicPaneView : quantikzPaneView;
+  const symbolicPreamblePlaceholder = "LaTeX preamble for the symbolic evolution preview.";
+  const previewHeadingLabel = isSymbolicMode ? "Symbolic preview" : "Figure preview";
+  const previewAltText = isSymbolicMode ? "Rendered symbolic evolution preview" : "Rendered Quantikz figure preview";
   const currentExportAssetSource = getCurrentExportAssetSource();
 
   return (
@@ -1192,6 +1266,7 @@ export default function App(): JSX.Element {
 
         <Workspace
           state={state}
+          latexMacros={visualPreambleDefinitions.katexMacros}
           isPasteMode={isPasteMode}
           pasteClipboard={clipboard}
           selectedWireLabelGroup={selectedWireLabelGroup}
@@ -1264,30 +1339,52 @@ export default function App(): JSX.Element {
             <div className="export-split">
               <div className="export-pane export-pane-editor">
                 <div className="export-pane-header">
-                  <div className="export-editor-tabs" role="tablist" aria-label="Quantikz export editor">
-                    <button
-                      type="button"
-                      className={`export-editor-tab ${exportEditorTab === "code" ? "is-active" : ""}`}
-                      aria-pressed={exportEditorTab === "code"}
-                      onClick={() => setExportEditorTab("code")}
-                    >
-                      Code
-                    </button>
-                    <button
-                      type="button"
-                      className={`export-editor-tab ${exportEditorTab === "preamble" ? "is-active" : ""}`}
-                      aria-pressed={exportEditorTab === "preamble"}
-                      onClick={() => setExportEditorTab("preamble")}
-                    >
-                      Preamble
-                    </button>
+                  <div className="export-pane-toggle-group">
+                    <div className="export-editor-tabs" role="tablist" aria-label="Export panel mode">
+                      <button
+                        type="button"
+                        className={`export-editor-tab ${exportPanelMode === "quantikz" ? "is-active" : ""}`}
+                        aria-pressed={exportPanelMode === "quantikz"}
+                        onClick={() => setExportPanelMode("quantikz")}
+                      >
+                        Quantikz
+                      </button>
+                      <button
+                        type="button"
+                        className={`export-editor-tab ${exportPanelMode === "symbolic" ? "is-active" : ""}`}
+                        aria-pressed={exportPanelMode === "symbolic"}
+                        onClick={() => setExportPanelMode("symbolic")}
+                      >
+                        Symbolic
+                      </button>
+                    </div>
+                    <TextToggleSwitch
+                      leftLabel={isSymbolicMode ? "Symbolic" : "Code"}
+                      rightLabel="Preamble"
+                      value={activeEditorView}
+                      onChange={(value) => {
+                        if (isSymbolicMode) {
+                          setSymbolicPaneView(value);
+                          return;
+                        }
+
+                        setQuantikzPaneView(value);
+                      }}
+                      ariaLabel={isSymbolicMode ? "Toggle symbolic editor view" : "Toggle quantikz editor view"}
+                    />
                   </div>
-                  <button type="button" className="secondary-button" onClick={handleLoadFromCode}>
-                    Convert to visual
-                  </button>
+                  {!isSymbolicMode ? (
+                    <button type="button" className="secondary-button" onClick={handleLoadFromCode}>
+                      Convert to visual
+                    </button>
+                  ) : (
+                    <span className={`export-generated-status ${symbolicLatexResult.state === "error" ? "is-error" : ""}`}>
+                      {symbolicStatusText}
+                    </span>
+                  )}
                 </div>
                 <div className="export-pane-body">
-                  {exportEditorTab === "code" ? (
+                  {!isSymbolicMode && quantikzPaneView === "content" ? (
                     <textarea
                       aria-label="Quantikz output"
                       className="code-output"
@@ -1296,7 +1393,7 @@ export default function App(): JSX.Element {
                       placeholder="Press “Convert to Quantikz” to generate code, or paste Quantikz here."
                       onChange={(event) => dispatch({ type: "setExportCode", code: event.target.value })}
                     />
-                  ) : (
+                  ) : !isSymbolicMode ? (
                     <textarea
                       aria-label="Quantikz preamble"
                       className="code-output preamble-output"
@@ -1305,12 +1402,30 @@ export default function App(): JSX.Element {
                       placeholder="LaTeX preamble"
                       onChange={(event) => dispatch({ type: "setExportPreamble", preamble: event.target.value })}
                     />
+                  ) : symbolicPaneView === "content" ? (
+                    <textarea
+                      aria-label="Symbolic evolution output"
+                      className="code-output preamble-output"
+                      spellCheck={false}
+                      value={symbolicLatexResult.latex}
+                      placeholder={symbolicTextareaPlaceholder}
+                      readOnly={true}
+                    />
+                  ) : (
+                    <textarea
+                      aria-label="Symbolic preamble"
+                      className="code-output preamble-output"
+                      spellCheck={false}
+                      value={state.exportSymbolicPreamble}
+                      placeholder={symbolicPreamblePlaceholder}
+                      onChange={(event) => dispatch({ type: "setExportSymbolicPreamble", preamble: event.target.value })}
+                    />
                   )}
                 </div>
               </div>
               <div className="export-pane pdf-preview-panel" aria-live="polite">
                 <div className="export-pane-header export-pane-header-preview">
-                  <span className="export-field-label">Figure preview</span>
+                  <span className="export-field-label">{previewHeadingLabel}</span>
                   <div className="pdf-preview-actions">
                     <button
                       type="button"
@@ -1342,20 +1457,34 @@ export default function App(): JSX.Element {
                     <img
                       className="pdf-preview-frame"
                       src={previewImageUrl}
-                      alt="Rendered Quantikz figure preview"
-                      title="Rendered Quantikz figure preview"
+                      alt={previewAltText}
+                      title={previewAltText}
                       draggable={true}
                       onDragStart={handlePreviewDragStart}
                     />
-                    <p className="pdf-preview-drag-hint">Drag the figure into another app or onto the desktop.</p>
+                    <p className="pdf-preview-drag-hint">
+                      {isSymbolicMode
+                        ? "Drag the rendered symbolic evolution into another app or onto the desktop."
+                        : "Drag the figure into another app or onto the desktop."}
+                    </p>
                   </div>
                 ) : (
                   <p className="pdf-preview-placeholder">
-                    {pdfPreviewState === "loading"
-                      ? "Rendering figure preview..."
-                      : pdfPreviewState === "error"
-                        ? pdfPreviewError ?? "Unable to render the figure preview."
-                        : "Generate or paste Quantikz code to preview the rendered figure."}
+                    {isSymbolicMode
+                      ? symbolicLatexResult.state === "loading"
+                        ? "Generating symbolic evolution..."
+                        : symbolicLatexResult.state === "error"
+                          ? symbolicLatexResult.error ?? "Unable to generate the symbolic evolution."
+                          : pdfPreviewState === "loading"
+                            ? "Rendering symbolic preview..."
+                            : pdfPreviewState === "error"
+                              ? pdfPreviewError ?? "Unable to render the symbolic preview."
+                              : "Generate or paste Quantikz code to preview the symbolic evolution."
+                      : pdfPreviewState === "loading"
+                        ? "Rendering figure preview..."
+                        : pdfPreviewState === "error"
+                          ? pdfPreviewError ?? "Unable to render the figure preview."
+                          : "Generate or paste Quantikz code to preview the rendered figure."}
                   </p>
                 )}
               </div>
@@ -1377,13 +1506,13 @@ export default function App(): JSX.Element {
       </main>
       <a
         className="corner-profile-link"
-        href={GITHUB_URL}
+        href={REPOSITORY_URL}
         target="_blank"
         rel="noreferrer"
-        aria-label="Open github/alenbob profile"
-        title="github/alenbob"
+        aria-label={`Open ${REPOSITORY_LABEL}`}
+        title={REPOSITORY_LABEL}
       >
-        github/alenbob
+        {REPOSITORY_LABEL}
       </a>
     </div>
   );

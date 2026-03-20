@@ -243,6 +243,7 @@ export interface EditorState {
   activeTool: ToolType;
   exportCode: string;
   exportPreamble: string;
+  exportSymbolicPreamble: string;
   exportIssues: ExportIssue[];
   uiMessage: string | null;
 }

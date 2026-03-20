@@ -1,5 +1,6 @@
 import { measureGateWidth, DEFAULT_CIRCUIT_LAYOUT, clampColumnSepCm, clampRowSepCm } from "./layout.js";
-import { latexNamedColorToHex, normalizeHexColor } from "./color.js";
+import { normalizeHexColor, resolveLatexColorExpression } from "./color.js";
+import { resolveVisualPreambleDefinitions } from "../shared/tikzPreamble";
 import { normalizeWireLabels } from "./wireLabels.js";
 import type {
   CircuitItem,
@@ -417,21 +418,21 @@ function toHexColor(red: number, green: number, blue: number): string {
     .padStart(2, "0")}`.toUpperCase();
 }
 
-function extractColor(value: string): string | null {
+function extractColor(value: string, customColors: Record<string, string> = {}): string | null {
   const match = value.match(/(?:draw|fill|text)\s*=\s*\{rgb,255:red,(\d+);green,(\d+);blue,(\d+)\}/i);
   if (match) {
     return normalizeHexColor(toHexColor(Number(match[1]), Number(match[2]), Number(match[3])));
   }
 
-  const namedMatch = value.match(/(?:draw|fill|text)\s*=\s*([A-Za-z]+)/i);
+  const namedMatch = value.match(/(?:draw|fill|text)\s*=\s*([^,}\]]+)/i);
   if (!namedMatch) {
     return null;
   }
 
-  return normalizeHexColor(latexNamedColorToHex(namedMatch[1]));
+  return resolveLatexColorExpression(namedMatch[1], customColors);
 }
 
-function extractCommandColor(command: ParsedCommand): string | null {
+function extractCommandColor(command: ParsedCommand, customColors: Record<string, string> = {}): string | null {
   if (command.name !== "color") {
     return null;
   }
@@ -443,7 +444,7 @@ function extractCommandColor(command: ParsedCommand): string | null {
 
   const colorModel = (command.options[0] ?? "").trim().toUpperCase();
   if (!colorModel) {
-    return normalizeHexColor(latexNamedColorToHex(value));
+    return resolveLatexColorExpression(value, customColors);
   }
 
   if (colorModel === "RGB") {
@@ -718,16 +719,18 @@ function normalizeConnectorRange(startRow: number, endRow: number): { row: numbe
   };
 }
 
-export function importFromQuantikz(code: string): ImportedCircuit {
+export function importFromQuantikz(code: string, importOptions: { preamble?: string } = {}): ImportedCircuit {
   const source = code.trim();
   if (!source) {
     throw new Error("Paste Quantikz code into the text box before importing.");
   }
 
+  const visualPreambleDefinitions = resolveVisualPreambleDefinitions(importOptions.preamble ?? "");
+
   const editorStepCount = extractEditorStepCount(source);
   const wireLabelMetadata = extractWireLabelMetadata(source);
-  const { options, body } = extractEnvironment(source);
-  const layout = parseSpacing(options);
+  const { options: environmentOptions, body } = extractEnvironment(source);
+  const layout = parseSpacing(environmentOptions);
   const rawRows = splitTopLevel(body, "\\\\")
     .map((row) => row.trim())
     .filter(Boolean);
@@ -737,7 +740,7 @@ export function importFromQuantikz(code: string): ImportedCircuit {
   }
 
   const wireLabels: WireLabel[] = Array.from({ length: rawRows.length }, () => ({ left: "", right: "" }));
-  const wireTypes = parseEnvironmentWireTypes(options, rawRows.length);
+  const wireTypes = parseEnvironmentWireTypes(environmentOptions, rawRows.length);
   const items: CircuitItem[] = [];
   const controlRefs: ControlRef[] = [];
   const swapRefs: SwapRef[] = [];
@@ -841,12 +844,12 @@ export function importFromQuantikz(code: string): ImportedCircuit {
 
       commands.forEach((command) => {
         if (command.name === "color") {
-          activeColor = extractCommandColor(command) ?? activeColor;
+          activeColor = extractCommandColor(command, visualPreambleDefinitions.latexColors) ?? activeColor;
           return;
         }
 
         const optionText = command.options.join(",");
-        const color = extractColor(optionText) ?? activeColor;
+        const color = extractColor(optionText, visualPreambleDefinitions.latexColors) ?? activeColor;
 
         switch (command.name) {
           case "qw":
@@ -861,7 +864,7 @@ export function importFromQuantikz(code: string): ImportedCircuit {
               point: { row: rowIndex, col: colIndex },
               span: { rows, cols: 1 },
               label,
-              width: measureGateWidth(label),
+              width: measureGateWidth(label, visualPreambleDefinitions.katexMacros),
               color
             };
             items.push(gate);
@@ -1003,7 +1006,7 @@ export function importFromQuantikz(code: string): ImportedCircuit {
           case "wire": {
             const direction = command.options[0]?.trim();
             const length = Number(command.options[1] ?? "1");
-            const wireColor = extractColor(command.options[2] ?? "") ?? color;
+            const wireColor = extractColor(command.options[2] ?? "", visualPreambleDefinitions.latexColors) ?? color;
             const wireType = parseWireTypeToken(command.args[0]);
 
             if (!Number.isFinite(length)) {

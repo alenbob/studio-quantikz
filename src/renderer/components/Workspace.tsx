@@ -43,7 +43,15 @@ import { projectSelectionMove, selectionHasExternalVerticalLinks } from "../move
 import { canPlaceItemsWithoutOverlap } from "../occupancy";
 import { canPlaceCellToolAtRow, getBoardMetrics, placementFromViewportPoint } from "../placement";
 import { getSwapStatusById } from "../swapAnalysis";
-import { isLikelyTexMath, normalizeGateLabel, normalizeLabel, renderGateDisplayHtml, renderGateLabelHtml, renderMathExpressionHtml } from "../tex";
+import {
+  isLikelyTexMath,
+  normalizeGateLabel,
+  normalizeLabel,
+  renderGateDisplayHtml,
+  renderGateLabelHtml,
+  renderMathExpressionHtml,
+  type KatexMacroMap
+} from "../tex";
 import {
   getWireLabelBracket,
   getWireLabelSpan,
@@ -71,6 +79,7 @@ import type {
 
 interface WorkspaceProps {
   state: EditorState;
+  latexMacros?: KatexMacroMap;
   isPasteMode: boolean;
   pasteClipboard: CircuitClipboard | null;
   selectedWireLabelGroup: { row: number; side: WireLabelSide; span: number; bracket: "none" | "brace" | "bracket" | "paren"; text: string } | null;
@@ -254,12 +263,12 @@ function withPreviewColor<T extends CircuitItem>(item: T): T {
   };
 }
 
-function getGateRect(item: GateItem, layout: CircuitLayout, columnMetrics: ColumnMetrics): SelectionRect {
+function getGateRect(item: GateItem, layout: CircuitLayout, columnMetrics: ColumnMetrics, customMacros?: KatexMacroMap): SelectionRect {
   const rowHeight = getRowHeight(layout);
   const [blockX, blockRight] = getColumnSpanRange(item.point.col, item.span.cols, layout, columnMetrics);
   const blockWidth = blockRight - blockX;
-  const width = Math.max(measureGateWidth(item.label), Math.max(GATE_MIN_WIDTH, blockWidth - 12));
-  const baseHeight = Math.max(GATE_MIN_HEIGHT, measureGateHeight(item.label));
+  const width = Math.max(measureGateWidth(item.label, customMacros), Math.max(GATE_MIN_WIDTH, blockWidth - 12));
+  const baseHeight = Math.max(GATE_MIN_HEIGHT, measureGateHeight(item.label, customMacros));
   const x = blockX + ((blockWidth - width) / 2);
   const y = getRowY(item.point.row, layout) - (baseHeight / 2);
   const height = baseHeight + ((item.span.rows - 1) * rowHeight);
@@ -470,12 +479,13 @@ function renderSelectedOverlay(
   steps: number,
   qubits: number,
   layout: CircuitLayout,
-  columnMetrics: ColumnMetrics
+  columnMetrics: ColumnMetrics,
+  customMacros?: KatexMacroMap
 ): JSX.Element | null {
   if (item.type === "gate") {
-    const rect = getGateRect(item, layout, columnMetrics);
+    const rect = getGateRect(item, layout, columnMetrics, customMacros);
     const label = normalizeGateLabel(item.label);
-    const texHtml = renderGateDisplayHtml(label);
+    const texHtml = renderGateDisplayHtml(label, customMacros);
     return (
       <g className="selected-object-overlay selected-gate-overlay">
         <rect
@@ -707,6 +717,7 @@ function renderEditableWireLabel(
   isEditing: boolean,
   isSelected: boolean,
   placeholder: string,
+  customMacros: KatexMacroMap | undefined,
   onSelect: () => void,
   onStartEditing: () => void,
   onStopEditing: () => void,
@@ -716,7 +727,7 @@ function renderEditableWireLabel(
   const normalized = normalizeLabel(label);
   const displayLabel = normalized || placeholder;
   const placeholderClass = !normalized ? "is-empty" : "";
-  const mathHtml = normalized && shouldRenderMathLabel(normalized) ? renderGateLabelHtml(normalized) : null;
+  const mathHtml = normalized && shouldRenderMathLabel(normalized) ? renderGateLabelHtml(normalized, customMacros) : null;
   const objectHeight = Math.max(height, 40);
 
   if (isEditing) {
@@ -901,11 +912,11 @@ function renderWireStroke(
   return <line x1={x1} x2={x2} y1={y} y2={y} className={className} style={style} />;
 }
 
-function renderGate(item: GateItem, isSelected: boolean, layout: CircuitLayout, columnMetrics: ColumnMetrics): JSX.Element {
-  const rect = getGateRect(item, layout, columnMetrics);
+function renderGate(item: GateItem, isSelected: boolean, layout: CircuitLayout, columnMetrics: ColumnMetrics, customMacros?: KatexMacroMap): JSX.Element {
+  const rect = getGateRect(item, layout, columnMetrics, customMacros);
   const textY = rect.y + (rect.height / 2);
   const label = normalizeGateLabel(item.label);
-  const texHtml = renderGateDisplayHtml(label);
+  const texHtml = renderGateDisplayHtml(label, customMacros);
   const color = getItemColor(item);
 
   return (
@@ -1144,14 +1155,15 @@ function renderHorizontalSegment(
   isSelected: boolean,
   steps: number,
   layout: CircuitLayout,
-  columnMetrics: ColumnMetrics
+  columnMetrics: ColumnMetrics,
+  customMacros?: KatexMacroMap
 ): JSX.Element {
   const [x1, x2] = getIncomingSegmentRange(item.point.col, steps, layout, columnMetrics);
   const y = getRowY(item.point.row, layout);
   const color = getItemColor(item);
   const normalizedBundleLabel = normalizeLabel(item.bundleLabel ?? "");
-  const bundleHtml = item.bundled === true && normalizedBundleLabel ? renderMathExpressionHtml(normalizedBundleLabel) : null;
-  const bundleMeasurement = item.bundled === true && normalizedBundleLabel ? measureMathLabel(normalizedBundleLabel) : { width: 0, height: 0 };
+  const bundleHtml = item.bundled === true && normalizedBundleLabel ? renderMathExpressionHtml(normalizedBundleLabel, customMacros) : null;
+  const bundleMeasurement = item.bundled === true && normalizedBundleLabel ? measureMathLabel(normalizedBundleLabel, customMacros) : { width: 0, height: 0 };
   const bundleX = ((x1 + x2) / 2) - (bundleMeasurement.width / 2);
   const bundleY = Math.max(y - bundleMeasurement.height - 12, 6);
 
@@ -1222,6 +1234,7 @@ function renderVerticalHover(
 
 export function Workspace({
   state,
+  latexMacros,
   isPasteMode,
   pasteClipboard,
   selectedWireLabelGroup,
@@ -1257,8 +1270,8 @@ export function Workspace({
 
   const layout = state.layout;
   const columnMetrics = useMemo(
-    () => getColumnMetrics(state.steps, state.items, layout),
-    [layout, state.items, state.steps]
+    () => getColumnMetrics(state.steps, state.items, layout, latexMacros),
+    [latexMacros, layout, state.items, state.steps]
   );
   const rowHeight = getRowHeight(layout);
   const width = getGridWidth(state.steps, layout, columnMetrics);
@@ -1711,7 +1724,7 @@ export function Workspace({
     const invalidSwap = item.type === "swapX" && !!swapStatus && !swapStatus.valid;
     const rendered =
       item.type === "gate"
-        ? renderGate(item, selected, layout, columnMetrics)
+        ? renderGate(item, selected, layout, columnMetrics, latexMacros)
         : item.type === "meter"
           ? renderMeter(item, selected, layout, columnMetrics)
           : item.type === "frame"
@@ -1721,7 +1734,7 @@ export function Workspace({
           : item.type === "verticalConnector"
             ? renderVerticalConnector(item, selected, layout, columnMetrics)
             : item.type === "horizontalSegment"
-          ? renderHorizontalSegment(item, selected, state.steps, layout, columnMetrics)
+          ? renderHorizontalSegment(item, selected, state.steps, layout, columnMetrics, latexMacros)
               : renderMarker(item, selected, layout, columnMetrics, invalidSwap);
 
     return (
@@ -1807,7 +1820,7 @@ export function Workspace({
       >
         {selected && !hasMultiSelection && renderItemOutline(item, "selected", state.steps, state.qubits, layout, columnMetrics)}
         {rendered}
-        {selected && renderSelectedOverlay(item, state.steps, state.qubits, layout, columnMetrics)}
+        {selected && renderSelectedOverlay(item, state.steps, state.qubits, layout, columnMetrics, latexMacros)}
       </g>
     );
   }
@@ -1816,7 +1829,7 @@ export function Workspace({
     const previewInvalidSwap = item.type === "swapX" && invalid;
     const rendered =
       item.type === "gate"
-        ? renderGate(item, false, layout, columnMetrics)
+        ? renderGate(item, false, layout, columnMetrics, latexMacros)
         : item.type === "meter"
           ? renderMeter(item, false, layout, columnMetrics)
           : item.type === "frame"
@@ -1826,7 +1839,7 @@ export function Workspace({
           : item.type === "verticalConnector"
             ? renderVerticalConnector(item, false, layout, columnMetrics)
             : item.type === "horizontalSegment"
-          ? renderHorizontalSegment(item, false, state.steps, layout, columnMetrics)
+          ? renderHorizontalSegment(item, false, state.steps, layout, columnMetrics, latexMacros)
               : renderMarker(item, false, layout, columnMetrics, previewInvalidSwap);
 
     return (
@@ -2308,6 +2321,7 @@ export function Workspace({
                       editingWireLabel?.row === row && editingWireLabel.side === "left",
                       leftSelected,
                       "",
+                      latexMacros,
                       () => onSelectWireLabelGroup(row, "left"),
                       () => {
                         onSelectWireLabelGroup(row, "left");
@@ -2336,6 +2350,7 @@ export function Workspace({
                       editingWireLabel?.row === row && editingWireLabel.side === "right",
                       rightSelected,
                       "",
+                      latexMacros,
                       () => onSelectWireLabelGroup(row, "right"),
                       () => {
                         onSelectWireLabelGroup(row, "right");

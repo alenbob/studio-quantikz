@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import App from "../src/renderer/App";
 import { DEFAULT_CIRCUIT_LAYOUT, getCellCenterX, getGridHeight, getGridWidth, getIncomingSegmentRange, getRowY } from "../src/renderer/layout";
 import * as renderedPdfModule from "../src/renderer/useRenderedPdf";
+import * as symbolicLatexModule from "../src/renderer/useSymbolicLatex";
 
 vi.mock("../src/renderer/pdfRaster", () => ({
   renderPdfBlobToPngBlob: vi.fn(async () => new Blob(["png-preview"], { type: "image/png" }))
@@ -368,12 +369,12 @@ describe("App smoke tests", () => {
     });
 
     await user.click(screen.getByRole("button", { name: /convert to visual/i }));
-    await user.click(screen.getByRole("button", { name: /^preamble$/i }));
+    await user.click(screen.getByRole("button", { name: /toggle quantikz editor view/i }));
 
     expect((screen.getByLabelText(/quantikz preamble/i) as HTMLTextAreaElement).value).toContain(
       String.raw`\newcommand{\foo}{bar}`
     );
-    await user.click(screen.getByRole("button", { name: /^code$/i }));
+    await user.click(screen.getByRole("button", { name: /toggle quantikz editor view/i }));
     expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain(
       String.raw`\begin{quantikz}`
     );
@@ -405,7 +406,7 @@ describe("App smoke tests", () => {
         }
       });
 
-      expect(useRenderedPdfSpy).toHaveBeenLastCalledWith(
+      expect(useRenderedPdfSpy).toHaveBeenCalledWith(
         expect.stringContaining(String.raw`\begin{quantikz}`),
         expect.stringContaining(String.raw`\usetikzlibrary{quantikz2}`)
       );
@@ -414,6 +415,77 @@ describe("App smoke tests", () => {
       expect(screen.queryByText(/generate or paste quantikz code/i)).not.toBeInTheDocument();
     } finally {
       useRenderedPdfSpy.mockRestore();
+    }
+  });
+
+  it("switches the export panel to generated symbolic latex and preview", async () => {
+    const user = userEvent.setup();
+    const useRenderedPdfSpy = vi.spyOn(renderedPdfModule, "useRenderedPdf").mockImplementation((code) => ({
+      pdfUrl: code.includes(String.raw`\begin{align*}`) || code.includes(String.raw`\begin{quantikz}`)
+        ? "blob:preview"
+        : null,
+      previewImageUrl: code.includes(String.raw`\begin{align*}`)
+        ? "blob:symbolic-preview-image"
+        : code.includes(String.raw`\begin{quantikz}`)
+          ? "blob:quantikz-preview-image"
+          : null,
+      state: code.includes(String.raw`\begin{align*}`) || code.includes(String.raw`\begin{quantikz}`) ? "ready" : "idle",
+      error: null
+    }));
+    const useSymbolicLatexSpy = vi.spyOn(symbolicLatexModule, "useSymbolicLatex").mockReturnValue({
+      latex: String.raw`\begin{align*}
+\ket{\Psi_{0}} &= \ket{0} \\
+\ket{\Psi_{1}} &= H\ket{0}
+\end{align*}`,
+      state: "ready",
+      error: null
+    });
+
+    try {
+      render(<App />);
+
+      fireEvent.change(screen.getByLabelText(/quantikz output/i), {
+        target: {
+          value: String.raw`\begin{quantikz}
+\lstick{$\ket{0}$} & \gate{H}
+\end{quantikz}`
+        }
+      });
+
+      await user.click(screen.getByRole("button", { name: /^symbolic$/i }));
+
+      expect((screen.getByLabelText(/symbolic evolution output/i) as HTMLTextAreaElement).value).toContain(
+        String.raw`\ket{\Psi_{1}} &= H\ket{0}`
+      );
+      expect(useRenderedPdfSpy).toHaveBeenCalledWith(
+        expect.stringContaining(String.raw`\begin{align*}`),
+        expect.stringContaining(String.raw`\usepackage{amsmath}`)
+      );
+      expect(screen.getByTitle(/rendered symbolic evolution preview/i)).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: /toggle symbolic editor view/i }));
+      expect((screen.getByLabelText(/symbolic preamble/i) as HTMLTextAreaElement).value).toContain(
+        String.raw`\documentclass[varwidth=2400pt,border=4pt]{standalone}`
+      );
+      fireEvent.change(screen.getByLabelText(/symbolic preamble/i), {
+        target: {
+          value: String.raw`\documentclass[border=6pt]{standalone}
+\usepackage{amsmath}
+\usepackage{braket}
+\newcommand{\foo}{bar}`
+        }
+      });
+
+      expect((screen.getByLabelText(/symbolic preamble/i) as HTMLTextAreaElement).value).toContain(
+        String.raw`\newcommand{\foo}{bar}`
+      );
+      expect(useRenderedPdfSpy).toHaveBeenCalledWith(
+        expect.stringContaining(String.raw`\begin{align*}`),
+        expect.stringContaining(String.raw`\newcommand{\foo}{bar}`)
+      );
+    } finally {
+      useRenderedPdfSpy.mockRestore();
+      useSymbolicLatexSpy.mockRestore();
     }
   });
 

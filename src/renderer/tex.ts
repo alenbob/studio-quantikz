@@ -6,6 +6,27 @@ const KATEX_MACROS = {
   "\\proj": "\\left|#1\\right\\rangle\\left\\langle#1\\right|"
 };
 
+export type KatexMacroMap = Record<string, string>;
+
+function mergeKatexMacros(customMacros?: KatexMacroMap): KatexMacroMap {
+  return customMacros ? { ...KATEX_MACROS, ...customMacros } : KATEX_MACROS;
+}
+
+function getMacroCacheKey(customMacros?: KatexMacroMap): string {
+  if (!customMacros || Object.keys(customMacros).length === 0) {
+    return "";
+  }
+
+  return Object.entries(customMacros)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, body]) => `${name}:${body}`)
+    .join("|");
+}
+
+export function getKatexMacroCacheKey(customMacros?: KatexMacroMap): string {
+  return getMacroCacheKey(customMacros);
+}
+
 export function normalizeLabel(label: string, fallback = ""): string {
   return label.trim() || fallback;
 }
@@ -114,11 +135,11 @@ function escapeGateLabel(label: string): string {
   return escapeLatexText(label);
 }
 
-function renderKatexHtml(expression: string): string | null {
+function renderKatexHtml(expression: string, customMacros?: KatexMacroMap): string | null {
   try {
     return katex.renderToString(expression, {
       displayMode: false,
-      macros: KATEX_MACROS,
+      macros: mergeKatexMacros(customMacros),
       output: "html",
       strict: "ignore",
       throwOnError: false
@@ -128,14 +149,14 @@ function renderKatexHtml(expression: string): string | null {
   }
 }
 
-export function renderMathExpressionHtml(expression: string): string | null {
+export function renderMathExpressionHtml(expression: string, customMacros?: KatexMacroMap): string | null {
   const normalized = normalizeLabel(expression);
 
   if (!normalized) {
     return null;
   }
 
-  return renderKatexHtml(stripMathDelimiters(normalized));
+  return renderKatexHtml(stripMathDelimiters(normalized), customMacros);
 }
 
 export function stripMathDelimiters(label: string): string {
@@ -169,12 +190,12 @@ export function getLabelMeasurementText(label: string): string {
   return simplified || "U";
 }
 
-export function renderGateLabelHtml(label: string): string | null {
-  return renderKatexHtml(stripMathDelimiters(label) || "U");
+export function renderGateLabelHtml(label: string, customMacros?: KatexMacroMap): string | null {
+  return renderKatexHtml(stripMathDelimiters(label) || "U", customMacros);
 }
 
-export function renderGateDisplayHtml(label: string): string | null {
-  return renderGateLabelHtml(normalizeGateLabel(label));
+export function renderGateDisplayHtml(label: string, customMacros?: KatexMacroMap): string | null {
+  return renderGateLabelHtml(normalizeGateLabel(label), customMacros);
 }
 
 export function formatLabelForQuantikz(label: string, fallback = ""): string {

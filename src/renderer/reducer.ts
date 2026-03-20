@@ -1,5 +1,5 @@
 import { canPasteClipboardAt, instantiateClipboardItems } from "./clipboard";
-import { DEFAULT_EXPORT_PREAMBLE } from "./document";
+import { DEFAULT_EXPORT_PREAMBLE, DEFAULT_SYMBOLIC_PREAMBLE } from "./document";
 import {
   DEFAULT_CIRCUIT_LAYOUT,
   clampColumnSepCm,
@@ -85,6 +85,7 @@ type Action =
   | { type: "convert" }
   | { type: "setExportCode"; code: string }
   | { type: "setExportPreamble"; preamble: string }
+  | { type: "setExportSymbolicPreamble"; preamble: string }
   | { type: "loadQuantikz"; imported: ImportedCircuit; code: string; preamble: string }
   | { type: "clearMessage" }
   | { type: "setMessage"; message: string | null };
@@ -695,6 +696,7 @@ function createInitialEditorState(): EditorState {
     activeTool: "select",
     exportCode: "",
     exportPreamble: DEFAULT_EXPORT_PREAMBLE,
+    exportSymbolicPreamble: DEFAULT_SYMBOLIC_PREAMBLE,
     exportIssues: [],
     uiMessage: null
   };
@@ -1566,6 +1568,13 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
         exportIssues: [],
         uiMessage: null
       };
+    case "setExportSymbolicPreamble":
+      return {
+        ...state,
+        exportSymbolicPreamble: action.preamble,
+        exportIssues: [],
+        uiMessage: null
+      };
     case "loadQuantikz":
       return withItems(
         {
@@ -1582,6 +1591,7 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
           activeTool: "select",
           exportCode: action.code,
           exportPreamble: action.preamble,
+          exportSymbolicPreamble: state.exportSymbolicPreamble,
           exportIssues: [],
           uiMessage: "Quantikz code loaded into the visual editor."
         },
