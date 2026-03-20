@@ -24,6 +24,7 @@ import {
   getIncomingSegmentRange,
   getRowHeight,
   getRowY,
+  getWireStartX,
   getWireEndX,
   measureMathLabel,
   measureGateWidth,
@@ -35,7 +36,6 @@ import {
   mixHexWithWhite
 } from "../color";
 import {
-  getEqualsColumnSuppressedHorizontalKeys,
   getMeterSuppressedHorizontalKeys,
   isVisibleHorizontalSegment,
   wireKey
@@ -142,6 +142,7 @@ interface DragState {
 type ItemOutlineTone = "selected" | "preview" | "invalid-preview";
 
 const INVALID_SWAP_COLOR = "#c24038";
+const EMPTY_EQUALS_COLUMN_INDICES = new Set<number>();
 
 function extractSvgViewBox(svg: string): string {
   const match = svg.match(/viewBox="([^"]+)"/i);
@@ -272,6 +273,51 @@ function withPreviewColor<T extends CircuitItem>(item: T): T {
   };
 }
 
+function getEqualsColumnIndexSet(items: CircuitItem[]): Set<number> {
+  return new Set(
+    items
+      .filter((item): item is EqualsColumnItem => item.type === "equalsColumn")
+      .map((item) => item.point.col)
+  );
+}
+
+function getHorizontalSegmentRenderRange(
+  col: number,
+  steps: number,
+  layout: CircuitLayout,
+  columnMetrics: ColumnMetrics,
+  equalsColumnIndices: Set<number>
+): [number, number] {
+  let [x1, x2] = getIncomingSegmentRange(col, steps, layout, columnMetrics);
+
+  if (equalsColumnIndices.has(col)) {
+    x2 = Math.min(x2, getColumnLeftX(col, layout, columnMetrics));
+  }
+
+  if (equalsColumnIndices.has(col - 1)) {
+    x1 = Math.max(x1, getColumnRightX(col - 1, layout, columnMetrics));
+  }
+
+  return [x1, x2];
+}
+
+function getWireAnchorX(
+  col: number,
+  steps: number,
+  layout: CircuitLayout,
+  columnMetrics: ColumnMetrics
+): number {
+  if (col < 0) {
+    return getWireStartX();
+  }
+
+  if (col >= steps) {
+    return getWireEndX(steps, layout, columnMetrics);
+  }
+
+  return getCellCenterX(col, layout, columnMetrics);
+}
+
 function getGateRect(item: GateItem, layout: CircuitLayout, columnMetrics: ColumnMetrics, customMacros?: KatexMacroMap): SelectionRect {
   const rowHeight = getRowHeight(layout);
   const [blockX, blockRight] = getColumnSpanRange(item.point.col, item.span.cols, layout, columnMetrics);
@@ -343,7 +389,8 @@ function getItemBounds(
   steps: number,
   qubits: number,
   layout: CircuitLayout,
-  columnMetrics: ColumnMetrics
+  columnMetrics: ColumnMetrics,
+  equalsColumnIndices: Set<number> = EMPTY_EQUALS_COLUMN_INDICES
 ): SelectionRect {
   if (item.type === "gate") {
     return getGateRect(item, layout, columnMetrics);
@@ -378,7 +425,7 @@ function getItemBounds(
   }
 
   if (item.type === "horizontalSegment") {
-    const [x1, x2] = getIncomingSegmentRange(item.point.col, steps, layout, columnMetrics);
+    const [x1, x2] = getHorizontalSegmentRenderRange(item.point.col, steps, layout, columnMetrics, equalsColumnIndices);
     return {
       x: x1,
       y: getRowY(item.point.row, layout) - 10,
@@ -429,9 +476,10 @@ function renderItemOutline(
   steps: number,
   qubits: number,
   layout: CircuitLayout,
-  columnMetrics: ColumnMetrics
+  columnMetrics: ColumnMetrics,
+  equalsColumnIndices: Set<number> = EMPTY_EQUALS_COLUMN_INDICES
 ): JSX.Element {
-  const bounds = getItemBounds(item, steps, qubits, layout, columnMetrics);
+  const bounds = getItemBounds(item, steps, qubits, layout, columnMetrics, equalsColumnIndices);
   const padding = getItemOutlinePadding(item);
 
   return (
@@ -451,9 +499,10 @@ function getExpandedItemOutlineBounds(
   steps: number,
   qubits: number,
   layout: CircuitLayout,
-  columnMetrics: ColumnMetrics
+  columnMetrics: ColumnMetrics,
+  equalsColumnIndices: Set<number> = EMPTY_EQUALS_COLUMN_INDICES
 ): SelectionRect & { radius: number } {
-  const bounds = getItemBounds(item, steps, qubits, layout, columnMetrics);
+  const bounds = getItemBounds(item, steps, qubits, layout, columnMetrics, equalsColumnIndices);
   const padding = getItemOutlinePadding(item);
 
   return {
@@ -479,9 +528,10 @@ function mergeSelectionOutlineRects(
   steps: number,
   qubits: number,
   layout: CircuitLayout,
-  columnMetrics: ColumnMetrics
+  columnMetrics: ColumnMetrics,
+  equalsColumnIndices: Set<number>
 ): Array<SelectionRect & { radius: number }> {
-  const outlines = items.map((item) => getExpandedItemOutlineBounds(item, steps, qubits, layout, columnMetrics));
+  const outlines = items.map((item) => getExpandedItemOutlineBounds(item, steps, qubits, layout, columnMetrics, equalsColumnIndices));
   const merged: Array<SelectionRect & { radius: number }> = [];
 
   for (const outline of outlines) {
@@ -513,6 +563,7 @@ function renderSelectedOverlay(
   qubits: number,
   layout: CircuitLayout,
   columnMetrics: ColumnMetrics,
+  equalsColumnIndices: Set<number>,
   customMacros?: KatexMacroMap
 ): JSX.Element | null {
   if (item.type === "gate") {
@@ -702,7 +753,7 @@ function renderSelectedOverlay(
   }
 
   if (item.type === "horizontalSegment") {
-    const [x1, x2] = getIncomingSegmentRange(item.point.col, steps, layout, columnMetrics);
+    const [x1, x2] = getHorizontalSegmentRenderRange(item.point.col, steps, layout, columnMetrics, equalsColumnIndices);
     const y = getRowY(item.point.row, layout);
     return (
       <g className="selected-object-overlay selected-wire-overlay">
@@ -1250,9 +1301,10 @@ function renderHorizontalSegment(
   steps: number,
   layout: CircuitLayout,
   columnMetrics: ColumnMetrics,
+  equalsColumnIndices: Set<number>,
   customMacros?: KatexMacroMap
 ): JSX.Element {
-  const [x1, x2] = getIncomingSegmentRange(item.point.col, steps, layout, columnMetrics);
+  const [x1, x2] = getHorizontalSegmentRenderRange(item.point.col, steps, layout, columnMetrics, equalsColumnIndices);
   const y = getRowY(item.point.row, layout);
   const color = getItemColor(item);
   const normalizedBundleLabel = normalizeLabel(item.bundleLabel ?? "");
@@ -1378,12 +1430,13 @@ export function Workspace({
     () => state.items.filter((item) => selectionSet.has(item.id)),
     [selectionSet, state.items]
   );
+  const equalsColumnIndices = useMemo(() => getEqualsColumnIndexSet(state.items), [state.items]);
   const hasMultiSelection = selectedItems.length > 1;
   const mergedSelectionOutlines = useMemo(
     () => hasMultiSelection
-      ? mergeSelectionOutlineRects(selectedItems, state.steps, state.qubits, layout, columnMetrics)
+      ? mergeSelectionOutlineRects(selectedItems, state.steps, state.qubits, layout, columnMetrics, equalsColumnIndices)
       : [],
-    [columnMetrics, hasMultiSelection, layout, selectedItems, state.qubits, state.steps]
+    [columnMetrics, equalsColumnIndices, hasMultiSelection, layout, selectedItems, state.qubits, state.steps]
   );
   const draggingItem = useMemo(
     () => state.items.find((item) => item.id === dragState?.anchorItemId) ?? null,
@@ -1406,12 +1459,12 @@ export function Workspace({
       ? instantiateClipboardItems(pasteClipboard, pasteAnchor)
       : [];
   const marqueeRect = marquee ? normalizeRect(marquee.start, marquee.current) : null;
+  const previewEqualsColumnIndices = useMemo(() => getEqualsColumnIndexSet(pastePreviewItems), [pastePreviewItems]);
   const suppressedHorizontalKeys = useMemo(
     () => new Set([
-      ...getMeterSuppressedHorizontalKeys(state.items, state.steps),
-      ...getEqualsColumnSuppressedHorizontalKeys(state.items, state.qubits)
+      ...getMeterSuppressedHorizontalKeys(state.items, state.steps)
     ]),
-    [state.items, state.qubits, state.steps]
+    [state.items, state.steps]
   );
   const columnDecorationItems = useMemo(() => state.items.filter(isColumnDecorationItem), [state.items]);
   const wireLayerItems = useMemo(
@@ -1541,6 +1594,7 @@ export function Workspace({
   const hoverProjectionAnnotationBackgroundItems = useMemo(() => hoverProjectionItems.filter(isAnnotationBackgroundItem), [hoverProjectionItems]);
   const hoverProjectionAnnotationOverlayItems = useMemo(() => hoverProjectionItems.filter(isAnnotationOverlayItem), [hoverProjectionItems]);
   const hoverProjectionMarkerItems = useMemo(() => hoverProjectionItems.filter(isMarkerItem), [hoverProjectionItems]);
+  const hoverProjectionEqualsColumnIndices = useMemo(() => getEqualsColumnIndexSet(hoverProjectionItems), [hoverProjectionItems]);
 
   useEffect(() => {
     if (!isPasteMode) {
@@ -1568,7 +1622,11 @@ export function Workspace({
       return;
     }
 
-    if (wireDraft && (wireDraft.start.row >= state.qubits || wireDraft.start.col >= state.steps)) {
+    if (wireDraft && (
+      wireDraft.start.row >= state.qubits ||
+      wireDraft.start.col < -1 ||
+      wireDraft.start.col > state.steps
+    )) {
       wireDraftRef.current = null;
       setWireDraft(null);
     }
@@ -1684,30 +1742,34 @@ export function Workspace({
   }
 
   function resolveWireAnchor(clientX: number, clientY: number): { row: number; col: number } | null {
-    const board = boardRef.current;
-    if (!board) {
-      return null;
-    }
-
-    const metrics = getBoardMetrics(board);
-    const placement = placementFromViewportPoint(clientX, clientY, metrics, "gate", state);
-    if (!placement || placement.kind !== "cell") {
-      return null;
-    }
-
     const point = getContentPoint(clientX, clientY);
     if (!point) {
       return null;
     }
+    let bestAnchor: { row: number; col: number; distance: number } | null = null;
 
-    const centerX = getCellCenterX(placement.col, layout, columnMetrics);
-    const centerY = getRowY(placement.row, layout);
+    for (let row = 0; row < state.qubits; row += 1) {
+      const centerY = getRowY(row, layout);
+      const deltaY = Math.abs(point.y - centerY);
+      if (deltaY > 16) {
+        continue;
+      }
 
-    if (Math.abs(point.x - centerX) > 16 || Math.abs(point.y - centerY) > 16) {
-      return null;
+      for (let col = -1; col <= state.steps; col += 1) {
+        const centerX = getWireAnchorX(col, state.steps, layout, columnMetrics);
+        const deltaX = Math.abs(point.x - centerX);
+        if (deltaX > 16) {
+          continue;
+        }
+
+        const distance = Math.hypot(deltaX, deltaY);
+        if (!bestAnchor || distance < bestAnchor.distance) {
+          bestAnchor = { row, col, distance };
+        }
+      }
     }
 
-    return { row: placement.row, col: placement.col };
+    return bestAnchor ? { row: bestAnchor.row, col: bestAnchor.col } : null;
   }
 
   function updateWireDraftFromPointer(clientX: number, clientY: number): void {
@@ -1856,12 +1918,12 @@ export function Workspace({
             ? renderFrame(item, selected, layout, columnMetrics)
             : item.type === "slice"
               ? renderSlice(item, selected, state.qubits, layout, columnMetrics)
-            : item.type === "equalsColumn"
+        : item.type === "equalsColumn"
               ? renderEqualsColumn(item, selected, state.qubits, layout, columnMetrics)
           : item.type === "verticalConnector"
             ? renderVerticalConnector(item, selected, layout, columnMetrics)
             : item.type === "horizontalSegment"
-          ? renderHorizontalSegment(item, selected, state.steps, layout, columnMetrics, latexMacros)
+          ? renderHorizontalSegment(item, selected, state.steps, layout, columnMetrics, equalsColumnIndices, latexMacros)
               : renderMarker(item, selected, layout, columnMetrics, invalidSwap);
 
     return (
@@ -1945,9 +2007,9 @@ export function Workspace({
           startItemDrag(item.id, event.clientX, event.clientY);
         }}
       >
-        {selected && !hasMultiSelection && renderItemOutline(item, "selected", state.steps, state.qubits, layout, columnMetrics)}
+        {selected && !hasMultiSelection && renderItemOutline(item, "selected", state.steps, state.qubits, layout, columnMetrics, equalsColumnIndices)}
         {rendered}
-        {selected && renderSelectedOverlay(item, state.steps, state.qubits, layout, columnMetrics, latexMacros)}
+        {selected && renderSelectedOverlay(item, state.steps, state.qubits, layout, columnMetrics, equalsColumnIndices, latexMacros)}
       </g>
     );
   }
@@ -1963,17 +2025,41 @@ export function Workspace({
             ? renderFrame(item, false, layout, columnMetrics)
             : item.type === "slice"
               ? renderSlice(item, false, state.qubits, layout, columnMetrics)
-            : item.type === "equalsColumn"
+        : item.type === "equalsColumn"
               ? renderEqualsColumn(item, false, state.qubits, layout, columnMetrics)
           : item.type === "verticalConnector"
             ? renderVerticalConnector(item, false, layout, columnMetrics)
             : item.type === "horizontalSegment"
-          ? renderHorizontalSegment(item, false, state.steps, layout, columnMetrics, latexMacros)
+          ? renderHorizontalSegment(
+              item,
+              false,
+              state.steps,
+              layout,
+              columnMetrics,
+              key.startsWith("paste-preview")
+                ? previewEqualsColumnIndices
+                : key.startsWith("hover-projection")
+                  ? hoverProjectionEqualsColumnIndices
+                  : equalsColumnIndices,
+              latexMacros
+            )
               : renderMarker(item, false, layout, columnMetrics, previewInvalidSwap);
 
     return (
       <g key={key} className={`paste-preview-item ${invalid ? "is-invalid" : ""}`}>
-        {renderItemOutline(item, invalid ? "invalid-preview" : "preview", state.steps, state.qubits, layout, columnMetrics)}
+        {renderItemOutline(
+          item,
+          invalid ? "invalid-preview" : "preview",
+          state.steps,
+          state.qubits,
+          layout,
+          columnMetrics,
+          key.startsWith("paste-preview")
+            ? previewEqualsColumnIndices
+            : key.startsWith("hover-projection")
+              ? hoverProjectionEqualsColumnIndices
+              : equalsColumnIndices
+        )}
         {rendered}
       </g>
     );
@@ -2088,12 +2174,12 @@ export function Workspace({
       if (rect.width < 4 && rect.height < 4) {
         onSelectionChange([]);
       } else {
-        onSelectionChange(
-          state.items
-            .filter((item) => item.type !== "horizontalSegment" || isVisibleHorizontalSegment(item))
-            .filter((item) => rectsIntersect(getItemBounds(item, state.steps, state.qubits, layout, columnMetrics), rect))
-            .map((item) => item.id)
-        );
+          onSelectionChange(
+            state.items
+              .filter((item) => item.type !== "horizontalSegment" || isVisibleHorizontalSegment(item))
+              .filter((item) => rectsIntersect(getItemBounds(item, state.steps, state.qubits, layout, columnMetrics, equalsColumnIndices), rect))
+              .map((item) => item.id)
+          );
       }
       setMarquee(null);
       setHoverPlacement(null);
@@ -2261,14 +2347,14 @@ export function Workspace({
       return null;
     }
 
-    const startX = getCellCenterX(wireDraft.start.col, layout, columnMetrics);
+    const startX = getWireAnchorX(wireDraft.start.col, state.steps, layout, columnMetrics);
     const startY = getRowY(wireDraft.start.row, layout);
     const snappedEnd = hoverPlacement?.kind === "cell" ? hoverPlacement : null;
     const aligned =
       snappedEnd !== null &&
       (snappedEnd.row === wireDraft.start.row || snappedEnd.col === wireDraft.start.col) &&
       !(snappedEnd.row === wireDraft.start.row && snappedEnd.col === wireDraft.start.col);
-    const endX = aligned && snappedEnd ? getCellCenterX(snappedEnd.col, layout, columnMetrics) : wireDraft.pointer.x;
+    const endX = aligned && snappedEnd ? getWireAnchorX(snappedEnd.col, state.steps, layout, columnMetrics) : wireDraft.pointer.x;
     const endY = aligned && snappedEnd ? getRowY(snappedEnd.row, layout) : wireDraft.pointer.y;
 
     return (
@@ -2277,7 +2363,7 @@ export function Workspace({
         <line x1={startX} x2={endX} y1={startY} y2={endY} className="wire-draft-line" />
         {snappedEnd && (
           <circle
-            cx={getCellCenterX(snappedEnd.col, layout, columnMetrics)}
+            cx={getWireAnchorX(snappedEnd.col, state.steps, layout, columnMetrics)}
             cy={getRowY(snappedEnd.row, layout)}
             r={5}
             className="wire-draft-target"
@@ -2575,6 +2661,27 @@ export function Workspace({
                   );
                 })
               )}
+              {Array.from({ length: state.qubits }, (_, row) => {
+                const y = getRowY(row, layout);
+                return (
+                  <g key={`pencil-guide-boundary-${row}`}>
+                    <circle
+                      data-testid={`pencil-guide-boundary-left-${row}`}
+                      cx={getWireStartX()}
+                      cy={y}
+                      r={4}
+                      className="pencil-guide pencil-guide-point"
+                    />
+                    <circle
+                      data-testid={`pencil-guide-boundary-right-${row}`}
+                      cx={wireEndX}
+                      cy={y}
+                      r={4}
+                      className="pencil-guide pencil-guide-point"
+                    />
+                  </g>
+                );
+              })}
             </g>
           )}
 
@@ -2639,14 +2746,14 @@ export function Workspace({
 
           {Array.from({ length: state.qubits }, (_, row) =>
             Array.from({ length: state.steps + 1 }, (_, col) => {
-              const [x1, x2] = getIncomingSegmentRange(col, state.steps, layout, columnMetrics);
+              const [displayX1, displayX2] = getHorizontalSegmentRenderRange(col, state.steps, layout, columnMetrics, equalsColumnIndices);
               return (
                 <rect
                   key={`hit-segment-${row}-${col}`}
                   data-testid={`segment-slot-${row}-${col}`}
-                x={x1}
+                x={displayX1}
                 y={getRowY(row, layout) - 14}
-                width={Math.max(x2 - x1, 12)}
+                width={Math.max(displayX2 - displayX1, 12)}
                 height={28}
                 className="grid-hit-segment"
                 onPointerDown={(event) => {
@@ -2708,7 +2815,7 @@ export function Workspace({
 
           {renderWireDraftPreview()}
 
-          {hoverPlacement && !areaDraw && !wireDraft && hoverTool !== "select" && (
+          {hoverPlacement && !areaDraw && !wireDraft && hoverTool !== "select" && hoverTool !== "pencil" && (
             hoverPlacement.kind === "cell" ? (
               <rect
                 x={getColumnLeftX(hoverPlacement.col, layout, columnMetrics)}
@@ -2722,7 +2829,13 @@ export function Workspace({
               />
             ) : (
               (() => {
-                const [x1, x2] = getIncomingSegmentRange(hoverPlacement.col, state.steps, layout, columnMetrics);
+                const [x1, x2] = getHorizontalSegmentRenderRange(
+                  hoverPlacement.col,
+                  state.steps,
+                  layout,
+                  columnMetrics,
+                  equalsColumnIndices
+                );
                 return (
                   <line
                     x1={x1}

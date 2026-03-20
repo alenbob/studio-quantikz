@@ -8,7 +8,6 @@ import {
 } from "./layout";
 import { normalizeHexColor } from "./color";
 import {
-  getEqualsColumnSuppressedHorizontalKeys,
   getMeterSuppressedHorizontalKeys,
   isVisibleHorizontalSegment,
   wireKey
@@ -1231,11 +1230,10 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
       }
 
       const suppressedKeys = getMeterSuppressedHorizontalKeys(state.items, state.steps);
-      const equalsSuppressedKeys = getEqualsColumnSuppressedHorizontalKeys(state.items, state.qubits);
       const maskKey = wireKey(action.row, action.col);
       const existing = getHorizontalSegmentAt(state.items, action.row, action.col);
 
-      if (state.wireMask[maskKey] === "absent" || suppressedKeys.has(maskKey) || equalsSuppressedKeys.has(maskKey)) {
+      if (state.wireMask[maskKey] === "absent" || suppressedKeys.has(maskKey)) {
         return {
           ...state,
           selectedItemIds: [],
@@ -1337,6 +1335,10 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
           ...state,
           uiMessage: null
         }, items, []);
+      }
+
+      if (action.start.col < 0 || action.start.col >= state.steps) {
+        return state;
       }
 
       const topRow = Math.min(action.start.row, action.end.row);

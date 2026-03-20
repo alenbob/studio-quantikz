@@ -100,6 +100,29 @@ describe("editorReducer selection workflows", () => {
     });
   });
 
+  it("draws a left half wire from the circuit boundary into the first column", () => {
+    const state = editorReducer(
+      {
+        ...initialState,
+        horizontalSegmentsUnlocked: true,
+        selectedItemIds: ["horizontalSegment-1"]
+      },
+      { type: "deleteSelected" }
+    );
+
+    const next = editorReducer(state, {
+      type: "drawWire",
+      start: { row: 0, col: -1 },
+      end: { row: 0, col: 0 }
+    });
+
+    expect(next.items.find((item) => item.type === "horizontalSegment" && item.point.row === 0 && item.point.col === 0)).toMatchObject({
+      type: "horizontalSegment",
+      point: { row: 0, col: 0 },
+      mode: "present"
+    });
+  });
+
   it("anchors an equals column to the selected step regardless of the clicked row", () => {
     const next = editorReducer(initialState, {
       type: "addItem",

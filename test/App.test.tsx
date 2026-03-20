@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import App from "../src/renderer/App";
-import { DEFAULT_CIRCUIT_LAYOUT, getCellCenterX, getGridHeight, getGridWidth, getIncomingSegmentRange, getRowY } from "../src/renderer/layout";
+import { DEFAULT_CIRCUIT_LAYOUT, getCellCenterX, getGridHeight, getGridWidth, getIncomingSegmentRange, getRowY, getWireStartX } from "../src/renderer/layout";
 import * as renderedPdfModule from "../src/renderer/useRenderedPdf";
 import * as symbolicLatexModule from "../src/renderer/useSymbolicLatex";
 
@@ -52,6 +52,11 @@ describe("App smoke tests", () => {
     expect(screen.getByRole("button", { name: /add right/i })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /convert to equal/i }));
+    await user.click(screen.getByRole("button", { name: /unlock wires/i }));
+    await user.click(screen.getByTestId("segment-slot-0-2"));
+    expect(screen.getByLabelText(/classical wire/i)).toBeInTheDocument();
+    await user.click(screen.getByTestId("segment-slot-0-3"));
+    expect(screen.getByLabelText(/bundle wire/i)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /convert to quantikz/i }));
 
     expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain("\\midstick[wires=3]{=}");
@@ -895,6 +900,46 @@ describe("App smoke tests", () => {
 
     expect(output).toContain("\\meter{}");
     expect(output).not.toContain("\\wireoverride{q}");
+  });
+
+  it("shows boundary guide points in wire mode and redraws a left half wire from the circuit edge", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+    const board = container.querySelector(".workspace-board") as HTMLDivElement;
+    mockBoardRect(board);
+
+    await user.click(screen.getByRole("button", { name: /unlock wires/i }));
+    await user.click(screen.getByRole("button", { name: /^select$/i }));
+    await user.click(screen.getByTestId("segment-slot-0-0"));
+    await user.click(screen.getByRole("button", { name: /delete selected/i }));
+
+    await user.click(screen.getByRole("button", { name: /^wires$/i }));
+    expect(screen.getByTestId("pencil-guide-boundary-left-0")).toBeInTheDocument();
+    expect(screen.getByTestId("pencil-guide-boundary-right-0")).toBeInTheDocument();
+
+    await user.pointer([
+      {
+        target: board,
+        coords: {
+          x: getWireStartX(),
+          y: getRowY(0, DEFAULT_CIRCUIT_LAYOUT)
+        },
+        keys: "[MouseLeft]"
+      },
+      {
+        target: board,
+        coords: {
+          x: getCellCenterX(0, DEFAULT_CIRCUIT_LAYOUT),
+          y: getRowY(0, DEFAULT_CIRCUIT_LAYOUT)
+        },
+        keys: "[MouseLeft]"
+      }
+    ]);
+
+    await user.click(screen.getByRole("button", { name: /convert to quantikz/i }));
+    const output = (screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value;
+
+    expect(output).not.toContain("\\setwiretype{n}");
   });
 
   it("can grow the grid without auto-wiring the new row and column", async () => {
