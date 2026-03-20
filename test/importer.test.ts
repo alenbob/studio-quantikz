@@ -124,6 +124,41 @@ describe("importFromQuantikz", () => {
     expect(slice && slice.type === "slice" ? slice.label : "").toBe("\\phi");
   });
 
+  it("imports an equals separator column from a midstick command", () => {
+    const code = String.raw`\begin{quantikz}
+\midstick[wires=3]{=} & \gate{H} \\
+ & \qw \\
+ & \qw
+\end{quantikz}`;
+
+    const imported = importFromQuantikz(code);
+
+    expect(imported.items).toContainEqual(expect.objectContaining({
+      type: "equalsColumn",
+      point: { row: 0, col: 0 }
+    }));
+    expect(imported.items.some((item) => item.type === "gate" && item.point.row === 0 && item.point.col === 1)).toBe(true);
+  });
+
+  it("imports the new exported equals-and-gap form with setwiretype", () => {
+    const code = String.raw`\begin{quantikz}[row sep={0.9cm,between origins}, column sep=0.7cm]
+ &  &  & \midstick[wires=3]{=} &  &  & \setwiretype{n} \\
+ &  &  &  &  &  & \setwiretype{n} \\
+ &  &  &  &  &  & \setwiretype{n}
+\end{quantikz}`;
+
+    const imported = importFromQuantikz(code);
+    const equalsColumn = imported.items.find((item) => item.type === "equalsColumn");
+    const absentSegments = imported.items.filter(
+      (item) => item.type === "horizontalSegment" && item.mode === "absent" && item.point.col === 5
+    );
+
+    expect(imported.qubits).toBe(3);
+    expect(imported.steps).toBe(5);
+    expect(equalsColumn && equalsColumn.type === "equalsColumn" ? equalsColumn.point : null).toEqual({ row: 0, col: 2 });
+    expect(absentSegments).toHaveLength(3);
+  });
+
   it("imports ghost continuation cells as a multi-step gate span", () => {
     const code = String.raw`\begin{quantikz}
 & \gate[wires=2,style={minimum width=2.1cm}]{U} & \ghost{U} & \ghost{U} \\

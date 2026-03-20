@@ -8,6 +8,7 @@ import {
 } from "./layout";
 import { normalizeHexColor } from "./color";
 import {
+  getEqualsColumnSuppressedHorizontalKeys,
   getMeterSuppressedHorizontalKeys,
   isVisibleHorizontalSegment,
   wireKey
@@ -18,8 +19,13 @@ import { exportToQuantikz } from "./exporter";
 import { validateCircuit } from "./validation";
 import {
   createWireLabels,
+  getWireLabelBracket,
+  getWireLabelSpan,
+  isWireLabelGroupStart,
   mergeWireLabelGroups,
+  normalizeWireLabels,
   resizeWireLabels,
+  type WireLabelSide,
   unmergeWireLabelGroup,
   updateWireLabelGroup,
   updateWireLabelText
@@ -37,6 +43,7 @@ import type {
   PlacementTarget,
   SliceItem,
   ToolType,
+  WireLabel,
   WireLabelBracket,
   WireType
 } from "./types";
@@ -79,6 +86,8 @@ type Action =
   | { type: "mergeWireLabelGroup"; row: number; side: "left" | "right" }
   | { type: "unmergeWireLabelGroup"; row: number; side: "left" | "right" }
   | { type: "updateRowWireType"; row: number; wireType: WireType }
+  | { type: "insertGridLine"; dimension: "qubits" | "steps"; index: number }
+  | { type: "deleteGridLine"; dimension: "qubits" | "steps"; index: number }
   | { type: "resizeGrid"; dimension: "qubits" | "steps"; value: number }
   | { type: "deleteSelected" }
   | { type: "resetCircuit" }
@@ -185,6 +194,440 @@ function buildVerticalConnector(
   };
 }
 
+interface WireLabelGroupDescriptor {
+  row: number;
+  span: number;
+  bracket: WireLabelBracket;
+  text: string;
+}
+
+function extractWireLabelGroups(labels: WireLabel[], side: WireLabelSide, qubits: number): WireLabelGroupDescriptor[] {
+  const groups: WireLabelGroupDescriptor[] = [];
+
+  for (let row = 0; row < qubits; row += 1) {
+    if (!isWireLabelGroupStart(labels, row, side)) {
+      continue;
+    }
+
+    const label = labels[row];
+    const span = getWireLabelSpan(label, side);
+    const bracket = getWireLabelBracket(label, side);
+    const text = label?.[side] ?? "";
+
+    if (!text && span <= 1) {
+      continue;
+    }
+
+    groups.push({ row, span, bracket, text });
+  }
+
+  return groups;
+}
+
+function buildWireLabelsFromGroups(
+  qubits: number,
+  leftGroups: WireLabelGroupDescriptor[],
+  rightGroups: WireLabelGroupDescriptor[]
+): WireLabel[] {
+  const labels = createWireLabels(qubits);
+
+  for (const group of leftGroups) {
+    if (group.row < 0 || group.row >= qubits) {
+      continue;
+    }
+
+    labels[group.row] = {
+      ...labels[group.row],
+      left: group.text,
+      leftSpan: group.span,
+      leftBracket: group.span > 1 ? group.bracket : "none"
+    };
+  }
+
+  for (const group of rightGroups) {
+    if (group.row < 0 || group.row >= qubits) {
+      continue;
+    }
+
+    labels[group.row] = {
+      ...labels[group.row],
+      right: group.text,
+      rightSpan: group.span,
+      rightBracket: group.span > 1 ? group.bracket : "none"
+    };
+  }
+
+  return normalizeWireLabels(labels, qubits);
+}
+
+function insertWireLabelGroups(
+  groups: WireLabelGroupDescriptor[],
+  index: number
+): WireLabelGroupDescriptor[] {
+  return groups.map((group) => {
+    const end = group.row + group.span - 1;
+    if (group.row >= index) {
+      return { ...group, row: group.row + 1 };
+    }
+
+    if (group.row < index && index <= end) {
+      return { ...group, span: group.span + 1 };
+    }
+
+    return group;
+  });
+}
+
+function deleteWireLabelGroups(
+  groups: WireLabelGroupDescriptor[],
+  index: number
+): WireLabelGroupDescriptor[] {
+  return groups.flatMap((group) => {
+    const end = group.row + group.span - 1;
+
+    if (index < group.row) {
+      return [{ ...group, row: group.row - 1 }];
+    }
+
+    if (index > end) {
+      return [group];
+    }
+
+    if (group.span <= 1) {
+      return [];
+    }
+
+    return [{
+      ...group,
+      span: group.span - 1,
+      bracket: group.span - 1 > 1 ? group.bracket : "none"
+    }];
+  });
+}
+
+function insertWireLabelRow(labels: WireLabel[], index: number, qubits: number): WireLabel[] {
+  const leftGroups = insertWireLabelGroups(extractWireLabelGroups(labels, "left", qubits), index);
+  const rightGroups = insertWireLabelGroups(extractWireLabelGroups(labels, "right", qubits), index);
+  return buildWireLabelsFromGroups(qubits + 1, leftGroups, rightGroups);
+}
+
+function deleteWireLabelRow(labels: WireLabel[], index: number, qubits: number): WireLabel[] {
+  const leftGroups = deleteWireLabelGroups(extractWireLabelGroups(labels, "left", qubits), index);
+  const rightGroups = deleteWireLabelGroups(extractWireLabelGroups(labels, "right", qubits), index);
+  return buildWireLabelsFromGroups(Math.max(qubits - 1, 1), leftGroups, rightGroups);
+}
+
+function insertWireTypeRow(wireTypes: WireType[], index: number): WireType[] {
+  return [
+    ...wireTypes.slice(0, index),
+    "quantum",
+    ...wireTypes.slice(index)
+  ];
+}
+
+function deleteWireTypeRow(wireTypes: WireType[], index: number): WireType[] {
+  return wireTypes.filter((_, row) => row !== index);
+}
+
+function insertRowItems(items: CircuitItem[], index: number): CircuitItem[] {
+  return items.map((item) => {
+    switch (item.type) {
+      case "gate":
+      case "meter":
+      case "frame": {
+        const spanRows = item.span.rows;
+        const end = item.point.row + spanRows - 1;
+        if (item.point.row >= index) {
+          return {
+            ...item,
+            point: {
+              ...item.point,
+              row: item.point.row + 1
+            }
+          };
+        }
+
+        if (item.point.row < index && index <= end) {
+          return {
+            ...item,
+            span: {
+              ...item.span,
+              rows: spanRows + 1
+            }
+          };
+        }
+
+        return item;
+      }
+      case "verticalConnector": {
+        const end = item.point.row + item.length;
+        if (item.point.row >= index) {
+          return {
+            ...item,
+            point: {
+              ...item.point,
+              row: item.point.row + 1
+            }
+          };
+        }
+
+        if (item.point.row < index && index <= end) {
+          return {
+            ...item,
+            length: item.length + 1
+          };
+        }
+
+        return item;
+      }
+      case "horizontalSegment":
+        return item.point.row >= index
+          ? {
+              ...item,
+              point: {
+                ...item.point,
+                row: item.point.row + 1
+              }
+            }
+          : item;
+      case "equalsColumn":
+        return item;
+      default:
+        return item.point.row >= index
+          ? {
+              ...item,
+              point: {
+                ...item.point,
+                row: item.point.row + 1
+              }
+            }
+          : item;
+    }
+  });
+}
+
+function deleteRowItems(items: CircuitItem[], index: number): CircuitItem[] {
+  return items.flatMap((item) => {
+    switch (item.type) {
+      case "gate":
+      case "meter":
+      case "frame": {
+        const spanRows = item.span.rows;
+        const end = item.point.row + spanRows - 1;
+
+        if (item.point.row > index) {
+          return [{
+            ...item,
+            point: {
+              ...item.point,
+              row: item.point.row - 1
+            }
+          }];
+        }
+
+        if (index < item.point.row || index > end) {
+          return [item];
+        }
+
+        if (spanRows <= 1) {
+          return [];
+        }
+
+        return [{
+          ...item,
+          span: {
+            ...item.span,
+            rows: spanRows - 1
+          }
+        }];
+      }
+      case "verticalConnector": {
+        const end = item.point.row + item.length;
+
+        if (item.point.row > index) {
+          return [{
+            ...item,
+            point: {
+              ...item.point,
+              row: item.point.row - 1
+            }
+          }];
+        }
+
+        if (index < item.point.row || index > end) {
+          return [item];
+        }
+
+        if (item.length <= 1) {
+          return [];
+        }
+
+        return [{
+          ...item,
+          length: item.length - 1
+        }];
+      }
+      case "horizontalSegment":
+        if (item.point.row === index) {
+          return [];
+        }
+
+        return item.point.row > index
+          ? [{
+              ...item,
+              point: {
+                ...item.point,
+                row: item.point.row - 1
+              }
+            }]
+          : [item];
+      case "equalsColumn":
+        return [item];
+      default:
+        if (item.point.row === index) {
+          return [];
+        }
+
+        return item.point.row > index
+          ? [{
+              ...item,
+              point: {
+                ...item.point,
+                row: item.point.row - 1
+              }
+            }]
+          : [item];
+    }
+  });
+}
+
+function insertColumnItems(items: CircuitItem[], index: number): CircuitItem[] {
+  return items.map((item) => {
+    switch (item.type) {
+      case "gate":
+      case "frame": {
+        const end = item.point.col + item.span.cols - 1;
+        if (item.point.col >= index) {
+          return {
+            ...item,
+            point: {
+              ...item.point,
+              col: item.point.col + 1
+            }
+          };
+        }
+
+        if (item.point.col < index && index <= end) {
+          return {
+            ...item,
+            span: {
+              ...item.span,
+              cols: item.span.cols + 1
+            }
+          };
+        }
+
+        return item;
+      }
+      case "horizontalSegment":
+        return item.point.col >= index
+          ? {
+              ...item,
+              point: {
+                ...item.point,
+                col: item.point.col + 1
+              }
+            }
+          : item;
+      default:
+        return item.point.col >= index
+          ? {
+              ...item,
+              point: {
+                ...item.point,
+                col: item.point.col + 1
+              }
+            }
+          : item;
+    }
+  });
+}
+
+function deleteColumnItems(items: CircuitItem[], index: number): CircuitItem[] {
+  return items.flatMap((item) => {
+    switch (item.type) {
+      case "gate":
+      case "frame": {
+        const end = item.point.col + item.span.cols - 1;
+
+        if (item.point.col > index) {
+          return [{
+            ...item,
+            point: {
+              ...item.point,
+              col: item.point.col - 1
+            }
+          }];
+        }
+
+        if (index < item.point.col || index > end) {
+          return [item];
+        }
+
+        if (item.span.cols <= 1) {
+          return [];
+        }
+
+        return [{
+          ...item,
+          span: {
+            ...item.span,
+            cols: item.span.cols - 1
+          }
+        }];
+      }
+      case "horizontalSegment":
+        if (item.point.col === index) {
+          return [];
+        }
+
+        if (item.point.col === index + 1) {
+          return [{
+            ...item,
+            point: {
+              ...item.point,
+              col: index
+            }
+          }];
+        }
+
+        return item.point.col > index + 1
+          ? [{
+              ...item,
+              point: {
+                ...item.point,
+                col: item.point.col - 1
+              }
+            }]
+          : [item];
+      default:
+        if (item.point.col === index) {
+          return [];
+        }
+
+        return item.point.col > index
+          ? [{
+              ...item,
+              point: {
+                ...item.point,
+                col: item.point.col - 1
+              }
+            }]
+          : [item];
+    }
+  });
+}
+
 function fitsInGrid(item: CircuitItem, qubits: number, steps: number): boolean {
   switch (item.type) {
     case "gate":
@@ -204,6 +647,8 @@ function fitsInGrid(item: CircuitItem, qubits: number, steps: number): boolean {
       );
     case "slice":
       return item.point.row >= 0 && item.point.row < qubits && item.point.col >= 0 && item.point.col < steps;
+    case "equalsColumn":
+      return item.point.col >= 0 && item.point.col < steps;
     case "verticalConnector":
       return (
         item.point.row >= 0 &&
@@ -383,6 +828,13 @@ function createItem(tool: ItemType, placement: PlacementTarget, state: EditorSta
         label: "slice",
         color: null
       };
+    case "equalsColumn":
+      return {
+        id: createId(tool),
+        type: "equalsColumn",
+        point: { row: 0, col: placement.col },
+        color: null
+      };
     case "verticalConnector":
       return {
         id: createId(tool),
@@ -477,6 +929,16 @@ function moveItemToPlacement(item: CircuitItem, placement: PlacementTarget, stat
       ...item,
       point: {
         row: clamp(placement.row, 0, state.qubits - 1),
+        col: clamp(placement.col, 0, state.steps - 1)
+      }
+    };
+  }
+
+  if (item.type === "equalsColumn") {
+    return {
+      ...item,
+      point: {
+        row: 0,
         col: clamp(placement.col, 0, state.steps - 1)
       }
     };
@@ -585,6 +1047,26 @@ function addSegmentsForExpandedGrid(
   }
 
   return nextItems;
+}
+
+function buildAbsentSegmentsForInsertedRow(
+  row: number,
+  steps: number,
+  wireType: WireType
+): HorizontalSegmentItem[] {
+  return Array.from({ length: steps + 1 }, (_, col) =>
+    buildHorizontalSegment(row, col, "absent", wireType)
+  );
+}
+
+function buildAbsentSegmentsForInsertedColumn(
+  qubits: number,
+  col: number,
+  wireTypes: WireType[]
+): HorizontalSegmentItem[] {
+  return Array.from({ length: qubits }, (_, row) =>
+    buildHorizontalSegment(row, col, "absent", wireTypes[row] ?? "quantum")
+  );
 }
 
 function withItems(state: EditorState, items: CircuitItem[], selectedItemIds: string[]): EditorState {
@@ -749,10 +1231,11 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
       }
 
       const suppressedKeys = getMeterSuppressedHorizontalKeys(state.items, state.steps);
+      const equalsSuppressedKeys = getEqualsColumnSuppressedHorizontalKeys(state.items, state.qubits);
       const maskKey = wireKey(action.row, action.col);
       const existing = getHorizontalSegmentAt(state.items, action.row, action.col);
 
-      if (state.wireMask[maskKey] === "absent" || suppressedKeys.has(maskKey)) {
+      if (state.wireMask[maskKey] === "absent" || suppressedKeys.has(maskKey) || equalsSuppressedKeys.has(maskKey)) {
         return {
           ...state,
           selectedItemIds: [],
@@ -1453,6 +1936,87 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
         ...state,
         wireTypes
       });
+    }
+    case "insertGridLine": {
+      if (action.dimension === "qubits") {
+        const index = clamp(action.index, 0, state.qubits);
+        const qubits = state.qubits + 1;
+        const wireTypes = insertWireTypeRow(state.wireTypes, index);
+        let items = insertRowItems(state.items, index);
+
+        if (!state.autoWireNewGrid) {
+          items = [
+            ...items,
+            ...buildAbsentSegmentsForInsertedRow(index, state.steps, wireTypes[index] ?? "quantum")
+          ];
+        }
+
+        return withItems(
+          {
+            ...state,
+            qubits,
+            wireTypes,
+            wireLabels: insertWireLabelRow(state.wireLabels, index, state.qubits),
+            uiMessage: null
+          },
+          items,
+          state.selectedItemIds
+        );
+      }
+
+      const index = clamp(action.index, 0, state.steps);
+      const steps = state.steps + 1;
+      let items = insertColumnItems(state.items, index);
+
+      if (!state.autoWireNewGrid) {
+        items = [
+          ...items,
+          ...buildAbsentSegmentsForInsertedColumn(state.qubits, index, state.wireTypes)
+        ];
+      }
+
+      return withItems(
+        {
+          ...state,
+          steps,
+          uiMessage: null
+        },
+        items,
+        state.selectedItemIds
+      );
+    }
+    case "deleteGridLine": {
+      if (action.dimension === "qubits") {
+        if (state.qubits <= 1 || action.index < 0 || action.index >= state.qubits) {
+          return state;
+        }
+
+        return withItems(
+          {
+            ...state,
+            qubits: state.qubits - 1,
+            wireTypes: deleteWireTypeRow(state.wireTypes, action.index),
+            wireLabels: deleteWireLabelRow(state.wireLabels, action.index, state.qubits),
+            uiMessage: null
+          },
+          deleteRowItems(state.items, action.index),
+          state.selectedItemIds
+        );
+      }
+
+      if (state.steps <= 1 || action.index < 0 || action.index >= state.steps) {
+        return state;
+      }
+
+      return withItems(
+        {
+          ...state,
+          steps: state.steps - 1,
+          uiMessage: null
+        },
+        deleteColumnItems(state.items, action.index),
+        state.selectedItemIds
+      );
     }
     case "resizeGrid": {
       const nextValue = Math.max(1, action.value);

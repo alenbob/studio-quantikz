@@ -4,10 +4,12 @@ import type { WireLabelSide } from "../wireLabels";
 import type {
   CircuitItem,
   ControlState,
+  EqualsColumnItem,
   FrameItem,
   GateItem,
   HorizontalSegmentItem,
   SliceItem,
+  StructureSelection,
   VerticalConnectorItem,
   WireLabelBracket,
   WireType,
@@ -19,6 +21,7 @@ const ITEM_LABELS: Record<CircuitItem["type"], string> = {
   meter: "Meter",
   frame: "Frame",
   slice: "Slice",
+  equalsColumn: "Equals column",
   verticalConnector: "Vertical line",
   horizontalSegment: "Horizontal line",
   controlDot: "Control dot",
@@ -29,6 +32,8 @@ const ITEM_LABELS: Record<CircuitItem["type"], string> = {
 interface InspectorProps {
   selectedItem: CircuitItem | null;
   selectedItems: CircuitItem[];
+  selectedStructure?: StructureSelection | null;
+  selectedColumnHasEquals?: boolean;
   selectedWireLabelGroup?: {
     row: number;
     side: WireLabelSide;
@@ -38,6 +43,7 @@ interface InspectorProps {
   } | null;
   selectedCount: number;
   qubits: number;
+  steps: number;
   wireLabels: WireLabel[];
   onGateLabelChange: (itemId: string, label: string) => void;
   onGateSpanChange: (itemId: string, rows: number, cols: number) => void;
@@ -64,6 +70,9 @@ interface InspectorProps {
     updates: { span?: number; bracket?: WireLabelBracket }
   ) => void;
   onWireLabelGroupUnmerge?: (row: number, side: WireLabelSide) => void;
+  onInsertStructure?: (selection: StructureSelection, side: "before" | "after") => void;
+  onDeleteStructure?: (selection: StructureSelection) => void;
+  onConvertColumnToEquals?: (col: number) => void;
   onDelete: () => void;
   onClearSelection?: () => void;
   showWireLabels?: boolean;
@@ -362,6 +371,89 @@ function renderFrameInspector(
   );
 }
 
+function renderEqualsColumnInspector(
+  item: EqualsColumnItem,
+  qubits: number
+): JSX.Element {
+  return (
+    <dl className="inspector-meta">
+      <div>
+        <dt>Step</dt>
+        <dd>{item.point.col + 1}</dd>
+      </div>
+      <div>
+        <dt>Span</dt>
+        <dd>{qubits} wires</dd>
+      </div>
+    </dl>
+  );
+}
+
+function renderStructureInspector(
+  selection: StructureSelection,
+  qubits: number,
+  steps: number,
+  hasEquals: boolean,
+  onInsertStructure: NonNullable<InspectorProps["onInsertStructure"]>,
+  onDeleteStructure: NonNullable<InspectorProps["onDeleteStructure"]>,
+  onConvertColumnToEquals: NonNullable<InspectorProps["onConvertColumnToEquals"]>
+): JSX.Element {
+  const isRow = selection.kind === "row";
+  const insertBeforeLabel = isRow ? "Add above" : "Add left";
+  const insertAfterLabel = isRow ? "Add below" : "Add right";
+  const deleteLabel = isRow ? "Delete row" : "Delete column";
+  const deleteDisabled = isRow ? qubits <= 1 : steps <= 1;
+
+  return (
+    <>
+      <dl className="inspector-meta">
+        <div>
+          <dt>Type</dt>
+          <dd>{isRow ? "Row" : "Column"}</dd>
+        </div>
+        <div>
+          <dt>Index</dt>
+          <dd>{selection.index + 1}</dd>
+        </div>
+      </dl>
+      <div className="structure-action-grid">
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={() => onInsertStructure(selection, "before")}
+        >
+          {insertBeforeLabel}
+        </button>
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={() => onInsertStructure(selection, "after")}
+        >
+          {insertAfterLabel}
+        </button>
+      </div>
+      {!isRow && (
+        <button
+          type="button"
+          className="secondary-button structure-equals-button"
+          disabled={hasEquals}
+          onClick={() => onConvertColumnToEquals(selection.index)}
+        >
+          {hasEquals ? "Already equal" : "Convert to equal"}
+        </button>
+      )}
+      <button
+        type="button"
+        className="danger-button"
+        disabled={deleteDisabled}
+        onClick={() => onDeleteStructure(selection)}
+      >
+        {deleteLabel}
+      </button>
+    </>
+  );
+}
+
 function renderSliceInspector(
   item: SliceItem,
   onSliceLabelChange: InspectorProps["onSliceLabelChange"]
@@ -504,9 +596,12 @@ function renderControlInspector(
 export function Inspector({
   selectedItem,
   selectedItems,
+  selectedStructure = null,
+  selectedColumnHasEquals = false,
   selectedWireLabelGroup = null,
   selectedCount,
   qubits,
+  steps,
   wireLabels,
   onGateLabelChange,
   onGateSpanChange,
@@ -529,6 +624,9 @@ export function Inspector({
   onWireLabelChange,
   onWireLabelGroupChange,
   onWireLabelGroupUnmerge,
+  onInsertStructure,
+  onDeleteStructure,
+  onConvertColumnToEquals,
   onDelete,
   onClearSelection,
   showWireLabels = true,
@@ -539,6 +637,7 @@ export function Inspector({
 }: InspectorProps): JSX.Element {
   const [hexInput, setHexInput] = useState("");
   const showingWireLabelGroup = Boolean(selectedWireLabelGroup);
+  const showingStructureSelection = Boolean(selectedStructure);
   const bulkSelectionKind = useMemo<BulkSelectionKind>(() => {
     if (selectedItems.length <= 1) {
       return null;
@@ -622,7 +721,7 @@ export function Inspector({
   }
 
   function renderSelectionColorEditor(): JSX.Element | null {
-    if (showingWireLabelGroup || (!selectedItem && selectedItems.length === 0)) {
+    if (showingWireLabelGroup || showingStructureSelection || (!selectedItem && selectedItems.length === 0)) {
       return null;
     }
 
@@ -836,7 +935,7 @@ export function Inspector({
               Delete selected
             </button>
           </>
-        ) : !selectedItem && !selectedWireLabelGroup ? (
+        ) : !selectedItem && !selectedWireLabelGroup && !selectedStructure ? (
           <p className="empty-panel-copy">
             Select an object to edit its text, span, or color.
           </p>
@@ -854,12 +953,24 @@ export function Inspector({
                 </button>
               )}
               <div className="selected-pill selected-pill-name">
-                {selectedWireLabelGroup
+                {selectedStructure
+                  ? `${selectedStructure.kind === "row" ? "Row" : "Column"} controls`
+                  : selectedWireLabelGroup
                   ? `${selectedWireLabelGroup.side === "left" ? "Left" : "Right"} label`
                   : ITEM_LABELS[selectedItem!.type]}
               </div>
             </div>
 
+            {selectedStructure && onInsertStructure && onDeleteStructure && onConvertColumnToEquals &&
+              renderStructureInspector(
+                selectedStructure,
+                qubits,
+                steps,
+                selectedColumnHasEquals,
+                onInsertStructure,
+                onDeleteStructure,
+                onConvertColumnToEquals
+              )}
             {selectedWireLabelGroup && onWireLabelGroupChange && onWireLabelGroupUnmerge &&
               renderWireLabelGroupInspector(
                 selectedWireLabelGroup,
@@ -867,27 +978,30 @@ export function Inspector({
                 onWireLabelGroupChange,
                 onWireLabelGroupUnmerge
               )}
-            {selectedItem?.type === "gate" &&
+            {!selectedStructure && selectedItem?.type === "gate" &&
               renderGateInspector(selectedItem, onGateLabelChange, onGateSpanChange)}
-            {selectedItem?.type === "frame" &&
+            {!selectedStructure && selectedItem?.type === "frame" &&
               renderFrameInspector(selectedItem, onFrameLabelChange, onFrameSpanChange, onFrameStyleChange)}
-            {selectedItem?.type === "slice" &&
+            {!selectedStructure && selectedItem?.type === "slice" &&
               renderSliceInspector(selectedItem, onSliceLabelChange)}
-            {selectedItem?.type === "verticalConnector" &&
+            {!selectedStructure && selectedItem?.type === "equalsColumn" &&
+              renderEqualsColumnInspector(selectedItem, qubits)}
+            {!selectedStructure && selectedItem?.type === "verticalConnector" &&
               renderVerticalInspector(selectedItem, qubits, onVerticalLengthChange, onVerticalWireTypeChange)}
-            {selectedItem?.type === "controlDot" &&
+            {!selectedStructure && selectedItem?.type === "controlDot" &&
               renderControlInspector(selectedItem, onControlStateChange)}
-            {selectedItem?.type === "horizontalSegment" &&
+            {!selectedStructure && selectedItem?.type === "horizontalSegment" &&
               renderHorizontalInspector(
                 selectedItem,
                 onHorizontalWireTypeChange,
                 onHorizontalBundledChange,
                 onHorizontalBundleLabelChange
               )}
-            {selectedItem &&
+            {!selectedStructure && selectedItem &&
               selectedItem.type !== "gate" &&
               selectedItem.type !== "frame" &&
               selectedItem.type !== "slice" &&
+              selectedItem.type !== "equalsColumn" &&
               selectedItem.type !== "verticalConnector" &&
               selectedItem.type !== "controlDot" &&
               selectedItem.type !== "horizontalSegment" && (
@@ -901,7 +1015,7 @@ export function Inspector({
 
             {renderSelectionColorEditor()}
 
-            {showingWireLabelGroup ? (
+            {showingStructureSelection ? null : showingWireLabelGroup ? (
               <button
                 type="button"
                 className="danger-button"

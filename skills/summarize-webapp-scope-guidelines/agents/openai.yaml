@@ -1,0 +1,4 @@
+interface:
+  display_name: "Webapp Scope Guide"
+  short_description: "Summarize scope and guardrails"
+  default_prompt: "Use $summarize-webapp-scope-guidelines to summarize this webapp's scope, supported workflows, and engineering guardrails."

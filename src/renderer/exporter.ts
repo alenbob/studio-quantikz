@@ -2,6 +2,7 @@ import type {
   CircuitItem,
   ControlDotItem,
   EditorState,
+  EqualsColumnItem,
   FrameItem,
   GateItem,
   HorizontalSegmentItem,
@@ -13,6 +14,7 @@ import type {
   WireType
 } from "./types";
 import {
+  getEqualsColumnSuppressedHorizontalKeys,
   getMeterSuppressedHorizontalKeys,
   isAbsentHorizontalSegment,
   wireKey
@@ -62,8 +64,8 @@ function toQuantikzWireType(wireType: WireType): "q" | "c" {
   return wireType === "classical" ? "c" : "q";
 }
 
-function isOnlyAbsentWireOverride(tokens: string[]): boolean {
-  return tokens.length === 1 && tokens[0] === "\\wireoverride{n}";
+function isOnlyAbsentWireCommand(tokens: string[]): boolean {
+  return tokens.length === 1 && (tokens[0] === "\\setwiretype{n}" || tokens[0] === "\\wireoverride{n}");
 }
 
 function prependToken(tokens: string[], token: string): string[] {
@@ -78,7 +80,7 @@ function commandPriority(token: string): number {
   const match = token.match(/^\\([A-Za-z]+)/);
   const command = match?.[1] ?? "";
 
-  if (["gate", "meter", "ctrl", "octrl", "control", "ocontrol", "targ", "targX", "swap"].includes(command)) {
+  if (["gate", "meter", "midstick", "ctrl", "octrl", "control", "ocontrol", "targ", "targX", "swap"].includes(command)) {
     return 0;
   }
 
@@ -119,25 +121,23 @@ function compactAbsentWireRuns(
   let col = 0;
 
   while (col <= boundedLastIncludedCol) {
-    if (!isOnlyAbsentWireOverride(compacted[col])) {
+    if (!isOnlyAbsentWireCommand(compacted[col])) {
       col += 1;
       continue;
     }
 
     let end = col;
-    while (end + 1 <= boundedLastIncludedCol && isOnlyAbsentWireOverride(compacted[end + 1])) {
+    while (end + 1 <= boundedLastIncludedCol && isOnlyAbsentWireCommand(compacted[end + 1])) {
       end += 1;
     }
 
-    if (end > col) {
-      compacted[col] = ["\\setwiretype{n}"];
-      for (let runCol = col + 1; runCol <= end; runCol += 1) {
-        compacted[runCol] = [];
-      }
+    compacted[col] = ["\\setwiretype{n}"];
+    for (let runCol = col + 1; runCol <= end; runCol += 1) {
+      compacted[runCol] = [];
+    }
 
-      if (end + 1 <= boundedLastIncludedCol) {
-        compacted[end + 1] = prependToken(compacted[end + 1], restoreToken);
-      }
+    if (end + 1 <= boundedLastIncludedCol) {
+      compacted[end + 1] = prependToken(compacted[end + 1], restoreToken);
     }
 
     col = end + 1;
@@ -361,6 +361,7 @@ export function exportToQuantikz(state: EditorState): string {
   const meters = state.items.filter((item): item is MeterItem => item.type === "meter");
   const frames = state.items.filter((item): item is FrameItem => item.type === "frame");
   const slices = state.items.filter((item): item is SliceItem => item.type === "slice");
+  const equalsColumns = state.items.filter((item): item is EqualsColumnItem => item.type === "equalsColumn");
   const gateLikes = [...gates, ...meters];
   const controls = state.items.filter((item): item is ControlDotItem => item.type === "controlDot");
   const targets = state.items.filter((item): item is TargetPlusItem => item.type === "targetPlus");
@@ -398,7 +399,10 @@ export function exportToQuantikz(state: EditorState): string {
   const cells = buildMatrix(state.qubits, effectiveSteps);
   const used = new Set<string>();
   const suppressedCells = new Set<string>();
-  const implicitlyAbsentHorizontalKeys = getMeterSuppressedHorizontalKeys(state.items, effectiveSteps);
+  const implicitlyAbsentHorizontalKeys = new Set([
+    ...getMeterSuppressedHorizontalKeys(state.items, effectiveSteps),
+    ...getEqualsColumnSuppressedHorizontalKeys(state.items, state.qubits)
+  ]);
 
   for (const gate of gates) {
     const formattedLabel = formatGateLabelForQuantikz(gate.label);
@@ -464,6 +468,16 @@ export function exportToQuantikz(state: EditorState): string {
     cells[slice.point.row][slice.point.col].push(
       options ? `\\slice[${options}]{${formattedLabel}}` : `\\slice{${formattedLabel}}`
     );
+  }
+
+  for (const equalsColumn of equalsColumns) {
+    const options = [`wires=${state.qubits}`];
+    const colorOption = labelColorOption(equalsColumn.color);
+    if (colorOption) {
+      options.push(colorOption);
+    }
+
+    cells[0][equalsColumn.point.col].push(`\\midstick[${wrapOptionBlock(options)}]{=}`);
   }
 
   for (const connector of normalizedConnectors) {
@@ -727,7 +741,7 @@ export function exportToQuantikz(state: EditorState): string {
         : implicitlyAbsentHorizontalKeys.has(key);
 
       if (wireSuppressed) {
-        return prependToken(tokens, "\\wireoverride{n}");
+        return prependToken(tokens, "\\setwiretype{n}");
       }
 
       const wireType = explicitHorizontal?.wireType ?? rowDefaultWireType;
@@ -783,7 +797,7 @@ export function exportToQuantikz(state: EditorState): string {
       );
 
       if (!preservesExplicitAbsentOverride && !preservesBlankWire) {
-        if (renderedCells[colIndex].length === 0 || isOnlyAbsentWireOverride(renderedCells[colIndex])) {
+        if (renderedCells[colIndex].length === 0 || isOnlyAbsentWireCommand(renderedCells[colIndex])) {
           continue;
         }
       }

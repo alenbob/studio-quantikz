@@ -420,13 +420,13 @@ select,
 .app-body {
   display: grid;
   flex: 1;
-  grid-template-columns: var(--left-rail-width) minmax(720px, 1fr) 320px;
+  grid-template-columns: var(--left-rail-width) minmax(720px, 1fr);
   gap: 18px;
   align-items: start;
 }
 
 .app-body.has-context-sidebar {
-  grid-template-columns: var(--left-rail-width) minmax(720px, 1fr) 320px;
+  grid-template-columns: var(--left-rail-width) minmax(720px, 1fr);
 }
 
 .panel {
@@ -950,8 +950,23 @@ select,
   font-weight: 700;
 }
 
+.grid-label.is-selected {
+  fill: #1a5c9d;
+}
+
 .grid-row-label {
   fill: rgba(31, 27, 23, 0.56);
+}
+
+.grid-header-hit {
+  fill: transparent;
+  stroke: transparent;
+  cursor: pointer;
+}
+
+.grid-header-hit.is-selected {
+  fill: rgba(26, 92, 157, 0.14);
+  stroke: rgba(26, 92, 157, 0.3);
 }
 
 .grid-hit-cell,
@@ -1153,6 +1168,16 @@ select,
 .annotation-frame-label,
 .slice-label {
   font-size: 13px;
+  font-weight: 700;
+}
+
+.equals-column-hit {
+  fill: rgba(15, 106, 109, 0.04);
+  stroke: transparent;
+}
+
+.equals-column-text {
+  font-size: 30px;
   font-weight: 700;
 }
 
@@ -1462,6 +1487,9 @@ select,
   display: flex;
   flex-direction: column;
   gap: 18px;
+  grid-column: 2;
+  grid-row: 2;
+  min-width: 0;
 }
 
 @keyframes leftPanelSlideIn {
@@ -1964,13 +1992,8 @@ select,
   }
 
   .right-rail {
-    grid-column: 1 / -1;
-    flex-direction: row;
-    align-items: start;
-  }
-
-  .right-rail > * {
-    flex: 1;
+    grid-column: 2;
+    grid-row: 2;
   }
 
   .pdf-preview-surface {

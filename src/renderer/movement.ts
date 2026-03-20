@@ -29,6 +29,20 @@ function moveItemByDelta(item: CircuitItem, rowDelta: number, colDelta: number):
     return item;
   }
 
+  if (item.type === "equalsColumn") {
+    if (colDelta === 0) {
+      return item;
+    }
+
+    return {
+      ...item,
+      point: {
+        row: 0,
+        col: item.point.col + colDelta
+      }
+    };
+  }
+
   return {
     ...item,
     point: {
@@ -149,6 +163,10 @@ export function projectSelectionMove(
 
   let rowDelta = placement.row - anchorPlacement.row;
   let colDelta = placement.col - anchorPlacement.col;
+
+  if (anchorItem.type === "equalsColumn") {
+    rowDelta = 0;
+  }
 
   const externalLinks = getExternalConnectorLinks(items, selectedIds);
   if (externalLinks.length > 0) {

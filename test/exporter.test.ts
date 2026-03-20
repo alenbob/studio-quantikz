@@ -80,6 +80,39 @@ describe("exportToQuantikz", () => {
     expect(code).not.toContain("\\qw");
   });
 
+  it("exports an equals column as a midstick with broken wires on both sides", () => {
+    const code = exportToQuantikz(
+      makeState({
+        items: [
+          {
+            id: "gate-left",
+            type: "gate",
+            point: { row: 0, col: 0 },
+            span: { rows: 1, cols: 1 },
+            label: "H",
+            width: 40
+          },
+          {
+            id: "equals-1",
+            type: "equalsColumn",
+            point: { row: 0, col: 1 }
+          },
+          {
+            id: "gate-right",
+            type: "gate",
+            point: { row: 0, col: 2 },
+            span: { rows: 1, cols: 1 },
+            label: "X",
+            width: 40
+          }
+        ]
+      })
+    );
+
+    expect(code).toContain("\\midstick[wires=3]{=}");
+    expect(code).toMatch(/\\gate\{H\}\s+&\s+\\midstick\[wires=3\]\{=\}\s+\\setwiretype\{n\}\s+&\s+\\gate\{X\}\s+\\setwiretype\{n\}/);
+  });
+
   it("exports a wide gate with an explicit minimum width", () => {
     const code = exportToQuantikz(
       makeState({
@@ -482,7 +515,7 @@ describe("exportToQuantikz", () => {
 
     const controlCommandCount = code.match(/\\(?:o?ctrl\{1\}|o?control\{\})/g)?.length ?? 0;
     expect(controlCommandCount).toBeGreaterThanOrEqual(4);
-    expect(code.match(/\\wireoverride\{n\}/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(code.match(/\\setwiretype\{n\}/g)?.length).toBeGreaterThanOrEqual(2);
   });
 
   it("exports a mixed circuit across multiple steps", () => {
@@ -670,7 +703,7 @@ describe("exportToQuantikz", () => {
     );
 
     expect(code).toContain("\\wireoverride{c}");
-    expect(code).toContain("\\wireoverride{n}");
+    expect(code).toContain("\\setwiretype{n}");
   });
 
   it("exports qwbundle for bundle-style horizontal segments", () => {

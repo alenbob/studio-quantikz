@@ -23,6 +23,23 @@ export function getMeterSuppressedHorizontalKeys(items: CircuitItem[], steps: nu
   return suppressed;
 }
 
+export function getEqualsColumnSuppressedHorizontalKeys(items: CircuitItem[], qubits: number): Set<string> {
+  const suppressed = new Set<string>();
+
+  for (const item of items) {
+    if (item.type !== "equalsColumn") {
+      continue;
+    }
+
+    for (let row = 0; row < qubits; row += 1) {
+      suppressed.add(wireKey(row, item.point.col));
+      suppressed.add(wireKey(row, item.point.col + 1));
+    }
+  }
+
+  return suppressed;
+}
+
 export function isVisibleHorizontalSegment(item: HorizontalSegmentItem): boolean {
   return item.mode === "present" && item.autoSuppressed !== true;
 }

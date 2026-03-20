@@ -38,6 +38,7 @@ import type {
   CircuitItem,
   EditorState,
   PlacementTarget,
+  StructureSelection,
   ToolType
 } from "./types";
 
@@ -288,11 +289,13 @@ export default function App(): JSX.Element {
   const [pendingHistoryCapture, setPendingHistoryCapture] = useState(false);
   const [toastAnimationKey, setToastAnimationKey] = useState(0);
   const [selectedWireLabel, setSelectedWireLabel] = useState<{ row: number; side: WireLabelSide } | null>(null);
+  const [selectedStructure, setSelectedStructure] = useState<StructureSelection | null>(null);
   const stateRef = useRef(state);
   const clipboardRef = useRef<CircuitClipboard | null>(null);
   const shortcutSheetOpenRef = useRef(isShortcutSheetOpen);
   const historySheetOpenRef = useRef(isHistorySheetOpen);
   const selectedWireLabelRef = useRef(selectedWireLabel);
+  const selectedStructureRef = useRef(selectedStructure);
 
   const selectedItems = useMemo<CircuitItem[]>(
     () => state.items.filter((item) => state.selectedItemIds.includes(item.id)),
@@ -307,7 +310,13 @@ export default function App(): JSX.Element {
         : null,
     [selectedWireLabel, state.wireLabels]
   );
-  const hasSelection = selectedItems.length > 0 || selectedWireLabelGroup !== null;
+  const selectedColumnHasEquals = useMemo(
+    () =>
+      selectedStructure?.kind === "column" &&
+      state.items.some((item) => item.type === "equalsColumn" && item.point.col === selectedStructure.index),
+    [selectedStructure, state.items]
+  );
+  const hasSelection = selectedItems.length > 0 || selectedWireLabelGroup !== null || selectedStructure !== null;
   const resolvedExportSource = useMemo(
     () => splitStandaloneQuantikzSource(state.exportCode, state.exportPreamble),
     [state.exportCode, state.exportPreamble]
@@ -368,16 +377,37 @@ export default function App(): JSX.Element {
   }, [selectedWireLabel]);
 
   useEffect(() => {
+    selectedStructureRef.current = selectedStructure;
+  }, [selectedStructure]);
+
+  useEffect(() => {
     if (selectedItems.length > 0 && selectedWireLabel !== null) {
       setSelectedWireLabel(null);
     }
-  }, [selectedItems.length, selectedWireLabel]);
+    if (selectedItems.length > 0 && selectedStructure !== null) {
+      setSelectedStructure(null);
+    }
+  }, [selectedItems.length, selectedStructure, selectedWireLabel]);
 
   useEffect(() => {
     if (selectedWireLabel && selectedWireLabel.row >= state.qubits) {
       setSelectedWireLabel(null);
     }
   }, [selectedWireLabel, state.qubits]);
+
+  useEffect(() => {
+    if (!selectedStructure) {
+      return;
+    }
+
+    if (selectedStructure.kind === "row" && selectedStructure.index >= state.qubits) {
+      setSelectedStructure(null);
+    }
+
+    if (selectedStructure.kind === "column" && selectedStructure.index >= state.steps) {
+      setSelectedStructure(null);
+    }
+  }, [selectedStructure, state.qubits, state.steps]);
 
   useEffect(() => {
     if (!state.uiMessage) {
@@ -450,7 +480,8 @@ export default function App(): JSX.Element {
     function onKeyDown(event: KeyboardEvent): void {
       const hasItemSelection = stateRef.current.selectedItemIds.length > 0;
       const selectedLabel = selectedWireLabelRef.current;
-      const hasSelection = hasItemSelection || selectedLabel !== null;
+      const selectedStructure = selectedStructureRef.current;
+      const hasDeletableSelection = hasItemSelection || selectedLabel !== null || selectedStructure !== null;
       const isFormElement = isEditableTarget(event.target);
       const isActionElement = isActionElementTarget(event.target);
       const normalizedKey = event.key.toLowerCase();
@@ -474,7 +505,7 @@ export default function App(): JSX.Element {
       if ((event.metaKey || event.ctrlKey) && normalizedKey === "a" && !isFormElement) {
         event.preventDefault();
         setPasteMode(false);
-        setSelectedWireLabel(null);
+        clearContextSelection();
         dispatch({
           type: "setSelectedIds",
           itemIds: stateRef.current.items
@@ -501,7 +532,7 @@ export default function App(): JSX.Element {
         return;
       }
 
-      if ((event.key === "Delete" || event.key === "Backspace") && hasSelection) {
+      if ((event.key === "Delete" || event.key === "Backspace") && hasDeletableSelection) {
         if (!isFormElement) {
           event.preventDefault();
           if (hasItemSelection) {
@@ -513,11 +544,35 @@ export default function App(): JSX.Element {
               side: selectedLabel.side,
               label: ""
             });
+          } else if (selectedStructure) {
+            const currentCount = selectedStructure.kind === "row"
+              ? stateRef.current.qubits
+              : stateRef.current.steps;
+
+            if (currentCount <= 1 || selectedStructure.index < 0 || selectedStructure.index >= currentCount) {
+              return;
+            }
+
+            dispatch({
+              type: "deleteGridLine",
+              dimension: selectedStructure.kind === "row" ? "qubits" : "steps",
+              index: selectedStructure.index
+            });
+
+            const nextCount = currentCount - 1;
+            setSelectedStructure(
+              nextCount > 0
+                ? {
+                    kind: selectedStructure.kind,
+                    index: Math.min(selectedStructure.index, nextCount - 1)
+                  }
+                : null
+            );
           }
         }
       }
 
-      if ((event.metaKey || event.ctrlKey) && normalizedKey === "c" && hasSelection && !isFormElement) {
+      if ((event.metaKey || event.ctrlKey) && normalizedKey === "c" && hasItemSelection && !isFormElement) {
         event.preventDefault();
         const nextClipboard = buildClipboard(
           stateRef.current.items.filter((item) => stateRef.current.selectedItemIds.includes(item.id))
@@ -538,6 +593,7 @@ export default function App(): JSX.Element {
 
         event.preventDefault();
         setPasteMode(true);
+        clearContextSelection();
         dispatch({ type: "setTool", tool: "select" });
         dispatch({ type: "setMessage", message: "Click on the grid to place the copied group." });
       }
@@ -553,7 +609,7 @@ export default function App(): JSX.Element {
         if (shortcutTool) {
           event.preventDefault();
           setPasteMode(false);
-          setSelectedWireLabel(null);
+          clearContextSelection();
           if (shortcutTool !== "select") {
             dispatch({ type: "setSelectedIds", itemIds: [] });
           }
@@ -570,7 +626,7 @@ export default function App(): JSX.Element {
 
       if (event.key === "Escape") {
         setPasteMode(false);
-        setSelectedWireLabel(null);
+        clearContextSelection();
         dispatch({ type: "setTool", tool: "select" });
         dispatch({ type: "clearMessage" });
       }
@@ -710,7 +766,7 @@ export default function App(): JSX.Element {
       const nextSource = splitStandaloneQuantikzSource(state.exportCode, state.exportPreamble);
       const imported = importFromQuantikz(nextSource.code, { preamble: nextSource.preamble });
       setPasteMode(false);
-      setSelectedWireLabel(null);
+      clearContextSelection();
       dispatch({ type: "loadQuantikz", imported, code: nextSource.code, preamble: nextSource.preamble });
     } catch (error) {
       dispatch({
@@ -732,7 +788,7 @@ export default function App(): JSX.Element {
     try {
       const imported = importFromQuantikz(entry.code, { preamble: entry.preamble });
       setPasteMode(false);
-      setSelectedWireLabel(null);
+      clearContextSelection();
       setOpenDownloadMenuTarget(null);
       dispatch({ type: "loadQuantikz", imported, code: entry.code, preamble: entry.preamble });
       setExportPanelMode("quantikz");
@@ -795,6 +851,16 @@ export default function App(): JSX.Element {
     return Number(value);
   }
 
+  function clearContextSelection(): void {
+    setSelectedWireLabel(null);
+    setSelectedStructure(null);
+  }
+
+  function clearAllSelection(): void {
+    clearContextSelection();
+    dispatch({ type: "setSelectedIds", itemIds: [] });
+  }
+
   function resizeGrid(dimension: "qubits" | "steps", value: number): void {
     dispatch({
       type: "resizeGrid",
@@ -839,6 +905,64 @@ export default function App(): JSX.Element {
     resizeGrid(dimension, Math.max(1, current + delta));
   }
 
+  function handleSelectStructure(selection: StructureSelection): void {
+    setPasteMode(false);
+    setSelectedWireLabel(null);
+    dispatch({ type: "setSelectedIds", itemIds: [] });
+    setSelectedStructure(selection);
+  }
+
+  function handleInsertStructure(selection: StructureSelection, side: "before" | "after"): void {
+    const insertIndex = side === "before" ? selection.index : selection.index + 1;
+    dispatch({
+      type: "insertGridLine",
+      dimension: selection.kind === "row" ? "qubits" : "steps",
+      index: insertIndex
+    });
+    setSelectedWireLabel(null);
+    dispatch({ type: "setSelectedIds", itemIds: [] });
+    setSelectedStructure({ kind: selection.kind, index: insertIndex });
+  }
+
+  function handleDeleteStructure(selection: StructureSelection): void {
+    if (selection.kind === "row" && state.qubits <= 1) {
+      return;
+    }
+
+    if (selection.kind === "column" && state.steps <= 1) {
+      return;
+    }
+
+    dispatch({
+      type: "deleteGridLine",
+      dimension: selection.kind === "row" ? "qubits" : "steps",
+      index: selection.index
+    });
+    setSelectedWireLabel(null);
+    dispatch({ type: "setSelectedIds", itemIds: [] });
+    const nextCount = selection.kind === "row" ? state.qubits - 1 : state.steps - 1;
+    if (nextCount <= 0) {
+      setSelectedStructure(null);
+      return;
+    }
+
+    setSelectedStructure({
+      kind: selection.kind,
+      index: Math.min(selection.index, nextCount - 1)
+    });
+  }
+
+  function handleConvertColumnToEquals(col: number): void {
+    dispatch({
+      type: "addItem",
+      tool: "equalsColumn",
+      placement: { kind: "cell", row: 0, col }
+    });
+    dispatch({ type: "setSelectedIds", itemIds: [] });
+    setSelectedWireLabel(null);
+    setSelectedStructure({ kind: "column", index: col });
+  }
+
   function handlePastePlacement(placement: PlacementTarget): void {
     if (!clipboard) {
       return;
@@ -851,13 +975,13 @@ export default function App(): JSX.Element {
     }
 
     dispatch({ type: "pasteClipboard", clipboard, anchor });
-    setSelectedWireLabel(null);
+    clearContextSelection();
     setPasteMode(false);
   }
 
   function handleToolSelection(tool: ToolType): void {
     setPasteMode(false);
-    setSelectedWireLabel(null);
+    clearContextSelection();
     if (tool !== "select") {
       dispatch({ type: "setSelectedIds", itemIds: [] });
     }
@@ -1016,7 +1140,7 @@ export default function App(): JSX.Element {
             className="secondary-button"
             onClick={() => {
               setPasteMode(false);
-              setSelectedWireLabel(null);
+              clearContextSelection();
               dispatch({ type: "resetCircuit" });
             }}
           >
@@ -1200,9 +1324,12 @@ export default function App(): JSX.Element {
           <Inspector
             selectedItem={selectedItem}
             selectedItems={selectedItems}
+            selectedStructure={selectedStructure}
+            selectedColumnHasEquals={selectedColumnHasEquals}
             selectedWireLabelGroup={selectedWireLabelGroup}
             selectedCount={selectedItems.length}
             qubits={state.qubits}
+            steps={state.steps}
             wireLabels={state.wireLabels}
             onGateLabelChange={(itemId, label) => dispatch({ type: "updateGateLabel", itemId, label })}
             onGateSpanChange={(itemId, rows, cols) => dispatch({ type: "updateGateSpan", itemId, rows, cols })}
@@ -1245,11 +1372,11 @@ export default function App(): JSX.Element {
             onWireLabelGroupUnmerge={(row, side) =>
               dispatch({ type: "unmergeWireLabelGroup", row, side })
             }
+            onInsertStructure={handleInsertStructure}
+            onDeleteStructure={handleDeleteStructure}
+            onConvertColumnToEquals={handleConvertColumnToEquals}
             onDelete={() => dispatch({ type: "deleteSelected" })}
-            onClearSelection={() => {
-              setSelectedWireLabel(null);
-              dispatch({ type: "setSelectedIds", itemIds: [] });
-            }}
+            onClearSelection={clearAllSelection}
             showWireLabels={false}
             showSelectionControls
             eyebrow="Selection"
@@ -1269,6 +1396,7 @@ export default function App(): JSX.Element {
           latexMacros={visualPreambleDefinitions.katexMacros}
           isPasteMode={isPasteMode}
           pasteClipboard={clipboard}
+          selectedStructure={selectedStructure}
           selectedWireLabelGroup={selectedWireLabelGroup}
           onLayoutSpacingChange={(dimension, value) =>
             dispatch({ type: "updateLayoutSpacing", dimension, value })
@@ -1278,36 +1406,39 @@ export default function App(): JSX.Element {
           }
           onSelectWireLabelGroup={(row, side) => {
             dispatch({ type: "setSelectedIds", itemIds: [] });
+            setSelectedStructure(null);
             setSelectedWireLabel({ row, side });
           }}
           onMergeWireLabelGroup={(row, side) => {
             dispatch({ type: "mergeWireLabelGroup", row, side });
+            setSelectedStructure(null);
             setSelectedWireLabel({ row, side });
           }}
+          onSelectStructure={handleSelectStructure}
           onPlaceItem={(tool, placement) => {
-            setSelectedWireLabel(null);
+            clearContextSelection();
             dispatch({ type: "addItem", tool, placement });
             if (state.activeTool !== "select") {
               dispatch({ type: "setSelectedIds", itemIds: [] });
             }
           }}
           onDrawWire={(start, end) => {
-            setSelectedWireLabel(null);
+            clearContextSelection();
             dispatch({ type: "drawWire", start, end });
             dispatch({ type: "setSelectedIds", itemIds: [] });
           }}
           onDrawGate={(start, end) => {
-            setSelectedWireLabel(null);
+            clearContextSelection();
             dispatch({ type: "addGateFromArea", start, end });
             dispatch({ type: "setSelectedIds", itemIds: [] });
           }}
           onDrawMeter={(start, endRow) => {
-            setSelectedWireLabel(null);
+            clearContextSelection();
             dispatch({ type: "addMeterFromArea", start, endRow });
             dispatch({ type: "setSelectedIds", itemIds: [] });
           }}
           onDrawAnnotation={(start, end) => {
-            setSelectedWireLabel(null);
+            clearContextSelection();
             dispatch({ type: "addAnnotationFromArea", start, end });
             dispatch({ type: "setSelectedIds", itemIds: [] });
           }}
@@ -1319,11 +1450,11 @@ export default function App(): JSX.Element {
             dispatch({ type: "moveSelection", anchorItemId, placement })
           }
           onSelectHorizontalSegment={(row, col, additive) => {
-            setSelectedWireLabel(null);
+            clearContextSelection();
             dispatch({ type: "selectOrCreateHorizontalSegment", row, col, additive });
           }}
           onSelectionChange={(itemIds) => {
-            setSelectedWireLabel(null);
+            clearContextSelection();
             dispatch({ type: "setSelectedIds", itemIds });
           }}
           onResizeGrid={(dimension, value) => dispatch({ type: "resizeGrid", dimension, value })}

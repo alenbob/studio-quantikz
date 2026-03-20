@@ -60,14 +60,14 @@ describe("editorReducer selection workflows", () => {
       }
     );
 
-    expect(next.items).toContainEqual({
+    expect(next.items).toContainEqual(expect.objectContaining({
       id: expect.any(String),
       type: "horizontalSegment",
       point: { row: 1, col: 2 },
       mode: "present",
       wireType: "quantum",
       color: null
-    });
+    }));
     expect(next.selectedItemIds).toHaveLength(1);
     expect(next.wireMask["1:2"]).toBe("present");
   });
@@ -98,6 +98,101 @@ describe("editorReducer selection workflows", () => {
       width: 40,
       color: null
     });
+  });
+
+  it("anchors an equals column to the selected step regardless of the clicked row", () => {
+    const next = editorReducer(initialState, {
+      type: "addItem",
+      tool: "equalsColumn",
+      placement: { kind: "cell", row: 2, col: 3 }
+    });
+
+    expect(next.items).toContainEqual(expect.objectContaining({
+      type: "equalsColumn",
+      point: { row: 0, col: 3 },
+      color: null
+    }));
+    expect(next.selectedItemIds).toHaveLength(1);
+  });
+
+  it("inserts a row and expands overlapping items while shifting lower anchors", () => {
+    const state = {
+      ...initialState,
+      qubits: 3,
+      steps: 4,
+      items: [
+        ...initialState.items.filter((item) => item.type === "horizontalSegment"),
+        {
+          id: "gate-1",
+          type: "gate" as const,
+          point: { row: 0, col: 1 },
+          span: { rows: 2, cols: 1 },
+          label: "U",
+          width: 40
+        },
+        { id: "dot-1", type: "controlDot" as const, point: { row: 2, col: 3 } }
+      ]
+    };
+
+    const next = editorReducer(state, {
+      type: "insertGridLine",
+      dimension: "qubits",
+      index: 1
+    });
+
+    expect(next.qubits).toBe(4);
+    expect(next.items).toContainEqual(expect.objectContaining({
+      id: "gate-1",
+      type: "gate",
+      point: { row: 0, col: 1 },
+      span: { rows: 3, cols: 1 }
+    }));
+    expect(next.items).toContainEqual(expect.objectContaining({
+      id: "dot-1",
+      type: "controlDot",
+      point: { row: 3, col: 3 }
+    }));
+  });
+
+  it("deletes a column, removing anchored items and shrinking overlapping spans", () => {
+    const state = {
+      ...initialState,
+      qubits: 3,
+      steps: 5,
+      items: [
+        ...initialState.items.filter((item) => item.type === "horizontalSegment"),
+        {
+          id: "gate-1",
+          type: "gate" as const,
+          point: { row: 0, col: 0 },
+          span: { rows: 1, cols: 2 },
+          label: "U",
+          width: 40
+        },
+        { id: "dot-1", type: "controlDot" as const, point: { row: 1, col: 1 } },
+        { id: "eq-1", type: "equalsColumn" as const, point: { row: 0, col: 3 } }
+      ]
+    };
+
+    const next = editorReducer(state, {
+      type: "deleteGridLine",
+      dimension: "steps",
+      index: 1
+    });
+
+    expect(next.steps).toBe(4);
+    expect(next.items).toContainEqual(expect.objectContaining({
+      id: "gate-1",
+      type: "gate",
+      point: { row: 0, col: 0 },
+      span: { rows: 1, cols: 1 }
+    }));
+    expect(next.items.some((item) => item.id === "dot-1")).toBe(false);
+    expect(next.items).toContainEqual(expect.objectContaining({
+      id: "eq-1",
+      type: "equalsColumn",
+      point: { row: 0, col: 2 }
+    }));
   });
 
   it("rejects placing a gate on top of an existing anchored object", () => {

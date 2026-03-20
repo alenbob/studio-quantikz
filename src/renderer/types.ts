@@ -13,6 +13,7 @@ export type ItemType =
   | "meter"
   | "frame"
   | "slice"
+  | "equalsColumn"
   | "verticalConnector"
   | "horizontalSegment"
   | "controlDot"
@@ -34,6 +35,10 @@ export interface PlacementTarget {
   row: number;
   col: number;
 }
+
+export type StructureSelection =
+  | { kind: "row"; index: number }
+  | { kind: "column"; index: number };
 
 export interface BoardMetrics {
   left: number;
@@ -97,6 +102,11 @@ export interface SliceItem extends BaseItem {
   label: string;
 }
 
+export interface EqualsColumnItem extends BaseItem {
+  type: "equalsColumn";
+  point: GridPoint;
+}
+
 export interface VerticalConnectorItem extends BaseItem {
   type: "verticalConnector";
   point: GridPoint;
@@ -139,6 +149,7 @@ export type CircuitItem =
   | MeterItem
   | FrameItem
   | SliceItem
+  | EqualsColumnItem
   | VerticalConnectorItem
   | HorizontalSegmentItem
   | ControlDotItem
@@ -186,6 +197,10 @@ export interface ClipboardSliceItem extends ClipboardBaseItem {
   label: string;
 }
 
+export interface ClipboardEqualsColumnItem extends ClipboardBaseItem {
+  type: "equalsColumn";
+}
+
 export interface ClipboardVerticalConnectorItem extends ClipboardBaseItem {
   type: "verticalConnector";
   length: number;
@@ -218,6 +233,7 @@ export type ClipboardItem =
   | ClipboardMeterItem
   | ClipboardFrameItem
   | ClipboardSliceItem
+  | ClipboardEqualsColumnItem
   | ClipboardVerticalConnectorItem
   | ClipboardHorizontalSegmentItem
   | ClipboardControlDotItem

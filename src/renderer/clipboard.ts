@@ -68,6 +68,11 @@ export function buildClipboard(items: CircuitItem[]): CircuitClipboard | null {
           type: "slice",
           label: item.label
         };
+      case "equalsColumn":
+        return {
+          ...base,
+          type: "equalsColumn"
+        };
       case "verticalConnector":
         return {
           ...base,
@@ -159,6 +164,15 @@ export function instantiateClipboardItems(
           label: item.label,
           color: item.color ?? null
         };
+      case "equalsColumn":
+        return {
+          type: "equalsColumn",
+          point: {
+            row: 0,
+            col: point.col
+          },
+          color: item.color ?? null
+        };
       case "verticalConnector":
         return {
           type: "verticalConnector",
@@ -235,6 +249,8 @@ function fitsGrid(item: InstantiatedItem, state: EditorState): boolean {
         item.point.col >= 0 &&
         item.point.col < state.steps
       );
+    case "equalsColumn":
+      return item.point.col >= 0 && item.point.col < state.steps;
     case "verticalConnector":
       return (
         item.point.row >= 0 &&

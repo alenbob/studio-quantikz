@@ -32,9 +32,52 @@ function getOccupancyBounds(item: CircuitItem): OccupancyBounds | null {
         left: item.point.col,
         right: item.point.col
       };
+    case "equalsColumn":
+      return {
+        top: Number.NEGATIVE_INFINITY,
+        bottom: Number.POSITIVE_INFINITY,
+        left: item.point.col,
+        right: item.point.col
+      };
     default:
       return null;
   }
+}
+
+function itemOccupiesColumn(item: CircuitItem, col: number): boolean {
+  switch (item.type) {
+    case "gate":
+      return col >= item.point.col && col < item.point.col + item.span.cols;
+    case "meter":
+      return item.point.col === col;
+    case "frame":
+      return col >= item.point.col && col < item.point.col + item.span.cols;
+    case "slice":
+    case "equalsColumn":
+    case "verticalConnector":
+    case "controlDot":
+    case "targetPlus":
+    case "swapX":
+      return item.point.col === col;
+    case "horizontalSegment":
+      return false;
+    default: {
+      const exhaustiveCheck: never = item;
+      return exhaustiveCheck;
+    }
+  }
+}
+
+function equalsColumnOverlaps(left: CircuitItem, right: CircuitItem): boolean {
+  if (left.type === "equalsColumn") {
+    return itemOccupiesColumn(right, left.point.col);
+  }
+
+  if (right.type === "equalsColumn") {
+    return itemOccupiesColumn(left, right.point.col);
+  }
+
+  return false;
 }
 
 function boundsOverlap(left: OccupancyBounds, right: OccupancyBounds): boolean {
@@ -56,6 +99,10 @@ export function hasBlockingObjectOverlap(items: CircuitItem[]): boolean {
 
     for (let otherIndex = index + 1; otherIndex < occupyingItems.length; otherIndex += 1) {
       const other = occupyingItems[otherIndex];
+
+      if (equalsColumnOverlaps(current.item, other.item)) {
+        return true;
+      }
 
       if (boundsOverlap(current.bounds, other.bounds)) {
         return true;

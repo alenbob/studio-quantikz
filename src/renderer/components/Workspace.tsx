@@ -35,6 +35,7 @@ import {
   mixHexWithWhite
 } from "../color";
 import {
+  getEqualsColumnSuppressedHorizontalKeys,
   getMeterSuppressedHorizontalKeys,
   isVisibleHorizontalSegment,
   wireKey
@@ -65,6 +66,7 @@ import type {
   CircuitItem,
   CircuitLayout,
   EditorState,
+  EqualsColumnItem,
   FrameItem,
   GateItem,
   HorizontalSegmentItem,
@@ -72,6 +74,7 @@ import type {
   MeterItem,
   PlacementTarget,
   SliceItem,
+  StructureSelection,
   ToolType,
   VerticalConnectorItem,
   WireType
@@ -82,11 +85,13 @@ interface WorkspaceProps {
   latexMacros?: KatexMacroMap;
   isPasteMode: boolean;
   pasteClipboard: CircuitClipboard | null;
+  selectedStructure: StructureSelection | null;
   selectedWireLabelGroup: { row: number; side: WireLabelSide; span: number; bracket: "none" | "brace" | "bracket" | "paren"; text: string } | null;
   onLayoutSpacingChange: (dimension: "rowSepCm" | "columnSepCm", value: number) => void;
   onWireLabelChange: (row: number, side: "left" | "right", label: string) => void;
   onSelectWireLabelGroup: (row: number, side: WireLabelSide) => void;
   onMergeWireLabelGroup: (row: number, side: WireLabelSide) => void;
+  onSelectStructure: (selection: StructureSelection) => void;
   onPlaceItem: (tool: ItemType, placement: PlacementTarget) => void;
   onDrawWire: (start: { row: number; col: number }, end: { row: number; col: number }) => void;
   onDrawGate: (start: { row: number; col: number }, end: { row: number; col: number }) => void;
@@ -187,11 +192,15 @@ function isAnnotationOverlayItem(item: CircuitItem): item is SliceItem {
   return item.type === "slice";
 }
 
+function isColumnDecorationItem(item: CircuitItem): item is EqualsColumnItem {
+  return item.type === "equalsColumn";
+}
+
 function isWireLayerItem(item: CircuitItem): item is VerticalConnectorItem | HorizontalSegmentItem {
   return item.type === "verticalConnector" || item.type === "horizontalSegment";
 }
 
-function isMarkerItem(item: CircuitItem): item is Exclude<CircuitItem, GateItem | MeterItem | VerticalConnectorItem | HorizontalSegmentItem> {
+function isMarkerItem(item: CircuitItem): item is Extract<CircuitItem, { type: "controlDot" | "targetPlus" | "swapX" }> {
   return item.type === "controlDot" || item.type === "targetPlus" || item.type === "swapX";
 }
 
@@ -311,6 +320,24 @@ function getSliceRect(
   };
 }
 
+function getEqualsColumnRect(
+  item: EqualsColumnItem,
+  qubits: number,
+  layout: CircuitLayout,
+  columnMetrics: ColumnMetrics
+): SelectionRect {
+  const rowHeight = getRowHeight(layout);
+  const top = getRowY(0, layout) - (rowHeight / 2);
+  const bottom = getRowY(Math.max(qubits - 1, 0), layout) + (rowHeight / 2);
+
+  return {
+    x: getColumnLeftX(item.point.col, layout, columnMetrics) + 4,
+    y: top + 4,
+    width: Math.max(getColumnRightX(item.point.col, layout, columnMetrics) - getColumnLeftX(item.point.col, layout, columnMetrics) - 8, 18),
+    height: Math.max(bottom - top - 8, 18)
+  };
+}
+
 function getItemBounds(
   item: CircuitItem,
   steps: number,
@@ -332,6 +359,10 @@ function getItemBounds(
 
   if (item.type === "slice") {
     return getSliceRect(item, qubits, layout, columnMetrics);
+  }
+
+  if (item.type === "equalsColumn") {
+    return getEqualsColumnRect(item, qubits, layout, columnMetrics);
   }
 
   if (item.type === "verticalConnector") {
@@ -381,6 +412,8 @@ function getItemOutlinePadding(item: CircuitItem): { x: number; y: number; radiu
       return { x: 0, y: 0, radius: 6 };
     case "slice":
       return { x: 2, y: 2, radius: 4 };
+    case "equalsColumn":
+      return { x: 2, y: 2, radius: 10 };
     case "controlDot":
     case "targetPlus":
     case "swapX":
@@ -605,6 +638,33 @@ function renderSelectedOverlay(
           style={{ fill: SELECTION_ORANGE }}
         >
           {normalizeGateLabel(item.label)}
+        </text>
+      </g>
+    );
+  }
+
+  if (item.type === "equalsColumn") {
+    const rect = getEqualsColumnRect(item, qubits, layout, columnMetrics);
+    return (
+      <g className="selected-object-overlay selected-equals-overlay">
+        <rect
+          x={rect.x + 2}
+          y={rect.y + 2}
+          width={Math.max(rect.width - 4, 12)}
+          height={Math.max(rect.height - 4, 12)}
+          rx={10}
+          className="selected-overlay-stroke"
+          style={{ stroke: SELECTION_ORANGE }}
+        />
+        <text
+          x={rect.x + (rect.width / 2)}
+          y={rect.y + (rect.height / 2)}
+          className="selected-overlay-label equals-column-text"
+          dominantBaseline="middle"
+          textAnchor="middle"
+          style={{ fill: SELECTION_ORANGE }}
+        >
+          =
         </text>
       </g>
     );
@@ -1056,6 +1116,40 @@ function renderSlice(
   );
 }
 
+function renderEqualsColumn(
+  item: EqualsColumnItem,
+  isSelected: boolean,
+  qubits: number,
+  layout: CircuitLayout,
+  columnMetrics: ColumnMetrics
+): JSX.Element {
+  const rect = getEqualsColumnRect(item, qubits, layout, columnMetrics);
+  const color = getItemColor(item);
+
+  return (
+    <g className={`equals-column ${isSelected ? "is-selected" : ""}`}>
+      <rect
+        x={rect.x}
+        y={rect.y}
+        width={rect.width}
+        height={rect.height}
+        rx={10}
+        className="equals-column-hit"
+      />
+      <text
+        x={rect.x + (rect.width / 2)}
+        y={rect.y + (rect.height / 2)}
+        className="equals-column-text"
+        dominantBaseline="middle"
+        textAnchor="middle"
+        style={{ fill: color }}
+      >
+        =
+      </text>
+    </g>
+  );
+}
+
 function renderVerticalConnector(
   item: VerticalConnectorItem,
   isSelected: boolean,
@@ -1237,11 +1331,13 @@ export function Workspace({
   latexMacros,
   isPasteMode,
   pasteClipboard,
+  selectedStructure,
   selectedWireLabelGroup,
   onLayoutSpacingChange,
   onWireLabelChange,
   onSelectWireLabelGroup,
   onMergeWireLabelGroup,
+  onSelectStructure,
   onPlaceItem,
   onDrawWire,
   onDrawGate,
@@ -1310,10 +1406,23 @@ export function Workspace({
       ? instantiateClipboardItems(pasteClipboard, pasteAnchor)
       : [];
   const marqueeRect = marquee ? normalizeRect(marquee.start, marquee.current) : null;
-  const meterSuppressedKeys = useMemo(() => getMeterSuppressedHorizontalKeys(state.items, state.steps), [state.items, state.steps]);
+  const suppressedHorizontalKeys = useMemo(
+    () => new Set([
+      ...getMeterSuppressedHorizontalKeys(state.items, state.steps),
+      ...getEqualsColumnSuppressedHorizontalKeys(state.items, state.qubits)
+    ]),
+    [state.items, state.qubits, state.steps]
+  );
+  const columnDecorationItems = useMemo(() => state.items.filter(isColumnDecorationItem), [state.items]);
   const wireLayerItems = useMemo(
-    () => state.items.filter((item) => item.type === "verticalConnector" || (item.type === "horizontalSegment" && isVisibleHorizontalSegment(item))),
-    [state.items]
+    () => state.items.filter((item) =>
+      item.type === "verticalConnector" || (
+        item.type === "horizontalSegment" &&
+        isVisibleHorizontalSegment(item) &&
+        !suppressedHorizontalKeys.has(wireKey(item.point.row, item.point.col))
+      )
+    ),
+    [state.items, suppressedHorizontalKeys]
   );
   const gateLayerItems = useMemo(() => state.items.filter(isGateLikeItem), [state.items]);
   const annotationBackgroundItems = useMemo(() => state.items.filter(isAnnotationBackgroundItem), [state.items]);
@@ -1321,9 +1430,16 @@ export function Workspace({
   const markerLayerItems = useMemo(() => state.items.filter(isMarkerItem), [state.items]);
   const swapStatuses = useMemo(() => getSwapStatusById(state.items), [state.items]);
   const previewWireItems = useMemo(
-    () => pastePreviewItems.filter((item) => item.type === "verticalConnector" || (item.type === "horizontalSegment" && isVisibleHorizontalSegment(item))),
-    [pastePreviewItems]
+    () => pastePreviewItems.filter((item) =>
+      item.type === "verticalConnector" || (
+        item.type === "horizontalSegment" &&
+        isVisibleHorizontalSegment(item) &&
+        !suppressedHorizontalKeys.has(wireKey(item.point.row, item.point.col))
+      )
+    ),
+    [pastePreviewItems, suppressedHorizontalKeys]
   );
+  const previewColumnDecorationItems = useMemo(() => pastePreviewItems.filter(isColumnDecorationItem), [pastePreviewItems]);
   const previewGateItems = useMemo(() => pastePreviewItems.filter(isGateLikeItem), [pastePreviewItems]);
   const previewAnnotationBackgroundItems = useMemo(() => pastePreviewItems.filter(isAnnotationBackgroundItem), [pastePreviewItems]);
   const previewAnnotationOverlayItems = useMemo(() => pastePreviewItems.filter(isAnnotationOverlayItem), [pastePreviewItems]);
@@ -1411,7 +1527,16 @@ export function Workspace({
         return [];
     }
   }, [areaDraw, dragPreviewProjection, hoverPlacement, hoverTool, isPasteMode, state.activeTool]);
-  const hoverProjectionWireItems = useMemo(() => hoverProjectionItems.filter(isWireLayerItem), [hoverProjectionItems]);
+  const hoverProjectionWireItems = useMemo(
+    () => hoverProjectionItems.filter((item) =>
+      item.type === "verticalConnector" || (
+        item.type === "horizontalSegment" &&
+        !suppressedHorizontalKeys.has(wireKey(item.point.row, item.point.col))
+      )
+    ),
+    [hoverProjectionItems, suppressedHorizontalKeys]
+  );
+  const hoverProjectionColumnDecorationItems = useMemo(() => hoverProjectionItems.filter(isColumnDecorationItem), [hoverProjectionItems]);
   const hoverProjectionGateItems = useMemo(() => hoverProjectionItems.filter(isGateLikeItem), [hoverProjectionItems]);
   const hoverProjectionAnnotationBackgroundItems = useMemo(() => hoverProjectionItems.filter(isAnnotationBackgroundItem), [hoverProjectionItems]);
   const hoverProjectionAnnotationOverlayItems = useMemo(() => hoverProjectionItems.filter(isAnnotationOverlayItem), [hoverProjectionItems]);
@@ -1727,10 +1852,12 @@ export function Workspace({
         ? renderGate(item, selected, layout, columnMetrics, latexMacros)
         : item.type === "meter"
           ? renderMeter(item, selected, layout, columnMetrics)
-          : item.type === "frame"
+        : item.type === "frame"
             ? renderFrame(item, selected, layout, columnMetrics)
             : item.type === "slice"
               ? renderSlice(item, selected, state.qubits, layout, columnMetrics)
+            : item.type === "equalsColumn"
+              ? renderEqualsColumn(item, selected, state.qubits, layout, columnMetrics)
           : item.type === "verticalConnector"
             ? renderVerticalConnector(item, selected, layout, columnMetrics)
             : item.type === "horizontalSegment"
@@ -1832,10 +1959,12 @@ export function Workspace({
         ? renderGate(item, false, layout, columnMetrics, latexMacros)
         : item.type === "meter"
           ? renderMeter(item, false, layout, columnMetrics)
-          : item.type === "frame"
+        : item.type === "frame"
             ? renderFrame(item, false, layout, columnMetrics)
             : item.type === "slice"
               ? renderSlice(item, false, state.qubits, layout, columnMetrics)
+            : item.type === "equalsColumn"
+              ? renderEqualsColumn(item, false, state.qubits, layout, columnMetrics)
           : item.type === "verticalConnector"
             ? renderVerticalConnector(item, false, layout, columnMetrics)
             : item.type === "horizontalSegment"
@@ -2266,11 +2395,34 @@ export function Workspace({
                 y2={getRowY(state.qubits - 1, layout) + 18}
                 className="grid-guide"
               />
+              <rect
+                x={getColumnLeftX(col, layout, columnMetrics) + 6}
+                y={GRID_TOP - 54}
+                width={Math.max(getColumnRightX(col, layout, columnMetrics) - getColumnLeftX(col, layout, columnMetrics) - 12, 20)}
+                height={22}
+                rx={11}
+                className={`grid-header-hit ${
+                  selectedStructure?.kind === "column" && selectedStructure.index === col ? "is-selected" : ""
+                }`}
+                data-testid={`grid-column-header-${col}`}
+                onPointerDown={(event) => {
+                  if (event.button !== 0 || isPasteMode || state.activeTool !== "select") {
+                    return;
+                  }
+
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onSelectStructure({ kind: "column", index: col });
+                }}
+              />
               <text
                 x={getCellCenterX(col, layout, columnMetrics)}
                 y={GRID_TOP - 38}
-                className="grid-label"
+                className={`grid-label ${
+                  selectedStructure?.kind === "column" && selectedStructure.index === col ? "is-selected" : ""
+                }`}
                 textAnchor="middle"
+                pointerEvents="none"
               >
                 {col + 1}
               </text>
@@ -2296,12 +2448,35 @@ export function Workspace({
 
             return (
               <g key={`row-label-${row}`}>
+                <rect
+                  x={4}
+                  y={y - 11}
+                  width={26}
+                  height={22}
+                  rx={11}
+                  className={`grid-header-hit grid-row-header-hit ${
+                    selectedStructure?.kind === "row" && selectedStructure.index === row ? "is-selected" : ""
+                  }`}
+                  data-testid={`grid-row-header-${row}`}
+                  onPointerDown={(event) => {
+                    if (event.button !== 0 || isPasteMode || state.activeTool !== "select") {
+                      return;
+                    }
+
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onSelectStructure({ kind: "row", index: row });
+                  }}
+                />
                 <text
                   x={16}
                   y={y}
-                  className="grid-label grid-row-label"
+                  className={`grid-label grid-row-label ${
+                    selectedStructure?.kind === "row" && selectedStructure.index === row ? "is-selected" : ""
+                  }`}
                   dominantBaseline="middle"
                   textAnchor="start"
+                  pointerEvents="none"
                 >
                   {row + 1}
                 </text>
@@ -2494,7 +2669,7 @@ export function Workspace({
                   const segmentSelectable =
                     state.horizontalSegmentsUnlocked &&
                     state.wireMask[maskKey] !== "absent" &&
-                    !meterSuppressedKeys.has(maskKey);
+                    !suppressedHorizontalKeys.has(maskKey);
                   const segmentItem = state.items.find(
                     (item): item is HorizontalSegmentItem =>
                       item.type === "horizontalSegment" &&
@@ -2573,6 +2748,13 @@ export function Workspace({
           {hoverProjectionWireItems.map((item, index) => (
             <g key={`hover-projection-wire-${index}`} className={`hover-projection-item ${!dragPreviewValid ? "is-invalid" : ""}`}>
               {renderPreviewItem(item, `hover-projection-wire-item-${index}`, !dragPreviewValid)}
+            </g>
+          ))}
+          {columnDecorationItems.map(renderInteractiveItem)}
+          {previewColumnDecorationItems.map((item, index) => renderPreviewItem(item, `paste-preview-column-${index}`, !pastePreviewValid))}
+          {hoverProjectionColumnDecorationItems.map((item, index) => (
+            <g key={`hover-projection-column-${index}`} className={`hover-projection-item ${!dragPreviewValid ? "is-invalid" : ""}`}>
+              {renderPreviewItem(item, `hover-projection-column-item-${index}`, !dragPreviewValid)}
             </g>
           ))}
           {gateLayerItems.map(renderInteractiveItem)}

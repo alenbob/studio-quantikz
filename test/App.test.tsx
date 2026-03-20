@@ -41,6 +41,41 @@ describe("App smoke tests", () => {
     expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain("\\gate{U}");
   });
 
+  it("selects a column header and converts it to an equals separator", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByTestId("grid-column-header-2"));
+
+    expect(screen.getByText(/column controls/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /add left/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /add right/i })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /convert to equal/i }));
+    await user.click(screen.getByRole("button", { name: /convert to quantikz/i }));
+
+    expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain("\\midstick[wires=3]{=}");
+  });
+
+  it("selects a row header and adds or deletes rows from the inspector", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByTestId("grid-row-header-0"));
+
+    expect(screen.getByText(/row controls/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /add above/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /add below/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /convert to equal/i })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /add below/i }));
+    await waitFor(() => expect(screen.getByLabelText(/^qubits$/i)).toHaveValue("4"));
+    expect(screen.getByTestId("grid-row-header-3")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /delete row/i }));
+    await waitFor(() => expect(screen.getByLabelText(/^qubits$/i)).toHaveValue("3"));
+  });
+
   it("resets the editor and exports wire labels", async () => {
     const user = userEvent.setup();
     render(<App />);
@@ -255,7 +290,7 @@ describe("App smoke tests", () => {
     expect(connectorLine).toBeTruthy();
     expect(connectorLine.style.stroke).toBe("#0000FF");
     expect(swapIcon).toBeTruthy();
-    expect(swapIcon.querySelector("line")).toBeTruthy();
+    expect(swapIcon.querySelector("line, path")).toBeTruthy();
     expect(swapIcon.style.color).toBe("rgb(0, 0, 255)");
   });
 
@@ -592,7 +627,7 @@ describe("App smoke tests", () => {
     expect(container.querySelectorAll('rect[data-kind="gate-rect"]')).toHaveLength(2);
   });
 
-  it("turns deleted horizontal lines into wire overrides", async () => {
+  it("turns deleted horizontal lines into setwiretype gaps", async () => {
     const user = userEvent.setup();
     const { container } = render(<App />);
 
@@ -607,7 +642,7 @@ describe("App smoke tests", () => {
     await user.click(screen.getByRole("button", { name: /convert to quantikz/i }));
 
     expect(container.querySelector(".absent-override")).toBeNull();
-    expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain("\\wireoverride{n}");
+    expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain("\\setwiretype{n}");
   });
 
   it("lets a selected horizontal segment switch to classical wire style", async () => {
@@ -744,7 +779,7 @@ describe("App smoke tests", () => {
     });
 
     await user.click(screen.getByRole("button", { name: /convert to quantikz/i }));
-    expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain("\\wireoverride{n}");
+    expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain("\\setwiretype{n}");
   });
 
   it("starts marquee selection from a locked horizontal wire hit area", async () => {
@@ -831,7 +866,7 @@ describe("App smoke tests", () => {
     const output = (screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value;
 
     expect(output).toContain("\\meter{}");
-    expect(output).not.toContain("\\wireoverride{n}");
+    expect(output).not.toContain("\\setwiretype{n}");
   });
 
   it("lets you redraw a wire to the right of a meter", async () => {
@@ -873,7 +908,7 @@ describe("App smoke tests", () => {
 
     const output = (screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value;
 
-    expect(output).toContain("\\wireoverride{n}");
+    expect(output).toContain("\\setwiretype{n}");
     expect(output).not.toContain("\\qw");
   });
 
@@ -1006,7 +1041,7 @@ describe("App smoke tests", () => {
     expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain("\\gate{H}");
     expect(container.querySelector('rect[data-kind="gate-rect"]')).toBeTruthy();
 
-    await user.click(screen.getByRole("button", { name: /^preamble$/i }));
+    await user.click(screen.getByRole("button", { name: /toggle quantikz editor view/i }));
     expect((screen.getByLabelText(/quantikz preamble/i) as HTMLTextAreaElement).value).toContain("\\usetikzlibrary{quantikz2}");
   });
 

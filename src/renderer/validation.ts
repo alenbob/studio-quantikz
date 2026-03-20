@@ -28,6 +28,30 @@ function effectiveHorizontalMode(item: HorizontalSegmentItem): "present" | "abse
   return item.autoSuppressed === true ? "absent" : item.mode;
 }
 
+function itemOccupiesColumn(item: CircuitItem, col: number): boolean {
+  switch (item.type) {
+    case "gate":
+      return col >= item.point.col && col < item.point.col + item.span.cols;
+    case "meter":
+      return item.point.col === col;
+    case "frame":
+      return col >= item.point.col && col < item.point.col + item.span.cols;
+    case "slice":
+    case "equalsColumn":
+    case "verticalConnector":
+    case "controlDot":
+    case "targetPlus":
+    case "swapX":
+      return item.point.col === col;
+    case "horizontalSegment":
+      return false;
+    default: {
+      const exhaustiveCheck: never = item;
+      return exhaustiveCheck;
+    }
+  }
+}
+
 export function validateCircuit(state: EditorState): ExportIssue[] {
   const issues: ExportIssue[] = [];
   const anchors = new Map<string, CircuitItem[]>();
@@ -66,6 +90,10 @@ export function validateCircuit(state: EditorState): ExportIssue[] {
       if (item.point.row + item.length >= state.qubits) {
         issues.push(issue(item.id, "Vertical connector extends beyond the grid."));
       }
+    }
+
+    if (item.type === "equalsColumn" && item.point.col >= state.steps) {
+      issues.push(issue(item.id, "Equals column is outside the step range."));
     }
 
     if (item.type === "gate") {
@@ -200,6 +228,27 @@ export function validateCircuit(state: EditorState): ExportIssue[] {
   for (const [swapId, status] of swapStatuses.entries()) {
     if (!status.valid) {
       issues.push(issue(`swap-status-${swapId}`, status.message ?? "Invalid swap configuration."));
+    }
+  }
+
+  const equalsColumns = state.items.filter((item) => item.type === "equalsColumn");
+  for (let index = 0; index < equalsColumns.length; index += 1) {
+    const equalsColumn = equalsColumns[index];
+
+    for (let otherIndex = index + 1; otherIndex < equalsColumns.length; otherIndex += 1) {
+      if (equalsColumns[otherIndex].point.col === equalsColumn.point.col) {
+        issues.push(issue(`equals-duplicate-${equalsColumn.id}-${equalsColumns[otherIndex].id}`, "Only one equals column is allowed per step."));
+      }
+    }
+
+    for (const other of state.items) {
+      if (other.id === equalsColumn.id || other.type === "horizontalSegment" || other.type === "equalsColumn") {
+        continue;
+      }
+
+      if (itemOccupiesColumn(other, equalsColumn.point.col)) {
+        issues.push(issue(`equals-overlap-${equalsColumn.id}-${other.id}`, "Equals columns cannot share a step with other circuit objects."));
+      }
     }
   }
 

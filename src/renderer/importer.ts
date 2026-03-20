@@ -239,14 +239,14 @@ function parseCommandSequence(source: string): ParsedCommand[] {
 
         if (name !== "wire" && name !== "vqw" && name !== "vcw" && name !== "qwbundle" &&
           name !== "gate" && name !== "meter" && name !== "gategroup" &&
-          name !== "slice" && name !== "ghost" && name !== "ctrl" && name !== "octrl" && name !== "swap" &&
+          name !== "slice" && name !== "midstick" && name !== "ghost" && name !== "ctrl" && name !== "octrl" && name !== "swap" &&
           name !== "lstick" && name !== "rstick" && name !== "control" &&
           name !== "ocontrol" && name !== "targ" &&
           name !== "targX" && name !== "wireoverride" && name !== "setwiretype") {
         break;
       }
 
-      if ((name === "gate" || name === "meter" || name === "gategroup" || name === "slice" || name === "ghost" ||
+      if ((name === "gate" || name === "meter" || name === "gategroup" || name === "slice" || name === "midstick" || name === "ghost" ||
           name === "ctrl" || name === "octrl" || name === "swap" ||
           name === "lstick" || name === "rstick" || name === "vqw" || name === "vcw" || name === "qwbundle" ||
           name === "wireoverride" || name === "setwiretype") && args.length >= 1) {
@@ -911,6 +911,20 @@ export function importFromQuantikz(code: string, importOptions: { preamble?: str
               color
             };
             items.push(slice);
+            break;
+          }
+          case "midstick": {
+            const label = decodeLabel(command.args[0] ?? "");
+            if (label !== "=") {
+              throw new Error(`Unsupported \\midstick label '${label}' at row ${rowIndex + 1}, column ${colIndex + 1}.`);
+            }
+
+            items.push({
+              id: nextId("equalsColumn", idCounter),
+              type: "equalsColumn",
+              point: { row: 0, col: colIndex },
+              color
+            });
             break;
           }
           case "ghost": {

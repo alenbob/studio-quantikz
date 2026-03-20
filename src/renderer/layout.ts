@@ -93,6 +93,12 @@ export function getColumnMetrics(
       case "meter":
         contentWidths[item.point.col] = Math.max(contentWidths[item.point.col], GATE_MIN_WIDTH);
         break;
+      case "equalsColumn":
+        contentWidths[item.point.col] = Math.max(
+          contentWidths[item.point.col],
+          Math.ceil(measureMathLabel("=", customMacros).width + 16)
+        );
+        break;
       case "controlDot":
       case "targetPlus":
       case "swapX":
