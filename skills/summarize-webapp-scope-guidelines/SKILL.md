@@ -15,7 +15,6 @@ Verify the parts of the app that matter for the request before answering.
 
 - Read `package.json` for the active product description and runtime stack.
 - Read `QUANTIKZ_GUIDE.md` for Quantikz and PDF preview requirements.
-- Read `SVG_RENDER_REQUIREMENTS.md` for explicit rendering constraints and non-goals.
 - Read `src/renderer/App.tsx` for the visible UI surface, workflows, and export behavior.
 - Read `src/renderer/types.ts`, `src/renderer/reducer.ts`, `src/renderer/exporter.ts`, and `src/renderer/validation.ts` for the circuit model, editing rules, export semantics, and validation rules.
 - Read `src/server/renderQuantikz.ts` and `src/server/renderSymbolicLatex.ts` for backend behavior and environment constraints.

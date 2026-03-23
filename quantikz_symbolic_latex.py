@@ -8,6 +8,7 @@ import pathlib
 import re
 import sys
 from dataclasses import dataclass, field
+from fractions import Fraction
 
 from quantikz_statevector_evolution import (
     ParsedCommand,
@@ -76,6 +77,73 @@ class LogicalSlice:
     source_columns: list[int]
 
 
+@dataclass(frozen=True)
+class MeasurementAmplitude:
+    coefficient: int = 1
+    sqrt2_power: int = 0
+
+    def normalized(self) -> "MeasurementAmplitude":
+        coefficient = self.coefficient
+        sqrt2_power = self.sqrt2_power
+        if coefficient == 0:
+            return MeasurementAmplitude(0, 0)
+        while sqrt2_power >= 2 and coefficient % 2 == 0:
+            coefficient //= 2
+            sqrt2_power -= 2
+        return MeasurementAmplitude(coefficient=coefficient, sqrt2_power=sqrt2_power)
+
+    def multiply(self, *, sign: int = 1, sqrt2_power: int = 0) -> "MeasurementAmplitude":
+        return MeasurementAmplitude(
+            coefficient=self.coefficient * sign,
+            sqrt2_power=self.sqrt2_power + sqrt2_power,
+        ).normalized()
+
+    def add(self, other: "MeasurementAmplitude") -> "MeasurementAmplitude":
+        if self.sqrt2_power != other.sqrt2_power:
+            raise ValueError("Measurement branch interference with incompatible sqrt(2) powers is not supported")
+        return MeasurementAmplitude(
+            coefficient=self.coefficient + other.coefficient,
+            sqrt2_power=self.sqrt2_power,
+        ).normalized()
+
+    def probability(self) -> Fraction:
+        if self.coefficient == 0:
+            return Fraction(0, 1)
+        return Fraction(self.coefficient * self.coefficient, 2 ** self.sqrt2_power)
+
+    def to_latex(self) -> str:
+        normalized = self.normalized()
+        coefficient = normalized.coefficient
+        sqrt2_power = normalized.sqrt2_power
+        if coefficient == 0:
+            return "0"
+        if sqrt2_power == 0:
+            return str(coefficient)
+
+        sign = "-" if coefficient < 0 else ""
+        absolute = abs(coefficient)
+        even_power, remainder = divmod(sqrt2_power, 2)
+        denominator_parts: list[str] = []
+        if even_power == 1:
+            denominator_parts.append("2")
+        elif even_power > 1:
+            denominator_parts.append(rf"2^{{{even_power}}}")
+        if remainder:
+            denominator_parts.append(r"\sqrt{2}")
+        denominator = " ".join(denominator_parts)
+        numerator = str(absolute)
+        if numerator == "1":
+            return f"{sign}\\frac{{1}}{{{denominator}}}"
+        return f"{sign}\\frac{{{numerator}}}{{{denominator}}}"
+
+
+@dataclass
+class MeasurementRenderedTerm:
+    amplitude: MeasurementAmplitude
+    basis_bits: dict[int, int] = field(default_factory=dict)
+    payloads: dict[int, str] = field(default_factory=dict)
+
+
 def extract_environment_grid(source_text: str, env_index: int) -> tuple[list[str], list[list[str]]]:
     environments = find_quantikz_environments(source_text)
     if not environments:
@@ -114,6 +182,7 @@ def classify_column(row_cells: list[str]) -> dict[str, object]:
     controls: list[tuple[int, int]] = []
     control_targets: list[tuple[int, int, int]] = []
     gates: list[tuple[int, str]] = []
+    meters: list[int] = []
     targets: list[int] = []
     swap_starts: list[tuple[int, int]] = []
     swap_targets: list[int] = []
@@ -144,6 +213,10 @@ def classify_column(row_cells: list[str]) -> dict[str, object]:
                 gates.append((row, command.args[0] if command.args else "?"))
                 substantive = True
                 continue
+            if command.name == "meter":
+                meters.append(row)
+                substantive = True
+                continue
             if command.name == "targ":
                 targets.append(row)
                 substantive = True
@@ -159,9 +232,6 @@ def classify_column(row_cells: list[str]) -> dict[str, object]:
                 swap_targets.append(row)
                 substantive = True
                 continue
-            if command.name == "meter":
-                substantive = True
-                continue
             if command.name in {"vqw", "vcw", "wire"}:
                 connector = parse_connector(command, row)
                 if connector is not None:
@@ -175,6 +245,7 @@ def classify_column(row_cells: list[str]) -> dict[str, object]:
         "controls": sorted(set(controls)),
         "control_targets": sorted(set(control_targets)),
         "gates": gates,
+        "meters": sorted(set(meters)),
         "targets": sorted(set(targets)),
         "swap_starts": sorted(set(swap_starts)),
         "swap_targets": sorted(set(swap_targets)),
@@ -398,6 +469,23 @@ def build_logical_slices(row_labels: list[str], grid: list[list[str]]) -> list[L
                         source_columns=[index],
                     )
                 )
+        elif current["meters"]:
+            if len(current["meters"]) != 1:
+                raise ValueError("Only one measured qubit per logical slice is currently supported")
+            if current["control_targets"] or current["swap_starts"] or current["swap_targets"] or current["targets"]:
+                raise ValueError("Measurement columns mixed with other active operations are not supported")
+            measured_row = current["meters"][0]
+            logical_slices.append(
+                LogicalSlice(
+                    kind="measure",
+                    controls=[],
+                    target_row=measured_row,
+                    secondary_row=None,
+                    label="measure",
+                    description=rf"\text{{measure }}q_{{{measured_row}}}",
+                    source_columns=[index],
+                )
+            )
         index += 1
 
     return logical_slices
@@ -534,10 +622,156 @@ def evolve_terms(terms: list[SymbolicTerm], slice_info: LogicalSlice) -> list[Sy
                 if current is None:
                     raise ValueError(f"Controlled gate target row {slice_info.target_row} has no symbolic factor to act on")
                 updated.payloads[slice_info.target_row] = apply_operator(slice_info.label, current)
+        elif slice_info.kind == "measure":
+            next_terms.append(updated)
+            continue
         else:
             raise ValueError(f"Unsupported logical slice kind: {slice_info.kind}")
         next_terms.append(updated)
     return next_terms
+
+
+def render_fraction_latex(value: Fraction) -> str:
+    if value.denominator == 1:
+        return str(value.numerator)
+    return rf"\frac{{{value.numerator}}}{{{value.denominator}}}"
+
+
+def measurement_factor_options(term: SymbolicTerm, row: int) -> list[tuple[int, MeasurementAmplitude]]:
+    if row in term.basis_bits:
+        return [(term.basis_bits[row], MeasurementAmplitude())]
+
+    payload = term.payloads.get(row)
+    if payload is None:
+        raise ValueError(f"Measured row {row} has no state to measure")
+
+    normalized = payload.replace(" ", "")
+    if normalized == r"\ket{0}":
+        return [(0, MeasurementAmplitude())]
+    if normalized == r"\ket{1}":
+        return [(1, MeasurementAmplitude())]
+    if normalized == r"X\ket{0}":
+        return [(1, MeasurementAmplitude())]
+    if normalized == r"X\ket{1}":
+        return [(0, MeasurementAmplitude())]
+    if normalized == r"H\ket{0}":
+        return [
+            (0, MeasurementAmplitude(sqrt2_power=1)),
+            (1, MeasurementAmplitude(sqrt2_power=1)),
+        ]
+    if normalized == r"H\ket{1}":
+        return [
+            (0, MeasurementAmplitude(sqrt2_power=1)),
+            (1, MeasurementAmplitude(coefficient=-1, sqrt2_power=1)),
+        ]
+    raise ValueError(
+        f"Measurement on row {row} is only supported for computational-basis states and simple H/X-applied basis states"
+    )
+
+
+def measurement_term_key(term: MeasurementRenderedTerm) -> tuple[tuple[tuple[int, int], ...], tuple[tuple[int, str], ...]]:
+    return (
+        tuple(sorted(term.basis_bits.items())),
+        tuple(sorted(term.payloads.items())),
+    )
+
+
+def render_measurement_term(term: MeasurementRenderedTerm, row_order: list[int]) -> str:
+    factors: list[str] = []
+    index = 0
+    active_rows = [row for row in row_order if row in term.basis_bits or row in term.payloads]
+    while index < len(active_rows):
+        row = active_rows[index]
+        if row in term.basis_bits:
+            bits = [str(term.basis_bits[row])]
+            index += 1
+            while index < len(active_rows) and active_rows[index] in term.basis_bits:
+                bits.append(str(term.basis_bits[active_rows[index]]))
+                index += 1
+            factors.append(rf"\ket{{{''.join(bits)}}}")
+            continue
+        factors.append(term.payloads[row])
+        index += 1
+
+    factor_body = r" \otimes ".join(factors)
+    amplitude = term.amplitude.to_latex()
+    if amplitude == "1":
+        return factor_body
+    if amplitude == "-1":
+        return f"-{factor_body}"
+    return f"{amplitude} {factor_body}"
+
+
+def project_measurement_terms(
+    terms: list[SymbolicTerm],
+    measured_row: int,
+) -> dict[int, list[MeasurementRenderedTerm]]:
+    grouped: dict[int, dict[tuple[tuple[tuple[int, int], ...], tuple[tuple[int, str], ...]], MeasurementRenderedTerm]] = {}
+
+    for term in terms:
+        base_amplitude = MeasurementAmplitude(
+            coefficient=term.amplitude.sign,
+            sqrt2_power=term.amplitude.sqrt2_power,
+        )
+        for outcome, factor_amplitude in measurement_factor_options(term, measured_row):
+            projected = MeasurementRenderedTerm(
+                amplitude=base_amplitude.multiply(
+                    sign=1 if factor_amplitude.coefficient >= 0 else -1,
+                    sqrt2_power=factor_amplitude.sqrt2_power,
+                ),
+                basis_bits=dict(term.basis_bits),
+                payloads=dict(term.payloads),
+            )
+            projected.basis_bits[measured_row] = outcome
+            projected.payloads.pop(measured_row, None)
+            key = measurement_term_key(projected)
+            branch = grouped.setdefault(outcome, {})
+            existing = branch.get(key)
+            if existing is None:
+                branch[key] = projected
+            else:
+                combined = existing.amplitude.add(projected.amplitude)
+                branch[key] = MeasurementRenderedTerm(
+                    amplitude=combined,
+                    basis_bits=existing.basis_bits,
+                    payloads=existing.payloads,
+                )
+
+    projected_branches: dict[int, list[MeasurementRenderedTerm]] = {}
+    for outcome, branch_terms in grouped.items():
+        projected_branches[outcome] = [
+            branch_term
+            for branch_term in branch_terms.values()
+            if branch_term.amplitude.coefficient != 0
+        ]
+    return projected_branches
+
+
+def render_measurement_state_latex(terms: list[SymbolicTerm], row_order: list[int], measured_row: int) -> str:
+    projected = project_measurement_terms(terms, measured_row)
+    pieces: list[str] = []
+
+    for outcome in sorted(projected):
+        branch_terms = projected[outcome]
+        if not branch_terms:
+            continue
+        branch_terms = sorted(
+            branch_terms,
+            key=lambda term: (
+                tuple(sorted(term.basis_bits.items())),
+                tuple(sorted(term.payloads.items())),
+            ),
+        )
+        branch_expr = " + ".join(render_measurement_term(term, row_order) for term in branch_terms).replace("+ -", "- ")
+        if len(branch_terms) > 1:
+            branch_expr = rf"\left({branch_expr}\right)"
+        probability = sum((term.amplitude.probability() for term in branch_terms), start=Fraction(0, 1))
+        label = rf"\Pr(q_{{{measured_row}}}={outcome})={render_fraction_latex(probability)}"
+        pieces.append(rf"\underbrace{{{branch_expr}}}_{{{label}}}")
+
+    if not pieces:
+        raise ValueError(f"Measurement on row {measured_row} produced no valid outcome branches")
+    return " + ".join(pieces)
 
 
 def render_term(term: SymbolicTerm, row_order: list[int]) -> str:
@@ -641,10 +875,18 @@ def build_align_block(row_labels: list[str], logical_slices: list[LogicalSlice])
     lines.append(rf"\ket{{\Psi_{{0}}}} &= {render_initial_state_latex(row_labels, temporary_rows)} \\")
 
     for index, slice_info in enumerate(logical_slices, start=1):
-        terms = evolve_terms(terms, slice_info)
-        active_rows = [row for row in all_rows if any(row in term.basis_bits or row in term.payloads for term in terms)]
+        if slice_info.kind == "measure":
+            if index != len(logical_slices):
+                raise ValueError("Measurement is only supported as the final logical slice in symbolic LaTeX output")
+            assert slice_info.target_row is not None
+            active_rows = [row for row in all_rows if any(row in term.basis_bits or row in term.payloads for term in terms)]
+            rendered_state = render_measurement_state_latex(terms, active_rows, slice_info.target_row)
+        else:
+            terms = evolve_terms(terms, slice_info)
+            active_rows = [row for row in all_rows if any(row in term.basis_bits or row in term.payloads for term in terms)]
+            rendered_state = render_state_latex(terms, active_rows)
         line = (
-            rf"\ket{{\Psi_{{{index}}}}} &= {render_state_latex(terms, active_rows)}"
+            rf"\ket{{\Psi_{{{index}}}}} &= {rendered_state}"
             rf" && \text{{slice {index}: }}{slice_info.description}"
         )
         if index != len(logical_slices):

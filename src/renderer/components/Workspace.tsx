@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type Ref } from "react";
 import meterBlackSvg from "../assets/meter_black.svg?raw";
 import meterOrangeIcon from "../assets/meter_orange.svg";
 import crossBlackSvg from "../assets/cross_black.svg?raw";
@@ -81,6 +81,7 @@ import type {
 } from "../types";
 
 interface WorkspaceProps {
+  panelRef?: Ref<HTMLElement>;
   state: EditorState;
   latexMacros?: KatexMacroMap;
   isPasteMode: boolean;
@@ -1379,6 +1380,7 @@ function renderVerticalHover(
 }
 
 export function Workspace({
+  panelRef,
   state,
   latexMacros,
   isPasteMode,
@@ -2374,7 +2376,7 @@ export function Workspace({
   }
 
   return (
-    <section className="panel workspace-panel">
+    <section ref={panelRef} className="panel workspace-panel">
       <div className="panel-heading">
         <p className="eyebrow">Workbench</p>
         <h2>Grid editor</h2>

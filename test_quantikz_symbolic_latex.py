@@ -67,6 +67,18 @@ NESTED_ANCILLA_CIRCUIT = textwrap.dedent(
     """
 ).strip()
 
+MEASUREMENT_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}[row sep={0.9cm,between origins}, column sep=0.7cm]
+    \lstick{$\ket{+}_c$} & \control{} \wire[d][2]{q} &  & \ctrl{2} &  & \control{} \wire[d][2]{q} &  &  &  \\
+    \lstick{$\ket{+}_0$} & \control{} &  &  &  & \ocontrol{} & \gate{H} & \meter{} \\
+     & \setwiretype{n} & \ctrl{1} \setwiretype{q} & \targ{} & \ctrl{1} &  & \setwiretype{n} &  &  \\
+    \lstick{$\ket{\psi}$} &  & \gate[wires=2]{XX} &  & \gate[wires=2]{YY} &  &  &  &  \\
+    \lstick{$\ket{\phi}$} &  &  &  &  &  &  &  &
+    \end{quantikz}
+    """
+).strip()
+
 
 class QuantikzSymbolicLatexTests(unittest.TestCase):
     def test_generates_align_block_for_compute_and_uncompute_pattern(self) -> None:
@@ -163,6 +175,24 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
         self.assertIn(r"\text{slice 10: }\text{uncompute AND and remove ancilla }a_{4}", output)
         self.assertIn(r"\ket{11101} \otimes \ket{\psi_0} \otimes A\ket{\psi_1}", output)
         self.assertIn(r"\ket{101} \otimes \ket{\psi_0} \otimes \ket{\psi_1} \otimes A\ket{\psi_2}", output)
+
+    def test_renders_underbraced_measurement_branches(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = pathlib.Path(temp_dir) / "measurement.tex"
+            input_path.write_text(MEASUREMENT_CIRCUIT, encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH), str(input_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        output = result.stdout
+        self.assertIn(r"\ket{\Psi_{7}} &= \underbrace{", output)
+        self.assertIn(r"\Pr(q_{1}=0)=\frac{3}{4}", output)
+        self.assertIn(r"\Pr(q_{1}=1)=\frac{1}{4}", output)
+        self.assertIn(r"\text{slice 7: }\text{measure }q_{1}", output)
 
 
 if __name__ == "__main__":

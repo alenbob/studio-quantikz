@@ -123,6 +123,7 @@ export interface HorizontalSegmentItem extends BaseItem {
   point: GridPoint;
   mode: HorizontalSegmentMode;
   wireType: WireType;
+  sourceCommand?: "wireoverride" | "setwiretype";
   bundled?: boolean;
   autoSuppressed?: boolean;
   bundleLabel?: string;

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { exportToQuantikz } from "../src/renderer/exporter";
+import { importFromQuantikz } from "../src/renderer/importer";
+import { editorReducer, initialState } from "../src/renderer/reducer";
 import type { EditorState } from "../src/renderer/types";
 
 function makeState(overrides: Partial<EditorState>): EditorState {
@@ -862,6 +864,93 @@ describe("exportToQuantikz", () => {
 
     expect(code).toContain("\\setwiretype{n}");
     expect(code).toContain("\\gate{H} \\setwiretype{q}");
+  });
+
+  it("preserves imported wireoverride gaps without inserting a synthetic restore", () => {
+    const code = String.raw`\begin{quantikz}
+& \wireoverride{n} & \gate{H} &
+\end{quantikz}`;
+
+    const imported = importFromQuantikz(code);
+    const loaded = editorReducer(initialState, {
+      type: "loadQuantikz",
+      imported,
+      code,
+      preamble: ""
+    });
+    const exported = exportToQuantikz(loaded);
+
+    expect(exported).toContain("\\wireoverride{n} & \\gate{H}");
+    expect(exported).not.toContain("\\setwiretype{q} & \\gate{H}");
+  });
+
+  it("preserves imported setwiretype restores on the cell where they were specified", () => {
+    const code = String.raw`\begin{quantikz}
+& \setwiretype{n} &  & \gate{H} \setwiretype{q} &
+\end{quantikz}`;
+
+    const imported = importFromQuantikz(code);
+    const loaded = editorReducer(initialState, {
+      type: "loadQuantikz",
+      imported,
+      code,
+      preamble: ""
+    });
+    const exported = exportToQuantikz(loaded);
+
+    expect(exported).toContain("\\setwiretype{n} &  & \\gate{H} \\setwiretype{q}");
+    expect(exported).not.toContain("\\setwiretype{n} & \\setwiretype{q} & \\gate{H}");
+  });
+
+  it("exports manually built absent runs with boundary setwiretype transitions instead of repeating n in occupied cells", () => {
+    const code = exportToQuantikz(
+      makeState({
+        qubits: 2,
+        steps: 7,
+        wireLabels: [{ left: "", right: "" }, { left: "", right: "" }],
+        items: [
+          {
+            id: "gap-1",
+            type: "horizontalSegment",
+            point: { row: 0, col: 1 },
+            mode: "absent",
+            wireType: "quantum",
+            color: null
+          },
+          {
+            id: "gap-2",
+            type: "horizontalSegment",
+            point: { row: 0, col: 2 },
+            mode: "absent",
+            wireType: "quantum",
+            color: null
+          },
+          { id: "dot-1", type: "controlDot", point: { row: 0, col: 3 } },
+          { id: "line-1", type: "verticalConnector", point: { row: 0, col: 3 }, length: 1, wireType: "quantum" },
+          { id: "plus-1", type: "targetPlus", point: { row: 1, col: 3 } },
+          {
+            id: "gap-3",
+            type: "horizontalSegment",
+            point: { row: 0, col: 5 },
+            mode: "absent",
+            wireType: "quantum",
+            color: null
+          },
+          {
+            id: "gap-4",
+            type: "horizontalSegment",
+            point: { row: 0, col: 6 },
+            mode: "absent",
+            wireType: "quantum",
+            color: null
+          }
+        ]
+      })
+    );
+
+    expect(code).toContain("\\setwiretype{n} &  & \\ctrl{1} \\setwiretype{q} &  & \\setwiretype{n}");
+    expect(code).not.toContain("\\ctrl{1} \\setwiretype{q} \\setwiretype{n}");
+    expect(code).not.toContain("& \\setwiretype{n} & \\setwiretype{n}");
   });
 
   it("exports classical connectors with the proper Quantikz option", () => {

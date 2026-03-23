@@ -9,6 +9,7 @@ import { Palette, TOOL_LABELS } from "./components/Palette";
 import { Inspector } from "./components/Inspector";
 import { Workspace } from "./components/Workspace";
 import {
+  normalizeSymbolicPreamble,
   splitStandaloneQuantikzSource
 } from "./document";
 import {
@@ -52,8 +53,10 @@ type HistoryAction = EditorAction | { type: "undo" } | { type: "redo" };
 type ExportPanelMode = "quantikz" | "symbolic";
 type ExportPaneView = "content" | "preamble";
 type DownloadMenuTarget = "main" | `history:${string}` | null;
+type WorkbenchLayoutMode = "left-rail-tall" | "workspace-tall";
 
 const TOAST_DURATION_MS = 4000;
+const WORKBENCH_LAYOUT_TOLERANCE_PX = 1;
 const DOWNLOAD_FORMATS: DownloadFormat[] = ["tex", "pdf"];
 const REPOSITORY_URL = import.meta.env.VITE_REPOSITORY_URL?.trim() || "https://github.com/alenbob";
 const REPOSITORY_LABEL = import.meta.env.VITE_REPOSITORY_LABEL?.trim() || "github/alenbob";
@@ -121,6 +124,16 @@ function imageUrlToDataUrl(imageUrl: string, maxWidth = 220, maxHeight = 120): P
 
 function getPdfViewerSrc(pdfUrl: string): string {
   return `${pdfUrl}#toolbar=0&navpanes=0&scrollbar=0&zoom=page-width&view=FitH`;
+}
+
+function resolveWorkbenchLayoutMode(leftPanelHeight: number, workspaceHeight: number): WorkbenchLayoutMode {
+  if (!Number.isFinite(leftPanelHeight) || !Number.isFinite(workspaceHeight)) {
+    return "left-rail-tall";
+  }
+
+  return leftPanelHeight + WORKBENCH_LAYOUT_TOLERANCE_PX >= workspaceHeight
+    ? "left-rail-tall"
+    : "workspace-tall";
 }
 
 function DownloadMenu({
@@ -290,12 +303,15 @@ export default function App(): JSX.Element {
   const [toastAnimationKey, setToastAnimationKey] = useState(0);
   const [selectedWireLabel, setSelectedWireLabel] = useState<{ row: number; side: WireLabelSide } | null>(null);
   const [selectedStructure, setSelectedStructure] = useState<StructureSelection | null>(null);
+  const [workbenchLayoutMode, setWorkbenchLayoutMode] = useState<WorkbenchLayoutMode>("left-rail-tall");
   const stateRef = useRef(state);
   const clipboardRef = useRef<CircuitClipboard | null>(null);
   const shortcutSheetOpenRef = useRef(isShortcutSheetOpen);
   const historySheetOpenRef = useRef(isHistorySheetOpen);
   const selectedWireLabelRef = useRef(selectedWireLabel);
   const selectedStructureRef = useRef(selectedStructure);
+  const leftPanelRef = useRef<HTMLDivElement | null>(null);
+  const workspacePanelRef = useRef<HTMLElement | null>(null);
 
   const selectedItems = useMemo<CircuitItem[]>(
     () => state.items.filter((item) => state.selectedItemIds.includes(item.id)),
@@ -327,9 +343,13 @@ export default function App(): JSX.Element {
   );
   const symbolicLatexResult = useSymbolicLatex(resolvedExportSource.code);
   const isSymbolicMode = exportPanelMode === "symbolic";
+  const normalizedSymbolicPreamble = useMemo(
+    () => normalizeSymbolicPreamble(state.exportSymbolicPreamble),
+    [state.exportSymbolicPreamble]
+  );
   const symbolicPreviewResult = useRenderedPdf(
     isSymbolicMode ? symbolicLatexResult.latex : "",
-    state.exportSymbolicPreamble
+    normalizedSymbolicPreamble
   );
   const visualPreambleDefinitions = useMemo(
     () => resolveVisualPreambleDefinitions(resolvedExportSource.preamble),
@@ -342,6 +362,9 @@ export default function App(): JSX.Element {
   const pdfPreviewError = activePreviewResult.error;
   const figurePdfPreviewState = figurePreviewResult.state;
   const figurePreviewImageUrl = figurePreviewResult.previewImageUrl;
+  const appBodyClassName = ["app-body", hasSelection ? "has-context-sidebar" : "", `layout-${workbenchLayoutMode}`]
+    .filter(Boolean)
+    .join(" ");
 
   useEffect(() => {
     stateRef.current = state;
@@ -359,6 +382,12 @@ export default function App(): JSX.Element {
         : nextDrafts;
     });
   }, [state.qubits, state.steps]);
+
+  useEffect(() => {
+    if (normalizedSymbolicPreamble !== state.exportSymbolicPreamble) {
+      dispatch({ type: "setExportSymbolicPreamble", preamble: normalizedSymbolicPreamble });
+    }
+  }, [dispatch, normalizedSymbolicPreamble, state.exportSymbolicPreamble]);
 
   useEffect(() => {
     clipboardRef.current = clipboard;
@@ -379,6 +408,52 @@ export default function App(): JSX.Element {
   useEffect(() => {
     selectedStructureRef.current = selectedStructure;
   }, [selectedStructure]);
+
+  useEffect(() => {
+    const leftPanel = leftPanelRef.current;
+    const workspacePanel = workspacePanelRef.current;
+    if (!leftPanel || !workspacePanel) {
+      return;
+    }
+
+    let animationFrameId = 0;
+
+    const updateWorkbenchLayout = () => {
+      animationFrameId = 0;
+
+      const nextMode = resolveWorkbenchLayoutMode(
+        leftPanel.getBoundingClientRect().height,
+        workspacePanel.getBoundingClientRect().height
+      );
+
+      setWorkbenchLayoutMode((currentMode) => currentMode === nextMode ? currentMode : nextMode);
+    };
+
+    const scheduleWorkbenchLayoutUpdate = () => {
+      if (animationFrameId !== 0) {
+        window.cancelAnimationFrame(animationFrameId);
+      }
+
+      animationFrameId = window.requestAnimationFrame(updateWorkbenchLayout);
+    };
+
+    scheduleWorkbenchLayoutUpdate();
+
+    const resizeObserver =
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(scheduleWorkbenchLayoutUpdate);
+    resizeObserver?.observe(leftPanel);
+    resizeObserver?.observe(workspacePanel);
+    window.addEventListener("resize", scheduleWorkbenchLayoutUpdate);
+
+    return () => {
+      if (animationFrameId !== 0) {
+        window.cancelAnimationFrame(animationFrameId);
+      }
+
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", scheduleWorkbenchLayoutUpdate);
+    };
+  }, [hasSelection]);
 
   useEffect(() => {
     if (selectedItems.length > 0 && selectedWireLabel !== null) {
@@ -453,7 +528,7 @@ export default function App(): JSX.Element {
     if (isSymbolicMode) {
       return {
         code: symbolicLatexResult.latex,
-        preamble: state.exportSymbolicPreamble
+        preamble: normalizedSymbolicPreamble
       };
     }
 
@@ -1318,80 +1393,85 @@ export default function App(): JSX.Element {
         </div>
       )}
 
-      <main className={`app-body ${hasSelection ? "has-context-sidebar" : ""}`}>
-        <div key={hasSelection ? "inspector" : "palette"} className={hasSelection ? "left-panel-slide-in" : "left-panel-slide-back"}>
-        {hasSelection ? (
-          <Inspector
-            selectedItem={selectedItem}
-            selectedItems={selectedItems}
-            selectedStructure={selectedStructure}
-            selectedColumnHasEquals={selectedColumnHasEquals}
-            selectedWireLabelGroup={selectedWireLabelGroup}
-            selectedCount={selectedItems.length}
-            qubits={state.qubits}
-            steps={state.steps}
-            wireLabels={state.wireLabels}
-            onGateLabelChange={(itemId, label) => dispatch({ type: "updateGateLabel", itemId, label })}
-            onGateSpanChange={(itemId, rows, cols) => dispatch({ type: "updateGateSpan", itemId, rows, cols })}
-            onFrameLabelChange={(itemId, label) => dispatch({ type: "updateFrameLabel", itemId, label })}
-            onFrameSpanChange={(itemId, rows, cols) => dispatch({ type: "updateFrameSpan", itemId, rows, cols })}
-            onFrameStyleChange={(itemId, updates) => dispatch({ type: "updateFrameStyle", itemId, ...updates })}
-            onSliceLabelChange={(itemId, label) => dispatch({ type: "updateSliceLabel", itemId, label })}
-            onVerticalLengthChange={(itemId, length) =>
-              dispatch({ type: "updateVerticalLength", itemId, length })
-            }
-            onVerticalWireTypeChange={(itemId, wireType) =>
-              dispatch({ type: "updateVerticalWireType", itemId, wireType })
-            }
-            onControlStateChange={(itemId, controlState) =>
-              dispatch({ type: "updateControlState", itemId, controlState })
-            }
-            onHorizontalModeChange={(itemId, mode) =>
-              dispatch({ type: "updateHorizontalMode", itemId, mode })
-            }
-            onHorizontalWireTypeChange={(itemId, wireType) =>
-              dispatch({ type: "updateHorizontalWireType", itemId, wireType })
-            }
-            onHorizontalBundledChange={(itemId, bundled) =>
-              dispatch({ type: "updateHorizontalBundled", itemId, bundled })
-            }
-            onHorizontalBundleLabelChange={(itemId, bundleLabel) =>
-              dispatch({ type: "updateHorizontalBundleLabel", itemId, bundleLabel })
-            }
-            onItemColorChange={(itemId, color) => dispatch({ type: "updateItemColor", itemId, color })}
-            onSelectedItemsColorChange={handleSelectedItemsColorChange}
-            onSelectedGateLabelChange={handleSelectedGateLabelChange}
-            onSelectedControlStateChange={handleSelectedControlStateChange}
-            onSelectedWireTypeChange={handleSelectedWireTypeChange}
-            onWireLabelChange={(row, side, label) =>
-              dispatch({ type: "updateWireLabel", row, side, label })
-            }
-            onWireLabelGroupChange={(row, side, updates) =>
-              dispatch({ type: "updateWireLabelGroup", row, side, ...updates })
-            }
-            onWireLabelGroupUnmerge={(row, side) =>
-              dispatch({ type: "unmergeWireLabelGroup", row, side })
-            }
-            onInsertStructure={handleInsertStructure}
-            onDeleteStructure={handleDeleteStructure}
-            onConvertColumnToEquals={handleConvertColumnToEquals}
-            onDelete={() => dispatch({ type: "deleteSelected" })}
-            onClearSelection={clearAllSelection}
-            showWireLabels={false}
-            showSelectionControls
-            eyebrow="Selection"
-            heading="Object controls"
-            panelClassName="context-panel"
-          />
-        ) : (
-          <Palette
-            activeTool={state.activeTool}
-            onSelectTool={handleToolSelection}
-          />
-        )}
+      <main className={appBodyClassName}>
+        <div
+          key={hasSelection ? "inspector" : "palette"}
+          ref={leftPanelRef}
+          className={`left-panel-shell ${hasSelection ? "left-panel-slide-in" : "left-panel-slide-back"}`}
+        >
+          {hasSelection ? (
+            <Inspector
+              selectedItem={selectedItem}
+              selectedItems={selectedItems}
+              selectedStructure={selectedStructure}
+              selectedColumnHasEquals={selectedColumnHasEquals}
+              selectedWireLabelGroup={selectedWireLabelGroup}
+              selectedCount={selectedItems.length}
+              qubits={state.qubits}
+              steps={state.steps}
+              wireLabels={state.wireLabels}
+              onGateLabelChange={(itemId, label) => dispatch({ type: "updateGateLabel", itemId, label })}
+              onGateSpanChange={(itemId, rows, cols) => dispatch({ type: "updateGateSpan", itemId, rows, cols })}
+              onFrameLabelChange={(itemId, label) => dispatch({ type: "updateFrameLabel", itemId, label })}
+              onFrameSpanChange={(itemId, rows, cols) => dispatch({ type: "updateFrameSpan", itemId, rows, cols })}
+              onFrameStyleChange={(itemId, updates) => dispatch({ type: "updateFrameStyle", itemId, ...updates })}
+              onSliceLabelChange={(itemId, label) => dispatch({ type: "updateSliceLabel", itemId, label })}
+              onVerticalLengthChange={(itemId, length) =>
+                dispatch({ type: "updateVerticalLength", itemId, length })
+              }
+              onVerticalWireTypeChange={(itemId, wireType) =>
+                dispatch({ type: "updateVerticalWireType", itemId, wireType })
+              }
+              onControlStateChange={(itemId, controlState) =>
+                dispatch({ type: "updateControlState", itemId, controlState })
+              }
+              onHorizontalModeChange={(itemId, mode) =>
+                dispatch({ type: "updateHorizontalMode", itemId, mode })
+              }
+              onHorizontalWireTypeChange={(itemId, wireType) =>
+                dispatch({ type: "updateHorizontalWireType", itemId, wireType })
+              }
+              onHorizontalBundledChange={(itemId, bundled) =>
+                dispatch({ type: "updateHorizontalBundled", itemId, bundled })
+              }
+              onHorizontalBundleLabelChange={(itemId, bundleLabel) =>
+                dispatch({ type: "updateHorizontalBundleLabel", itemId, bundleLabel })
+              }
+              onItemColorChange={(itemId, color) => dispatch({ type: "updateItemColor", itemId, color })}
+              onSelectedItemsColorChange={handleSelectedItemsColorChange}
+              onSelectedGateLabelChange={handleSelectedGateLabelChange}
+              onSelectedControlStateChange={handleSelectedControlStateChange}
+              onSelectedWireTypeChange={handleSelectedWireTypeChange}
+              onWireLabelChange={(row, side, label) =>
+                dispatch({ type: "updateWireLabel", row, side, label })
+              }
+              onWireLabelGroupChange={(row, side, updates) =>
+                dispatch({ type: "updateWireLabelGroup", row, side, ...updates })
+              }
+              onWireLabelGroupUnmerge={(row, side) =>
+                dispatch({ type: "unmergeWireLabelGroup", row, side })
+              }
+              onInsertStructure={handleInsertStructure}
+              onDeleteStructure={handleDeleteStructure}
+              onConvertColumnToEquals={handleConvertColumnToEquals}
+              onDelete={() => dispatch({ type: "deleteSelected" })}
+              onClearSelection={clearAllSelection}
+              showWireLabels={false}
+              showSelectionControls
+              eyebrow="Selection"
+              heading="Object controls"
+              panelClassName="context-panel"
+            />
+          ) : (
+            <Palette
+              activeTool={state.activeTool}
+              onSelectTool={handleToolSelection}
+            />
+          )}
         </div>
 
         <Workspace
+          panelRef={workspacePanelRef}
           state={state}
           latexMacros={visualPreambleDefinitions.katexMacros}
           isPasteMode={isPasteMode}
@@ -1547,7 +1627,7 @@ export default function App(): JSX.Element {
                       aria-label="Symbolic preamble"
                       className="code-output preamble-output"
                       spellCheck={false}
-                      value={state.exportSymbolicPreamble}
+                      value={normalizedSymbolicPreamble}
                       placeholder={symbolicPreamblePlaceholder}
                       onChange={(event) => dispatch({ type: "setExportSymbolicPreamble", preamble: event.target.value })}
                     />

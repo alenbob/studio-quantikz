@@ -390,6 +390,42 @@ describe("App smoke tests", () => {
     expect(exported).toContain("\\lstick{$\\ket{\\psi}$}");
   });
 
+  it("preserves nested ancilla wire overrides when round-tripping through the visual editor", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    const code = String.raw`\begin{quantikz}[row sep={0.9cm,between origins}, column sep=0.7cm]
+\lstick{$\ket{+}_{c_0}$} & \control{} \wire[d][2]{q} &  &  &  &  &  & \control{} \wire[d][2]{q} & \control{} \wire[d][4]{q} &  & \control{} \wire[d][4]{q} & \ctrl{5} &  \\
+\lstick{$\ket{+}_{c_1}$} & \control{} &  &  &  &  &  & \ocontrol{} &  &  &  &  &  \\
+ & \wireoverride{n} & \control{} \wire[d][2]{q} &  & \ctrl{2} &  & \control{} \wire[d][2]{q} &  & \setwiretype{n} &  &  &  &  \\
+\lstick{$\ket{+}_{c_2}$} &  & \control{} &  &  &  & \ocontrol{} &  & \control{} &  & \control{} &  &  \\
+ & \setwiretype{n} &  & \ctrl{4} \setwiretype{q} & \targ{} & \ctrl{2} &  & \setwiretype{n} &  & \ctrl{3} \setwiretype{q} &  & \setwiretype{n} &  \\
+\lstick{$\ket{\psi_0}$} &  &  &  &  &  &  &  &  &  &  & \gate{A} &  \\
+\lstick{$\ket{\psi_1}$} &  &  &  &  & \gate{A} &  &  &  &  &  &  &  \\
+\lstick{$\ket{\psi_2}$} &  &  &  &  &  &  &  &  & \gate{A} &  &  &  \\
+\lstick{$\ket{\psi_3}$} &  &  & \gate{A} &  &  &  &  &  &  &  &  & 
+\end{quantikz}`;
+
+    const normalizeQuantikz = (value: string): string =>
+      value
+        .replace(/\r\n/g, "\n")
+        .split("\n")
+        .map((line) => line.replace(/[ \t]+$/g, ""))
+        .join("\n");
+
+    fireEvent.change(screen.getByLabelText(/quantikz output/i), {
+      target: {
+        value: code
+      }
+    });
+
+    await user.click(screen.getByRole("button", { name: /convert to visual/i }));
+    await user.click(screen.getByRole("button", { name: /convert to quantikz/i }));
+
+    const exported = (screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value;
+    expect(normalizeQuantikz(exported)).toBe(normalizeQuantikz(code));
+  });
+
   it("splits a standalone document into preamble and quantikz code when loading", async () => {
     const user = userEvent.setup();
     render(<App />);
@@ -505,7 +541,7 @@ describe("App smoke tests", () => {
 
       await user.click(screen.getByRole("button", { name: /toggle symbolic editor view/i }));
       expect((screen.getByLabelText(/symbolic preamble/i) as HTMLTextAreaElement).value).toContain(
-        String.raw`\documentclass[varwidth=2400pt,border=4pt]{standalone}`
+        String.raw`\documentclass[border=4pt]{standalone}`
       );
       fireEvent.change(screen.getByLabelText(/symbolic preamble/i), {
         target: {

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { exportToQuantikz } from "../src/renderer/exporter";
 import { importFromQuantikz } from "../src/renderer/importer";
+import { isVisibleHorizontalSegment } from "../src/renderer/horizontalWires";
+import { editorReducer, initialState } from "../src/renderer/reducer";
 import type { EditorState } from "../src/renderer/types";
 
 function makeState(overrides: Partial<EditorState>): EditorState {
@@ -313,6 +315,13 @@ describe("importFromQuantikz", () => {
         item.point.col === 0 &&
         item.mode === "absent"
     );
+    const continuedAbsentSegment = imported.items.find(
+      (item) =>
+        item.type === "horizontalSegment" &&
+        item.point.row === 0 &&
+        item.point.col === 1 &&
+        item.mode === "absent"
+    );
     const restoredSegment = imported.items.find(
       (item) =>
         item.type === "horizontalSegment" &&
@@ -325,8 +334,65 @@ describe("importFromQuantikz", () => {
     );
 
     expect(absentSegment).toBeTruthy();
+    expect(continuedAbsentSegment).toBeTruthy();
     expect(restoredSegment).toBeTruthy();
     expect(restoredGate).toBeTruthy();
+  });
+
+  it("imports persistent absent runs through cells that also contain vertical commands", () => {
+    const code = String.raw`\begin{quantikz}
+& \control{} \\
+& \setwiretype{n} & \control{} \wire[d][1]{q} &  & \setwiretype{q} \gate{H} \\
+&  & \targ{} &  &
+\end{quantikz}`;
+
+    const imported = importFromQuantikz(code);
+    const absentAtControlCell = imported.items.find(
+      (item) =>
+        item.type === "horizontalSegment" &&
+        item.point.row === 1 &&
+        item.point.col === 1 &&
+        item.mode === "absent"
+    );
+    const absentAtBlankCell = imported.items.find(
+      (item) =>
+        item.type === "horizontalSegment" &&
+        item.point.row === 1 &&
+        item.point.col === 2 &&
+        item.mode === "absent"
+    );
+
+    expect(absentAtControlCell).toBeTruthy();
+    expect(absentAtBlankCell).toBeTruthy();
+  });
+
+  it("keeps trailing boundary segments absent after loading a row that ends under setwiretype n", () => {
+    const code = String.raw`\begin{quantikz}[row sep={0.9cm,between origins}, column sep=0.7cm]
+\lstick{$\ket{+}_{c_0}$} & \control{} \wire[d][2]{q} &  &  &  &  &  & \control{} \wire[d][2]{q} & \control{} \wire[d][4]{q} &  & \control{} \wire[d][4]{q} & \ctrl{5} &  \\
+\lstick{$\ket{+}_{c_1}$} & \control{} &  &  &  &  &  & \ocontrol{} &  &  &  &  &  \\
+ & \wireoverride{n} & \control{} \wire[d][2]{q} &  & \ctrl{2} &  & \control{} \wire[d][2]{q} &  & \setwiretype{n} &  &  &  &  \\
+\lstick{$\ket{+}_{c_2}$} &  & \control{} &  &  &  & \ocontrol{} &  & \control{} &  & \control{} &  &  \\
+ & \setwiretype{n} &  & \ctrl{4} \setwiretype{q} & \targ{} & \ctrl{2} &  & \setwiretype{n} &  & \ctrl{3} \setwiretype{q} &  & \setwiretype{n} &  \\
+\lstick{$\ket{\psi_0}$} &  &  &  &  &  &  &  &  &  &  & \gate{A} &  \\
+\lstick{$\ket{\psi_1}$} &  &  &  &  & \gate{A} &  &  &  &  &  &  &  \\
+\lstick{$\ket{\psi_2}$} &  &  &  &  &  &  &  &  & \gate{A} &  &  &  \\
+\lstick{$\ket{\psi_3}$} &  &  & \gate{A} &  &  &  &  &  &  &  &  & 
+\end{quantikz}`;
+
+    const imported = importFromQuantikz(code);
+    const loaded = editorReducer(initialState, {
+      type: "loadQuantikz",
+      imported,
+      code,
+      preamble: ""
+    });
+
+    const visibleCols = loaded.items
+      .filter((item) => item.type === "horizontalSegment" && item.point.row === 2 && isVisibleHorizontalSegment(item))
+      .map((item) => item.point.col)
+      .sort((left, right) => left - right);
+
+    expect(visibleCols).toEqual([1, 2, 3, 4, 5, 6]);
   });
 
   it("imports qwbundle segments from a multi-register circuit", () => {

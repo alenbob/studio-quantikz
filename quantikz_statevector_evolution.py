@@ -9,6 +9,7 @@ import pathlib
 import re
 import sys
 from dataclasses import dataclass, field
+from fractions import Fraction
 
 
 @dataclass
@@ -98,6 +99,7 @@ class SliceEvolution:
     operations: list[str]
     state: str
     expanded_state: str | None = None
+    measurement_outcomes: list["MeasurementOutcome"] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
 
@@ -110,6 +112,15 @@ class CircuitEvolution:
     initial_state: str
     slices: list[SliceEvolution]
     source: str
+
+
+@dataclass
+class MeasurementOutcome:
+    outcome: str
+    measured_qubits: list[int]
+    remaining_qubits: list[int]
+    probability: str
+    remaining_state: str | None
 
 
 ENVIRONMENT_PATTERN = re.compile(r"\\begin\{quantikz\}(\[[^\]]*\])?(.*?)\\end\{quantikz\}", re.S)
@@ -472,6 +483,224 @@ def render_statevector(terms: dict[int, str], num_qubits: int) -> str:
     if not pieces:
         return "0"
     return " + ".join(pieces).replace("+ -", "- ")
+
+
+def render_statevector_on_qubits(terms: dict[int, str], qubits: list[int]) -> str:
+    pieces: list[str] = []
+    for state, amplitude in sorted(terms.items()):
+        if amplitude == "0":
+            continue
+        ket = render_basis_state(state, len(qubits))
+        if amplitude == "1":
+            pieces.append(ket)
+        elif amplitude == "-1":
+            pieces.append(f"-{ket}")
+        else:
+            pieces.append(f"{amplitude}{ket}")
+    if not pieces:
+        return "0"
+    return " + ".join(pieces).replace("+ -", "- ")
+
+
+def try_parse_rational(value: str) -> Fraction | None:
+    normalized = strip_outer_parentheses(value.strip())
+    if not normalized:
+        return None
+    if re.fullmatch(r"-?\d+", normalized):
+        return Fraction(int(normalized), 1)
+    match = re.fullmatch(r"(-?\d+)\s*/\s*(\d+)", normalized)
+    if match is None:
+        return None
+    denominator = int(match.group(2))
+    if denominator == 0:
+        return None
+    return Fraction(int(match.group(1)), denominator)
+
+
+def render_rational(value: Fraction) -> str:
+    if value.denominator == 1:
+        return str(value.numerator)
+    return f"{value.numerator}/{value.denominator}"
+
+
+def add_scalar_expr(left: str, right: str) -> str:
+    if left == "0":
+        return right
+    if right == "0":
+        return left
+    left_rational = try_parse_rational(left)
+    right_rational = try_parse_rational(right)
+    if left_rational is not None and right_rational is not None:
+        return render_rational(left_rational + right_rational)
+    if left == right:
+        return mul_scalar_expr("2", left)
+    return f"({left}) + ({right})"
+
+
+def mul_scalar_expr(left: str, right: str) -> str:
+    if left == "0" or right == "0":
+        return "0"
+    if left == "1":
+        return right
+    if right == "1":
+        return left
+    left_rational = try_parse_rational(left)
+    right_rational = try_parse_rational(right)
+    if left_rational is not None and right_rational is not None:
+        return render_rational(left_rational * right_rational)
+    return f"{left}*({right})" if re.fullmatch(r"[A-Za-z0-9_\\]+", left) else f"({left})*({right})"
+
+
+def div_scalar_expr(left: str, right: str) -> str:
+    if left == "0":
+        return "0"
+    if right == "1":
+        return left
+    left_rational = try_parse_rational(left)
+    right_rational = try_parse_rational(right)
+    if left_rational is not None and right_rational is not None and right_rational != 0:
+        return render_rational(left_rational / right_rational)
+    return f"{left}/{right}" if re.fullmatch(r"[A-Za-z0-9_\\]+", left) else f"({left})/{right}"
+
+
+def sqrt_scalar_expr(value: str) -> str:
+    normalized = strip_outer_parentheses(value.strip())
+    if normalized == "0":
+        return "0"
+    if normalized == "1":
+        return "1"
+    rational = try_parse_rational(normalized)
+    if rational is not None and rational >= 0:
+        numerator_root = int(rational.numerator ** 0.5)
+        denominator_root = int(rational.denominator ** 0.5)
+        if numerator_root * numerator_root == rational.numerator and denominator_root * denominator_root == rational.denominator:
+            return render_rational(Fraction(numerator_root, denominator_root))
+    return f"sqrt({normalized})"
+
+
+def abs_sq_expr(expr: str) -> str:
+    normalized = strip_outer_parentheses(expr.strip())
+    if not normalized or normalized == "0":
+        return "0"
+    if normalized.startswith("-") and len(normalized) > 1:
+        return abs_sq_expr(normalized[1:])
+    if normalized in {"1", "i"}:
+        return "1"
+    if re.fullmatch(r"-?\d+", normalized):
+        integer = int(normalized)
+        return str(integer * integer)
+    if normalized.startswith("exp(") and normalized.endswith(")"):
+        return "1"
+    if normalized.startswith("sqrt(") and normalized.endswith(")"):
+        inner = normalized[5:-1].strip()
+        rational = try_parse_rational(inner)
+        if rational is not None:
+            return render_rational(rational)
+        return f"|{normalized}|^2"
+
+    sum_pieces = split_top_level_expression(normalized, {"+", "-"})
+    if len(sum_pieces) > 1:
+        return f"|{normalized}|^2"
+
+    division_pieces = split_top_level_expression(normalized, {"/"})
+    if len(division_pieces) > 1:
+        result = abs_sq_expr(division_pieces[0][1])
+        for _, piece in division_pieces[1:]:
+            result = div_scalar_expr(result, abs_sq_expr(piece))
+        return result
+
+    product_pieces = split_top_level_expression(normalized, {"*"})
+    if len(product_pieces) > 1:
+        result = "1"
+        for _, piece in product_pieces:
+            result = mul_scalar_expr(result, abs_sq_expr(piece))
+        return result
+
+    rational = try_parse_rational(normalized)
+    if rational is not None:
+        return render_rational(rational * rational)
+    return f"|{normalized}|^2"
+
+
+def encode_subspace_state(full_state: int, num_qubits: int, qubits: list[int]) -> int:
+    encoded = 0
+    for qubit in qubits:
+        encoded = (encoded << 1) | bit_value(full_state, num_qubits, qubit)
+    return encoded
+
+
+def format_measurement_assignment(measured_qubits: list[int], outcome: str) -> str:
+    return ", ".join(f"q{qubit}={bit}" for qubit, bit in zip(measured_qubits, outcome))
+
+
+def format_measurement_state(outcomes: list["MeasurementOutcome"]) -> str:
+    parts: list[str] = []
+    for outcome in outcomes:
+        assignment = format_measurement_assignment(outcome.measured_qubits, outcome.outcome)
+        if outcome.remaining_state is None:
+            parts.append(f"Outcome {assignment} with probability {outcome.probability}; all qubits measured")
+        elif not outcome.remaining_qubits:
+            parts.append(f"Outcome {assignment} with probability {outcome.probability}")
+        else:
+            remaining_label = ", ".join(f"q{qubit}" for qubit in outcome.remaining_qubits)
+            parts.append(
+                f"Outcome {assignment} with probability {outcome.probability}; remaining state on {remaining_label}: {outcome.remaining_state}"
+            )
+    return "; ".join(parts)
+
+
+def project_measurement_outcomes(
+    terms: dict[int, str],
+    num_qubits: int,
+    measured_qubits: list[int],
+) -> list["MeasurementOutcome"]:
+    ordered_measured = sorted(dict.fromkeys(measured_qubits))
+    remaining_qubits = [qubit for qubit in range(num_qubits) if qubit not in ordered_measured]
+    projected: dict[str, dict[int, str]] = {}
+
+    for full_state, amplitude in terms.items():
+        if amplitude == "0":
+            continue
+        outcome_bits = "".join(str(bit_value(full_state, num_qubits, qubit)) for qubit in ordered_measured)
+        reduced_state = encode_subspace_state(full_state, num_qubits, remaining_qubits)
+        bucket = projected.setdefault(outcome_bits, {})
+        bucket[reduced_state] = add_expr(bucket.get(reduced_state, "0"), amplitude)
+
+    outcomes: list[MeasurementOutcome] = []
+    for outcome_bits, branch_terms in sorted(projected.items()):
+        probability = "0"
+        for amplitude in branch_terms.values():
+            probability = add_scalar_expr(probability, abs_sq_expr(amplitude))
+
+        nonzero_terms = {state: amplitude for state, amplitude in branch_terms.items() if amplitude != "0"}
+        if probability == "0" or not nonzero_terms:
+            continue
+        remaining_state: str | None
+        if not remaining_qubits:
+            remaining_state = None
+        elif len(nonzero_terms) == 1:
+            only_state = next(iter(nonzero_terms))
+            remaining_state = render_basis_state(only_state, len(remaining_qubits))
+        elif probability == "1":
+            remaining_state = render_statevector_on_qubits(nonzero_terms, remaining_qubits)
+        else:
+            normalization = sqrt_scalar_expr(probability)
+            normalized_terms = {
+                state: div_expr(amplitude, normalization)
+                for state, amplitude in nonzero_terms.items()
+            }
+            remaining_state = render_statevector_on_qubits(normalized_terms, remaining_qubits)
+
+        outcomes.append(
+            MeasurementOutcome(
+                outcome=outcome_bits,
+                measured_qubits=ordered_measured,
+                remaining_qubits=remaining_qubits,
+                probability=probability,
+                remaining_state=remaining_state,
+            )
+        )
+    return outcomes
 
 
 def canonical_gate_label(label: str) -> str:
@@ -849,8 +1078,18 @@ def analyze_slice(
         consumed_targets.add(target.row)
 
     for meter in meters:
+        measured_qubits = list(range(meter.row, meter.row + meter.span))
         rows_text = label_for_rows(row_labels, meter.row, meter.span)
-        operation_texts.append((meter.row, f"Measure({rows_text})"))
+        display = f"Measure({rows_text})"
+        operation_texts.append((meter.row, display))
+        executable_ops.append(
+            ExecutableOp(
+                kind="measure",
+                display=display,
+                sort_key=meter.row,
+                qubits=measured_qubits,
+            )
+        )
         notes.append("measurement collapses symbolic expansion")
 
     for connector in connectors:
@@ -878,37 +1117,40 @@ def evolve_statevector(
     executable_ops: list[ExecutableOp],
     previous_terms: dict[int, str] | None,
     num_qubits: int,
-) -> dict[int, str] | None:
+) -> tuple[dict[int, str] | None, list[MeasurementOutcome]]:
     if previous_terms is None:
-        return None
+        return None, []
 
     next_terms = dict(previous_terms)
+    measured_qubits: list[int] = []
     for operation in executable_ops:
         if operation.kind == "gate":
             if operation.controls:
-                return None
+                return None, []
             if operation.qubit is None or operation.label is None:
-                return None
+                return None, []
             updated = apply_single_qubit_gate(next_terms, num_qubits, operation.qubit, operation.label)
             if updated is None:
-                return None
+                return None, []
             next_terms = updated
         elif operation.kind == "controlled_x":
             if len(operation.targets) != 1:
-                return None
+                return None, []
             next_terms = apply_controlled_x(next_terms, num_qubits, operation.controls, operation.targets[0])
         elif operation.kind == "swap":
             if len(operation.qubits) != 2:
-                return None
+                return None, []
             next_terms = apply_swap(next_terms, num_qubits, operation.qubits[0], operation.qubits[1], operation.controls)
+        elif operation.kind == "measure":
+            measured_qubits.extend(operation.qubits)
         else:
-            return None
+            return None, []
 
-    if any(operation.startswith("Measure(") for operation in slice_evolution.operations):
-        return None
     if any(operation.startswith("cX(") for operation in slice_evolution.operations):
-        return None
-    return next_terms
+        return None, []
+    if measured_qubits:
+        return None, project_measurement_outcomes(next_terms, num_qubits, measured_qubits)
+    return next_terms, []
 
 
 def symbolic_evolution_for_environment(environment: QuantikzEnvironment) -> CircuitEvolution:
@@ -959,11 +1201,14 @@ def symbolic_evolution_for_environment(environment: QuantikzEnvironment) -> Circ
         slice_evolution, executable_ops = analyze_slice(column + 1, column_cells, row_labels, wire_types)
         if not slice_evolution.operations:
             slice_evolution.operations = ["Identity"]
-        next_terms = evolve_statevector(slice_evolution, executable_ops, symbolic_terms, len(raw_rows))
+        next_terms, measurement_outcomes = evolve_statevector(slice_evolution, executable_ops, symbolic_terms, len(raw_rows))
         if next_terms is not None:
             expanded_state = render_statevector(next_terms, len(raw_rows))
             slice_evolution.expanded_state = expanded_state
             slice_evolution.state = expanded_state
+        elif measurement_outcomes:
+            slice_evolution.measurement_outcomes = measurement_outcomes
+            slice_evolution.state = format_measurement_state(measurement_outcomes)
         else:
             operation_text = " o ".join(slice_evolution.operations)
             slice_evolution.state = f"{operation_text} {previous_state_name}"
@@ -1009,6 +1254,16 @@ def evolution_to_dict(evolution: CircuitEvolution) -> dict[str, object]:
                 "operations": slice_evolution.operations,
                 "state": slice_evolution.state,
                 "expanded_state": slice_evolution.expanded_state,
+                "measurement_outcomes": [
+                    {
+                        "outcome": outcome.outcome,
+                        "measured_qubits": outcome.measured_qubits,
+                        "remaining_qubits": outcome.remaining_qubits,
+                        "probability": outcome.probability,
+                        "remaining_state": outcome.remaining_state,
+                    }
+                    for outcome in slice_evolution.measurement_outcomes
+                ],
                 "notes": slice_evolution.notes,
             }
             for slice_evolution in evolution.slices
@@ -1227,6 +1482,19 @@ def render_latex_document(evolutions: list[CircuitEvolution], input_name: str) -
                 lines.append(
                     rf"\noindent where $\mathcal{{O}}_{{{slice_evolution.index}}}$ is the simulator output {render_inline_verbatim(slice_evolution.state)}."
                 )
+            if slice_evolution.measurement_outcomes:
+                lines.append(r"\begin{itemize}")
+                for outcome in slice_evolution.measurement_outcomes:
+                    assignment = format_measurement_assignment(outcome.measured_qubits, outcome.outcome)
+                    probability = render_inline_verbatim(outcome.probability)
+                    if outcome.remaining_state is None:
+                        remaining = "all qubits measured"
+                    else:
+                        remaining = render_inline_verbatim(outcome.remaining_state)
+                    lines.append(
+                        rf"\item Outcome {render_inline_verbatim(assignment)} with probability {probability}; remaining state: {remaining}."
+                    )
+                lines.append(r"\end{itemize}")
             if slice_evolution.notes:
                 lines.append(r"\begin{itemize}")
                 for note in slice_evolution.notes:
@@ -1250,6 +1518,14 @@ def render_text_report(evolutions: list[CircuitEvolution]) -> str:
             lines.append(f"  Slice {slice_evolution.index}{label_suffix}:")
             lines.append(f"    Ops: {', '.join(slice_evolution.operations)}")
             lines.append(f"    State: {slice_evolution.state}")
+            for outcome in slice_evolution.measurement_outcomes:
+                assignment = format_measurement_assignment(outcome.measured_qubits, outcome.outcome)
+                lines.append(f"    Outcome {assignment}:")
+                lines.append(f"      Probability: {outcome.probability}")
+                if outcome.remaining_state is None:
+                    lines.append("      Remaining: all qubits measured")
+                else:
+                    lines.append(f"      Remaining: {outcome.remaining_state}")
             if slice_evolution.notes:
                 lines.append(f"    Notes: {'; '.join(slice_evolution.notes)}")
         lines.append("")

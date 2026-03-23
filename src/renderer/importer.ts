@@ -749,6 +749,8 @@ export function importFromQuantikz(code: string, importOptions: { preamble?: str
   let steps = 0;
   const helperColumns: boolean[] = [];
   const substantiveColumns: boolean[] = [];
+  const rowCellCounts: number[] = [];
+  const rowPersistentWireTypes: ParsedHorizontalWireToken[] = [];
 
   rawRows.forEach((rawRow, rowIndex) => {
     const rowCells = splitTopLevel(rawRow, "&").map((cell) => cell.trim());
@@ -784,6 +786,7 @@ export function importFromQuantikz(code: string, importOptions: { preamble?: str
     }
 
     steps = Math.max(steps, cells.length);
+    rowCellCounts[rowIndex] = cells.length;
 
     let persistentWireType: ParsedHorizontalWireToken = {
       wireType: wireTypes[rowIndex] ?? "quantum",
@@ -792,7 +795,24 @@ export function importFromQuantikz(code: string, importOptions: { preamble?: str
     let lastHorizontalGate: GateItem | null = null;
 
     cells.forEach((cell, colIndex) => {
+      const rowDefaultWireType: ParsedHorizontalWireToken = {
+        wireType: wireTypes[rowIndex] ?? "quantum",
+        bundled: false
+      };
+      const persistentWireTypeAtCell = persistentWireType;
+
       if (!cell || cell === "\\qw") {
+        if (!sameHorizontalWireStyle(persistentWireTypeAtCell, rowDefaultWireType)) {
+          items.push({
+            id: nextId("horizontalSegment", idCounter),
+            type: "horizontalSegment",
+            point: { row: rowIndex, col: colIndex },
+            mode: persistentWireTypeAtCell === "none" ? "absent" : "present",
+            wireType: persistentWireTypeAtCell !== "none" ? persistentWireTypeAtCell.wireType : "quantum",
+            bundled: persistentWireTypeAtCell !== "none" ? persistentWireTypeAtCell.bundled : false,
+            color: null
+          });
+        }
         lastHorizontalGate = null;
         return;
       }
@@ -841,6 +861,7 @@ export function importFromQuantikz(code: string, importOptions: { preamble?: str
       let activeColor: string | null = null;
       let gateCreatedInCell: GateItem | null = null;
       let extendedGateInCell = false;
+      let createdHorizontalSegment = false;
 
       commands.forEach((command) => {
         if (command.name === "color") {
@@ -992,9 +1013,11 @@ export function importFromQuantikz(code: string, importOptions: { preamble?: str
               point: { row: rowIndex, col: colIndex },
               mode: wireOverrideType === "none" ? "absent" : "present",
               wireType: wireOverrideType !== "none" ? wireOverrideType.wireType : "quantum",
+              sourceCommand: "wireoverride",
               bundled: wireOverrideType !== "none" ? wireOverrideType.bundled : false,
               color: null
             });
+            createdHorizontalSegment = true;
             break;
           case "setwiretype":
             setWireType = parseHorizontalWireToken(command.args[0]);
@@ -1015,6 +1038,7 @@ export function importFromQuantikz(code: string, importOptions: { preamble?: str
               bundleLabel: decodeLabel(command.args[0] ?? ""),
               color
             });
+            createdHorizontalSegment = true;
             break;
           }
           case "wire": {
@@ -1037,6 +1061,7 @@ export function importFromQuantikz(code: string, importOptions: { preamble?: str
                 color: wireColor
               };
               items.push(horizontal);
+              createdHorizontalSegment = true;
               break;
             }
 
@@ -1079,7 +1104,26 @@ export function importFromQuantikz(code: string, importOptions: { preamble?: str
           point: { row: rowIndex, col: colIndex },
           mode: setWireType === "none" ? "absent" : "present",
           wireType: setWireType !== "none" ? setWireType.wireType : "quantum",
+          sourceCommand: "setwiretype",
           bundled: setWireType !== "none" ? setWireType.bundled : false,
+          color: null
+        });
+        createdHorizontalSegment = true;
+      }
+
+      if (
+        !createdHorizontalSegment &&
+        wireOverrideType === null &&
+        !hasHorizontalWireCommand &&
+        !sameHorizontalWireStyle(persistentWireTypeAtCell, rowDefaultWireType)
+      ) {
+        items.push({
+          id: nextId("horizontalSegment", idCounter),
+          type: "horizontalSegment",
+          point: { row: rowIndex, col: colIndex },
+          mode: persistentWireTypeAtCell === "none" ? "absent" : "present",
+          wireType: persistentWireTypeAtCell !== "none" ? persistentWireTypeAtCell.wireType : "quantum",
+          bundled: persistentWireTypeAtCell !== "none" ? persistentWireTypeAtCell.bundled : false,
           color: null
         });
       }
@@ -1103,6 +1147,8 @@ export function importFromQuantikz(code: string, importOptions: { preamble?: str
         gate.span.cols = legacyCols;
       }
     }
+
+    rowPersistentWireTypes[rowIndex] = persistentWireType;
   });
 
   const gateTargetsByColumn = new Map<number, Set<number>>();
@@ -1205,6 +1251,31 @@ export function importFromQuantikz(code: string, importOptions: { preamble?: str
   while (inferredSteps > 1 && helperColumns[inferredSteps - 1] && !substantiveColumns[inferredSteps - 1]) {
     inferredSteps -= 1;
   }
+
+  rawRows.forEach((_, rowIndex) => {
+    const rowDefaultWireType: ParsedHorizontalWireToken = {
+      wireType: wireTypes[rowIndex] ?? "quantum",
+      bundled: false
+    };
+    const trailingPersistentWireType = rowPersistentWireTypes[rowIndex] ?? rowDefaultWireType;
+
+    if (sameHorizontalWireStyle(trailingPersistentWireType, rowDefaultWireType)) {
+      return;
+    }
+
+    const startCol = rowCellCounts[rowIndex] ?? 0;
+    for (let colIndex = startCol; colIndex <= inferredSteps; colIndex += 1) {
+      items.push({
+        id: nextId("horizontalSegment", idCounter),
+        type: "horizontalSegment",
+        point: { row: rowIndex, col: colIndex },
+        mode: trailingPersistentWireType === "none" ? "absent" : "present",
+        wireType: trailingPersistentWireType !== "none" ? trailingPersistentWireType.wireType : "quantum",
+        bundled: trailingPersistentWireType !== "none" ? trailingPersistentWireType.bundled : false,
+        color: null
+      });
+    }
+  });
 
   return {
     qubits: rawRows.length,

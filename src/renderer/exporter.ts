@@ -68,6 +68,14 @@ function isOnlyAbsentWireCommand(tokens: string[]): boolean {
   return tokens.length === 1 && (tokens[0] === "\\setwiretype{n}" || tokens[0] === "\\wireoverride{n}");
 }
 
+function isOnlyPersistentAbsentWireCommand(tokens: string[]): boolean {
+  return tokens.length === 1 && tokens[0] === "\\setwiretype{n}";
+}
+
+function hasExplicitSetWireTypeRestore(tokens: string[]): boolean {
+  return tokens.some((token) => /^\\setwiretype\{[qc]\}$/.test(token));
+}
+
 function prependToken(tokens: string[], token: string): string[] {
   if (tokens[0] === token) {
     return tokens;
@@ -104,46 +112,6 @@ function orderCellCommands(tokens: string[]): string[] {
     .map((token, index) => ({ token, index, priority: commandPriority(token) }))
     .sort((left, right) => left.priority - right.priority || left.index - right.index)
     .map(({ token }) => token);
-}
-
-function compactAbsentWireRuns(
-  rowCells: string[][],
-  rowDefaultWireType: WireType,
-  lastIncludedCol: number
-): string[][] {
-  if (lastIncludedCol < 0) {
-    return rowCells;
-  }
-
-  const compacted = rowCells.map((tokens) => [...tokens]);
-  const restoreToken = `\\setwiretype{${toQuantikzWireType(rowDefaultWireType)}}`;
-  const boundedLastIncludedCol = Math.min(lastIncludedCol, compacted.length - 1);
-  let col = 0;
-
-  while (col <= boundedLastIncludedCol) {
-    if (!isOnlyAbsentWireCommand(compacted[col])) {
-      col += 1;
-      continue;
-    }
-
-    let end = col;
-    while (end + 1 <= boundedLastIncludedCol && isOnlyAbsentWireCommand(compacted[end + 1])) {
-      end += 1;
-    }
-
-    compacted[col] = ["\\setwiretype{n}"];
-    for (let runCol = col + 1; runCol <= end; runCol += 1) {
-      compacted[runCol] = [];
-    }
-
-    if (end + 1 <= boundedLastIncludedCol) {
-      compacted[end + 1] = prependToken(compacted[end + 1], restoreToken);
-    }
-
-    col = end + 1;
-  }
-
-  return compacted;
 }
 
 function horizontalSegmentNeedsCommand(item: HorizontalSegmentItem, implicitlyAbsent = false): boolean {
@@ -726,6 +694,7 @@ export function exportToQuantikz(state: EditorState): string {
 
   const exportedRows = cells.map((rowCells, rowIndex) => {
     const rowDefaultWireType = state.wireTypes[rowIndex] ?? "quantum";
+    let persistentWireType: WireType | "none" = rowDefaultWireType;
     const renderedCells = rowCells.map((cell, colIndex) => {
       const key = wireKey(rowIndex, colIndex);
       const suppressed = suppressedCells.has(key);
@@ -736,16 +705,40 @@ export function exportToQuantikz(state: EditorState): string {
       }
 
       const explicitHorizontal = horizontalSegmentsByKey.get(key);
-      const wireSuppressed = explicitHorizontal
-        ? isAbsentHorizontalSegment(explicitHorizontal)
-        : implicitlyAbsentHorizontalKeys.has(key);
+      const sourceCommand = explicitHorizontal?.sourceCommand;
+      const wireType = explicitHorizontal?.wireType ?? rowDefaultWireType;
+      const wireOptions = wireStyleOption(explicitHorizontal?.color ?? null);
+      const implicitAbsent = implicitlyAbsentHorizontalKeys.has(key) || explicitHorizontal?.autoSuppressed === true;
+      const explicitAbsent = Boolean(explicitHorizontal && isAbsentHorizontalSegment(explicitHorizontal) && explicitHorizontal.autoSuppressed !== true);
 
-      if (wireSuppressed) {
+      if (implicitAbsent) {
         return prependToken(tokens, "\\setwiretype{n}");
       }
 
-      const wireType = explicitHorizontal?.wireType ?? rowDefaultWireType;
-      const wireOptions = wireStyleOption(explicitHorizontal?.color ?? null);
+      if (explicitAbsent) {
+        if (sourceCommand === "wireoverride") {
+          return prependToken(tokens, "\\wireoverride{n}");
+        }
+
+        if (persistentWireType !== "none") {
+          persistentWireType = "none";
+          return prependToken(tokens, "\\setwiretype{n}");
+        }
+
+        return tokens;
+      }
+
+      const isLocalOverride = Boolean(
+        sourceCommand === "wireoverride" ||
+          wireOptions ||
+          explicitHorizontal?.bundled === true ||
+          wireType !== rowDefaultWireType
+      );
+
+      if (!isLocalOverride && persistentWireType !== rowDefaultWireType) {
+        persistentWireType = rowDefaultWireType;
+        tokens.unshift(`\\setwiretype{${toQuantikzWireType(rowDefaultWireType)}}`);
+      }
 
       if (explicitHorizontal?.bundled === true) {
         if (wireOptions) {
@@ -815,7 +808,7 @@ export function exportToQuantikz(state: EditorState): string {
         : implicitlyAbsentHorizontalKeys.has(trailingBoundaryKey)
     );
 
-    const compactedCells = compactAbsentWireRuns(renderedCells, rowDefaultWireType, lastIncludedCol);
+    const compactedCells = renderedCells;
     const renderedParts = lastIncludedCol >= 0
       ? compactedCells
         .slice(0, Math.min(lastIncludedCol, compactedCells.length - 1) + 1)
