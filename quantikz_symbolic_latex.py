@@ -119,12 +119,19 @@ class Amplitude:
         return " ".join(denominator_parts)
 
 
+@dataclass(frozen=True)
+class LocalWeight:
+    amplitude: Amplitude = field(default_factory=Amplitude)
+    scalar: str = "1"
+
+
 @dataclass
 class SymbolicTerm:
     amplitude: Amplitude
     scalar: str = "1"
     basis_bits: dict[int, int] = field(default_factory=dict)
     payloads: dict[int, str] = field(default_factory=dict)
+    local_weights: dict[int, LocalWeight] | None = field(default_factory=dict)
 
     def clone(self) -> "SymbolicTerm":
         return SymbolicTerm(
@@ -132,6 +139,7 @@ class SymbolicTerm:
             scalar=self.scalar,
             basis_bits=dict(self.basis_bits),
             payloads=dict(self.payloads),
+            local_weights=None if self.local_weights is None else dict(self.local_weights),
         )
 
 
@@ -621,46 +629,68 @@ def apply_initial_state_symbol(term: SymbolicTerm, row: int, symbol: str) -> lis
     if symbol == "0":
         updated = term.clone()
         updated.basis_bits[row] = 0
+        set_row_local_weight(updated, row, LocalWeight())
         return [updated]
     if symbol == "1":
         updated = term.clone()
         updated.basis_bits[row] = 1
+        set_row_local_weight(updated, row, LocalWeight())
         return [updated]
     if symbol == "+":
         zero_term = term.clone()
         zero_term.amplitude = zero_term.amplitude.multiply(sqrt2_power=1)
         zero_term.basis_bits[row] = 0
+        set_row_local_weight(zero_term, row, LocalWeight(amplitude=Amplitude(sqrt2_power=1)))
 
         one_term = term.clone()
         one_term.amplitude = one_term.amplitude.multiply(sqrt2_power=1)
         one_term.basis_bits[row] = 1
+        set_row_local_weight(one_term, row, LocalWeight(amplitude=Amplitude(sqrt2_power=1)))
         return [zero_term, one_term]
     if symbol == "-":
         zero_term = term.clone()
         zero_term.amplitude = zero_term.amplitude.multiply(sqrt2_power=1)
         zero_term.basis_bits[row] = 0
+        set_row_local_weight(zero_term, row, LocalWeight(amplitude=Amplitude(sqrt2_power=1)))
 
         one_term = term.clone()
         one_term.amplitude = one_term.amplitude.multiply(sign=-1, sqrt2_power=1)
         one_term.basis_bits[row] = 1
+        set_row_local_weight(
+            one_term,
+            row,
+            LocalWeight(amplitude=Amplitude(real=-1, imag=0, sqrt2_power=1)),
+        )
         return [zero_term, one_term]
     if symbol == "i":
         zero_term = term.clone()
         zero_term.amplitude = zero_term.amplitude.multiply(sqrt2_power=1)
         zero_term.basis_bits[row] = 0
+        set_row_local_weight(zero_term, row, LocalWeight(amplitude=Amplitude(sqrt2_power=1)))
 
         one_term = term.clone()
         one_term.amplitude = one_term.amplitude.multiply(i_power=1, sqrt2_power=1)
         one_term.basis_bits[row] = 1
+        set_row_local_weight(
+            one_term,
+            row,
+            LocalWeight(amplitude=Amplitude(real=0, imag=1, sqrt2_power=1)),
+        )
         return [zero_term, one_term]
     if symbol == "-i":
         zero_term = term.clone()
         zero_term.amplitude = zero_term.amplitude.multiply(sqrt2_power=1)
         zero_term.basis_bits[row] = 0
+        set_row_local_weight(zero_term, row, LocalWeight(amplitude=Amplitude(sqrt2_power=1)))
 
         one_term = term.clone()
         one_term.amplitude = one_term.amplitude.multiply(i_power=-1, sqrt2_power=1)
         one_term.basis_bits[row] = 1
+        set_row_local_weight(
+            one_term,
+            row,
+            LocalWeight(amplitude=Amplitude(real=0, imag=-1, sqrt2_power=1)),
+        )
         return [zero_term, one_term]
     raise ValueError(f"Unsupported initial-state symbol: {symbol}")
 
@@ -698,6 +728,7 @@ def make_initial_terms(
             else:
                 updated = term.clone()
                 updated.payloads[row] = label
+                set_row_local_weight(updated, row, LocalWeight())
                 next_terms.append(updated)
         terms = next_terms
 
@@ -714,6 +745,513 @@ def parse_pauli_rotation_label(label: str) -> tuple[str, str] | None:
     if match is None:
         return None
     return match.group(1), match.group(2).strip()
+
+
+@dataclass(frozen=True)
+class ScalarNumber:
+    value: Fraction
+
+
+@dataclass(frozen=True)
+class ScalarAtom:
+    latex: str
+
+
+@dataclass(frozen=True)
+class ScalarAdd:
+    terms: tuple["ScalarExpr", ...]
+
+
+@dataclass(frozen=True)
+class ScalarMul:
+    factors: tuple["ScalarExpr", ...]
+
+
+@dataclass(frozen=True)
+class ScalarDiv:
+    numerator: "ScalarExpr"
+    denominator: "ScalarExpr"
+
+
+@dataclass(frozen=True)
+class ScalarSqrt:
+    value: "ScalarExpr"
+
+
+ScalarExpr = ScalarNumber | ScalarAtom | ScalarAdd | ScalarMul | ScalarDiv | ScalarSqrt
+
+
+class ScalarExpressionParser:
+    def __init__(self, text: str):
+        self.text = text
+        self.index = 0
+
+    def parse(self) -> ScalarExpr:
+        expression = self.parse_expression()
+        self.skip_whitespace()
+        if self.index != len(self.text):
+            raise ValueError(f"Unexpected trailing scalar expression text: {self.text[self.index:]}")
+        return expression
+
+    def parse_expression(self) -> ScalarExpr:
+        left = self.parse_term()
+        terms = [left]
+        while True:
+            self.skip_whitespace()
+            if self.index >= len(self.text) or self.text[self.index] not in "+-":
+                break
+            operator = self.text[self.index]
+            self.index += 1
+            right = self.parse_term()
+            if operator == "+":
+                terms.append(right)
+            else:
+                terms.append(ScalarMul((ScalarNumber(Fraction(-1, 1)), right)))
+        if len(terms) == 1:
+            return terms[0]
+        return ScalarAdd(tuple(terms))
+
+    def parse_term(self) -> ScalarExpr:
+        factors = [self.parse_factor()]
+        while True:
+            self.skip_whitespace()
+            if self.index >= len(self.text):
+                break
+            if self.text[self.index] in "+-)}":
+                break
+            if self.text[self.index] == "\\" and self.text.startswith(r"\right", self.index):
+                break
+            factors.append(self.parse_factor())
+        if len(factors) == 1:
+            return factors[0]
+        return ScalarMul(tuple(factors))
+
+    def parse_factor(self) -> ScalarExpr:
+        self.skip_whitespace()
+        if self.index < len(self.text) and self.text[self.index] == "-":
+            self.index += 1
+            return ScalarMul((ScalarNumber(Fraction(-1, 1)), self.parse_factor()))
+        return self.parse_primary()
+
+    def parse_primary(self) -> ScalarExpr:
+        self.skip_whitespace()
+        if self.index >= len(self.text):
+            raise ValueError("Unexpected end of scalar expression")
+
+        if self.text[self.index] == "{":
+            return self.parse_group("{", "}")
+        if self.text[self.index] == "(":
+            return self.parse_group("(", ")")
+        if self.text[self.index].isdigit():
+            return self.parse_number()
+        if self.text[self.index] == "\\":
+            return self.parse_command()
+        return self.parse_identifier()
+
+    def parse_group(self, open_char: str, close_char: str) -> ScalarExpr:
+        if self.text[self.index] != open_char:
+            raise ValueError(f"Expected {open_char} in scalar expression")
+        self.index += 1
+        expression = self.parse_expression()
+        self.skip_whitespace()
+        if self.index >= len(self.text) or self.text[self.index] != close_char:
+            raise ValueError(f"Expected {close_char} in scalar expression")
+        self.index += 1
+        return expression
+
+    def parse_number(self) -> ScalarExpr:
+        start = self.index
+        while self.index < len(self.text) and self.text[self.index].isdigit():
+            self.index += 1
+        return ScalarNumber(Fraction(int(self.text[start:self.index]), 1))
+
+    def parse_identifier(self) -> ScalarExpr:
+        start = self.index
+        while self.index < len(self.text) and re.match(r"[A-Za-z0-9]", self.text[self.index]):
+            self.index += 1
+        if start == self.index:
+            raise ValueError(f"Unsupported scalar atom starting at: {self.text[self.index:]}")
+        return ScalarAtom(self.text[start:self.index])
+
+    def parse_command(self) -> ScalarExpr:
+        if self.text.startswith(r"\frac", self.index):
+            self.index += len(r"\frac")
+            numerator = self.parse_fraction_argument()
+            denominator = self.parse_fraction_argument()
+            return ScalarDiv(numerator, denominator)
+        if self.text.startswith(r"\sqrt", self.index):
+            self.index += len(r"\sqrt")
+            self.skip_whitespace()
+            return ScalarSqrt(self.parse_group("{", "}"))
+
+        command_name = self.parse_command_name()
+        if command_name in {r"\cos", r"\sin", r"\exp"}:
+            return ScalarAtom(self.extract_function_atom(command_name))
+        return ScalarAtom(command_name)
+
+    def parse_command_name(self) -> str:
+        start = self.index
+        self.index += 1
+        while self.index < len(self.text) and self.text[self.index].isalpha():
+            self.index += 1
+        return self.text[start:self.index]
+
+    def parse_fraction_argument(self) -> ScalarExpr:
+        self.skip_whitespace()
+        if self.index >= len(self.text):
+            raise ValueError("Unexpected end of scalar expression")
+        if self.index < len(self.text) and self.text[self.index] in "{(":
+            open_char = self.text[self.index]
+            close_char = "}" if open_char == "{" else ")"
+            return self.parse_group(open_char, close_char)
+        if self.text[self.index] == "\\":
+            return self.parse_command()
+        if self.text[self.index].isdigit():
+            digit = self.text[self.index]
+            self.index += 1
+            return ScalarNumber(Fraction(int(digit), 1))
+        if re.match(r"[A-Za-z]", self.text[self.index]):
+            identifier = self.text[self.index]
+            self.index += 1
+            return ScalarAtom(identifier)
+        return self.parse_primary()
+
+    def extract_function_atom(self, command_name: str) -> str:
+        start = self.index - len(command_name)
+        self.skip_whitespace()
+        if self.text.startswith(r"\left(", self.index):
+            self.index += len(r"\left(")
+            depth = 1
+            while self.index < len(self.text):
+                if self.text.startswith(r"\left(", self.index):
+                    depth += 1
+                    self.index += len(r"\left(")
+                    continue
+                if self.text.startswith(r"\right)", self.index):
+                    depth -= 1
+                    self.index += len(r"\right)")
+                    if depth == 0:
+                        return self.text[start:self.index]
+                    continue
+                self.index += 1
+            raise ValueError(f"Unclosed {command_name} argument in scalar expression")
+        if self.index < len(self.text) and self.text[self.index] in "({":
+            open_char = self.text[self.index]
+            close_char = ")" if open_char == "(" else "}"
+            group_start = self.index
+            self.parse_group(open_char, close_char)
+            return self.text[start:self.index]
+        return command_name
+
+    def skip_whitespace(self) -> None:
+        while self.index < len(self.text) and self.text[self.index].isspace():
+            self.index += 1
+
+
+def parse_scalar_expression(text: str) -> ScalarExpr:
+    return ScalarExpressionParser(text).parse()
+
+
+def is_zero_scalar_expr(expression: ScalarExpr) -> bool:
+    return isinstance(expression, ScalarNumber) and expression.value == 0
+
+
+def is_one_scalar_expr(expression: ScalarExpr) -> bool:
+    return isinstance(expression, ScalarNumber) and expression.value == 1
+
+
+def perfect_square_factor(value: int) -> tuple[int, int]:
+    if value <= 1:
+        return value, 1
+    root = int(value ** 0.5)
+    while root > 1:
+        square = root * root
+        if value % square == 0:
+            return root, value // square
+        root -= 1
+    return 1, value
+
+
+def simplify_scalar_expression(expression: ScalarExpr) -> ScalarExpr:
+    if isinstance(expression, (ScalarNumber, ScalarAtom)):
+        return expression
+
+    if isinstance(expression, ScalarAdd):
+        terms: list[ScalarExpr] = []
+        constant = Fraction(0, 1)
+        for term in expression.terms:
+            simplified_term = simplify_scalar_expression(term)
+            if isinstance(simplified_term, ScalarAdd):
+                nested_terms = simplified_term.terms
+            else:
+                nested_terms = (simplified_term,)
+            for nested_term in nested_terms:
+                if isinstance(nested_term, ScalarNumber):
+                    constant += nested_term.value
+                else:
+                    terms.append(nested_term)
+        if constant != 0:
+            terms.insert(0, ScalarNumber(constant))
+        if not terms:
+            return ScalarNumber(Fraction(0, 1))
+        if len(terms) == 1:
+            return terms[0]
+        return ScalarAdd(tuple(terms))
+
+    if isinstance(expression, ScalarMul):
+        factors: list[ScalarExpr] = []
+        sqrt_factors: list[ScalarExpr] = []
+        constant = Fraction(1, 1)
+        for factor in expression.factors:
+            simplified_factor = simplify_scalar_expression(factor)
+            if isinstance(simplified_factor, ScalarMul):
+                nested_factors = simplified_factor.factors
+            else:
+                nested_factors = (simplified_factor,)
+            for nested_factor in nested_factors:
+                if isinstance(nested_factor, ScalarNumber):
+                    constant *= nested_factor.value
+                elif isinstance(nested_factor, ScalarSqrt):
+                    sqrt_factors.append(nested_factor.value)
+                else:
+                    factors.append(nested_factor)
+        if constant == 0:
+            return ScalarNumber(Fraction(0, 1))
+        if len(sqrt_factors) > 1:
+            factors.append(simplify_scalar_expression(ScalarSqrt(ScalarMul(tuple(sqrt_factors)))))
+        elif sqrt_factors:
+            factors.append(simplify_scalar_expression(ScalarSqrt(sqrt_factors[0])))
+        if constant != 1 or not factors:
+            factors.insert(0, ScalarNumber(constant))
+        factors = [factor for factor in factors if not is_one_scalar_expr(factor)]
+        if not factors:
+            return ScalarNumber(Fraction(1, 1))
+        if len(factors) == 1:
+            return factors[0]
+        return ScalarMul(tuple(factors))
+
+    if isinstance(expression, ScalarDiv):
+        numerator = simplify_scalar_expression(expression.numerator)
+        denominator = simplify_scalar_expression(expression.denominator)
+        if is_zero_scalar_expr(numerator):
+            return ScalarNumber(Fraction(0, 1))
+        if isinstance(numerator, ScalarNumber) and isinstance(denominator, ScalarNumber):
+            return ScalarNumber(numerator.value / denominator.value)
+        if isinstance(denominator, ScalarNumber) and denominator.value == 1:
+            return numerator
+        if isinstance(denominator, ScalarNumber) and denominator.value < 0:
+            return simplify_scalar_expression(
+                ScalarMul((ScalarNumber(Fraction(-1, 1)), ScalarDiv(numerator, ScalarNumber(-denominator.value))))
+            )
+        return ScalarDiv(numerator, denominator)
+
+    inner = simplify_scalar_expression(expression.value)
+    if isinstance(inner, ScalarNumber):
+        numerator_factor = int(inner.value.numerator)
+        denominator_factor = int(inner.value.denominator)
+        numerator_root, numerator_remainder = perfect_square_factor(abs(numerator_factor))
+        denominator_root, denominator_remainder = perfect_square_factor(denominator_factor)
+        coefficient = Fraction(numerator_root, denominator_root)
+        remainder_numerator = numerator_remainder if numerator_factor >= 0 else -numerator_remainder
+        if remainder_numerator < 0:
+            return ScalarSqrt(inner)
+        if remainder_numerator == 1 and denominator_remainder == 1:
+            return ScalarNumber(coefficient)
+        if remainder_numerator == 1:
+            return simplify_scalar_expression(
+                ScalarDiv(
+                    ScalarNumber(coefficient),
+                    ScalarSqrt(ScalarNumber(Fraction(denominator_remainder, 1))),
+                )
+            )
+        remaining = ScalarNumber(Fraction(remainder_numerator, denominator_remainder))
+        if coefficient == 1:
+            return ScalarSqrt(remaining)
+        return simplify_scalar_expression(ScalarMul((ScalarNumber(coefficient), ScalarSqrt(remaining))))
+    if isinstance(inner, ScalarMul):
+        constant = Fraction(1, 1)
+        other_factors: list[ScalarExpr] = []
+        for factor in inner.factors:
+            if isinstance(factor, ScalarNumber):
+                constant *= factor.value
+            else:
+                other_factors.append(factor)
+        if constant > 0 and constant != 1:
+            rest = ScalarNumber(Fraction(1, 1)) if not other_factors else (
+                other_factors[0] if len(other_factors) == 1 else ScalarMul(tuple(other_factors))
+            )
+            coefficient = simplify_scalar_expression(ScalarSqrt(ScalarNumber(constant)))
+            if is_one_scalar_expr(rest):
+                return coefficient
+            return simplify_scalar_expression(ScalarMul((coefficient, ScalarSqrt(rest))))
+    if is_one_scalar_expr(inner):
+        return ScalarNumber(Fraction(1, 1))
+    return ScalarSqrt(inner)
+
+
+def scalar_expr_precedence(expression: ScalarExpr) -> int:
+    if isinstance(expression, ScalarAdd):
+        return 1
+    if isinstance(expression, (ScalarMul, ScalarDiv)):
+        return 2
+    return 3
+
+
+def scalar_expr_is_negative(expression: ScalarExpr) -> tuple[bool, ScalarExpr]:
+    if isinstance(expression, ScalarNumber):
+        if expression.value < 0:
+            return True, ScalarNumber(-expression.value)
+        return False, expression
+    if isinstance(expression, ScalarMul) and expression.factors and isinstance(expression.factors[0], ScalarNumber) and expression.factors[0].value < 0:
+        positive_first = ScalarNumber(-expression.factors[0].value)
+        remaining = (positive_first,) + expression.factors[1:]
+        return True, simplify_scalar_expression(ScalarMul(remaining))
+    return False, expression
+
+
+def absorbable_square_for_render(expression: ScalarExpr) -> ScalarExpr | None:
+    simplified = simplify_scalar_expression(expression)
+    if isinstance(simplified, ScalarNumber):
+        if simplified.value < 0:
+            return None
+        return ScalarNumber(simplified.value * simplified.value)
+    if isinstance(simplified, ScalarSqrt):
+        return simplified.value
+    if isinstance(simplified, ScalarDiv):
+        numerator_square = absorbable_square_for_render(simplified.numerator)
+        denominator_square = absorbable_square_for_render(simplified.denominator)
+        if numerator_square is None or denominator_square is None:
+            return None
+        return simplify_scalar_expression(ScalarDiv(numerator_square, denominator_square))
+    if isinstance(simplified, ScalarMul):
+        squared_factors: list[ScalarExpr] = []
+        for factor in simplified.factors:
+            factor_square = absorbable_square_for_render(factor)
+            if factor_square is None:
+                return None
+            squared_factors.append(factor_square)
+        if not squared_factors:
+            return ScalarNumber(Fraction(1, 1))
+        if len(squared_factors) == 1:
+            return squared_factors[0]
+        return simplify_scalar_expression(ScalarMul(tuple(squared_factors)))
+    return None
+
+
+def render_scalar_mul_single_sqrt(expression: ScalarMul, *, parent_precedence: int = 0) -> str | None:
+    negative, positive_expression = scalar_expr_is_negative(expression)
+    factors = positive_expression.factors if isinstance(positive_expression, ScalarMul) else (positive_expression,)
+    if not any(isinstance(factor, ScalarSqrt) for factor in factors):
+        return None
+
+    residual_factors: list[ScalarExpr] = []
+    absorbed_factors: list[ScalarExpr] = []
+    for factor in factors:
+        squared_factor = absorbable_square_for_render(factor)
+        if squared_factor is None:
+            residual_factors.append(factor)
+            continue
+        absorbed_factors.append(squared_factor)
+
+    if not absorbed_factors:
+        return None
+
+    absorbed_radicand = (
+        absorbed_factors[0]
+        if len(absorbed_factors) == 1
+        else simplify_scalar_expression(ScalarMul(tuple(absorbed_factors)))
+    )
+    rendered_sqrt = rf"\sqrt{{{render_scalar_expression(absorbed_radicand)}}}"
+
+    rendered_factors: list[str] = []
+    for factor in residual_factors:
+        if scalar_expr_precedence(factor) >= scalar_expr_precedence(expression):
+            rendered_factors.append(
+                render_scalar_expression(factor, parent_precedence=scalar_expr_precedence(expression))
+            )
+        else:
+            rendered_factors.append(f"({render_scalar_expression(factor)})")
+    rendered_factors.append(rendered_sqrt)
+    rendered = " ".join(rendered_factors)
+    if negative:
+        rendered = f"-{rendered}"
+    if parent_precedence > scalar_expr_precedence(expression):
+        return f"({rendered})"
+    return rendered
+
+
+def render_scalar_expression(expression: ScalarExpr, *, parent_precedence: int = 0) -> str:
+    if isinstance(expression, ScalarNumber):
+        return render_fraction_latex(expression.value)
+    if isinstance(expression, ScalarAtom):
+        return expression.latex
+    if isinstance(expression, ScalarSqrt):
+        return rf"\sqrt{{{render_scalar_expression(expression.value)}}}"
+    if isinstance(expression, ScalarDiv):
+        return rf"\frac{{{render_scalar_expression(expression.numerator)}}}{{{render_scalar_expression(expression.denominator)}}}"
+    if isinstance(expression, ScalarMul):
+        single_sqrt = render_scalar_mul_single_sqrt(expression, parent_precedence=parent_precedence)
+        if single_sqrt is not None:
+            return single_sqrt
+        rendered = " ".join(
+            render_scalar_expression(factor, parent_precedence=scalar_expr_precedence(expression))
+            if scalar_expr_precedence(factor) >= scalar_expr_precedence(expression)
+            else f"({render_scalar_expression(factor)})"
+            for factor in expression.factors
+        )
+        if parent_precedence > scalar_expr_precedence(expression):
+            return f"({rendered})"
+        return rendered
+    pieces: list[str] = []
+    for index, term in enumerate(expression.terms):
+        negative, positive_term = scalar_expr_is_negative(term)
+        rendered_term = render_scalar_expression(positive_term, parent_precedence=scalar_expr_precedence(expression))
+        if scalar_expr_precedence(positive_term) < scalar_expr_precedence(expression):
+            rendered_term = f"({rendered_term})"
+        if index == 0:
+            pieces.append(f"-{rendered_term}" if negative else rendered_term)
+            continue
+        pieces.append(f"- {rendered_term}" if negative else f"+ {rendered_term}")
+    rendered = " ".join(pieces)
+    if parent_precedence > scalar_expr_precedence(expression):
+        return f"({rendered})"
+    return rendered
+
+
+def normalize_scalar_latex(text: str) -> str:
+    stripped = text.strip()
+    if not stripped:
+        return stripped
+    try:
+        return render_scalar_expression(simplify_scalar_expression(parse_scalar_expression(stripped)))
+    except ValueError:
+        return stripped
+
+
+def scalar_probability_expression(expression: ScalarExpr) -> ScalarExpr:
+    simplified = simplify_scalar_expression(expression)
+    if isinstance(simplified, ScalarNumber):
+        return ScalarNumber(simplified.value * simplified.value)
+    if isinstance(simplified, ScalarSqrt):
+        return simplify_scalar_expression(simplified.value)
+    if isinstance(simplified, ScalarMul):
+        return simplify_scalar_expression(ScalarMul(tuple(scalar_probability_expression(factor) for factor in simplified.factors)))
+    if isinstance(simplified, ScalarDiv):
+        return simplify_scalar_expression(
+            ScalarDiv(
+                scalar_probability_expression(simplified.numerator),
+                scalar_probability_expression(simplified.denominator),
+            )
+        )
+    if isinstance(simplified, ScalarAtom):
+        if simplified.latex.startswith(r"\exp\left("):
+            return ScalarNumber(Fraction(1, 1))
+        if simplified.latex.startswith(r"\cos\left("):
+            return ScalarAtom(simplified.latex.replace(r"\cos\left", r"\cos^2\left", 1))
+        if simplified.latex.startswith(r"\sin\left("):
+            return ScalarAtom(simplified.latex.replace(r"\sin\left", r"\sin^2\left", 1))
+        return ScalarAtom(rf"\left|{simplified.latex}\right|^2")
+    return ScalarAtom(rf"\left|{render_scalar_expression(simplified)}\right|^2")
 
 
 def render_half_angle(angle: str) -> str:
@@ -776,7 +1314,7 @@ def extract_sqrt_argument(expression: str) -> str | None:
 
 
 def negate_scalar(scalar: str) -> str:
-    stripped = scalar.strip()
+    stripped = normalize_scalar_latex(scalar)
     if stripped == "1":
         return "-1"
     if stripped == "-1":
@@ -800,8 +1338,8 @@ def multiply_radicands(left: str, right: str) -> str:
 
 
 def multiply_scalar_factors(left: str, right: str) -> str:
-    left_stripped = left.strip()
-    right_stripped = right.strip()
+    left_stripped = normalize_scalar_latex(left)
+    right_stripped = normalize_scalar_latex(right)
     if left_stripped == "0" or right_stripped == "0":
         return "0"
     if left_stripped == "1":
@@ -817,12 +1355,17 @@ def multiply_scalar_factors(left: str, right: str) -> str:
     if right_stripped.startswith("-"):
         return negate_scalar(multiply_scalar_factors(left_stripped, right_stripped[1:].strip()))
 
-    left_sqrt = extract_sqrt_argument(left_stripped)
-    right_sqrt = extract_sqrt_argument(right_stripped)
-    if left_sqrt is not None and right_sqrt is not None:
-        return rf"\sqrt{{{multiply_radicands(left_sqrt, right_sqrt)}}}"
-
-    return f"{left_stripped} {right_stripped}"
+    try:
+        expression = simplify_scalar_expression(
+            ScalarMul((parse_scalar_expression(left_stripped), parse_scalar_expression(right_stripped)))
+        )
+        return render_scalar_expression(expression)
+    except ValueError:
+        left_sqrt = extract_sqrt_argument(left_stripped)
+        right_sqrt = extract_sqrt_argument(right_stripped)
+        if left_sqrt is not None and right_sqrt is not None:
+            return normalize_scalar_latex(rf"\sqrt{{{multiply_radicands(left_sqrt, right_sqrt)}}}")
+        return normalize_scalar_latex(f"{left_stripped} {right_stripped}")
 
 
 def parse_double_inverse_trig_angle(angle: str) -> tuple[str, str] | None:
@@ -840,14 +1383,44 @@ def parse_double_inverse_trig_angle(angle: str) -> tuple[str, str] | None:
 def complementary_half_angle_factor(argument: str) -> str:
     sqrt_argument = extract_sqrt_argument(argument)
     if sqrt_argument is not None:
-        return rf"\sqrt{{1-{strip_outer_grouping(sqrt_argument)}}}"
+        try:
+            inner_expression = parse_scalar_expression(sqrt_argument)
+            return render_scalar_expression(
+                simplify_scalar_expression(
+                    ScalarSqrt(
+                        ScalarAdd(
+                            (
+                                ScalarNumber(Fraction(1, 1)),
+                                ScalarMul((ScalarNumber(Fraction(-1, 1)), inner_expression)),
+                            )
+                        )
+                    )
+                )
+            )
+        except ValueError:
+            return normalize_scalar_latex(rf"\sqrt{{1-{strip_outer_grouping(sqrt_argument)}}}")
 
-    base = strip_outer_grouping(argument)
-    if re.fullmatch(r"[A-Za-z0-9]+", base) or re.fullmatch(r"\\[A-Za-z]+", base):
-        squared = rf"{base}^2"
-    else:
-        squared = rf"({base})^2"
-    return rf"\sqrt{{1-{squared}}}"
+    normalized_argument = normalize_scalar_latex(argument)
+    try:
+        return render_scalar_expression(
+            simplify_scalar_expression(
+                ScalarSqrt(
+                    ScalarAdd(
+                        (
+                            ScalarNumber(Fraction(1, 1)),
+                            ScalarMul((ScalarNumber(Fraction(-1, 1)), parse_scalar_expression(normalized_argument))),
+                        )
+                    )
+                )
+            )
+        )
+    except ValueError:
+        base = strip_outer_grouping(normalized_argument)
+        if re.fullmatch(r"[A-Za-z0-9]+", base) or re.fullmatch(r"\\[A-Za-z]+", base):
+            squared = rf"{base}^2"
+        else:
+            squared = rf"({base})^2"
+        return normalize_scalar_latex(rf"\sqrt{{1-{squared}}}")
 
 
 def simplify_half_angle_trig(angle: str, trig_function: str) -> str | None:
@@ -858,10 +1431,10 @@ def simplify_half_angle_trig(angle: str, trig_function: str) -> str | None:
     function_name, argument = parsed
     if function_name == r"\arccos":
         if trig_function == "cos":
-            return argument
+            return normalize_scalar_latex(argument)
         return complementary_half_angle_factor(argument)
     if trig_function == "sin":
-        return argument
+        return normalize_scalar_latex(argument)
     return complementary_half_angle_factor(argument)
 
 
@@ -869,7 +1442,7 @@ def half_angle_trig_factor(angle: str, trig_function: str) -> str:
     simplified = simplify_half_angle_trig(angle, trig_function)
     if simplified is not None:
         return simplified
-    return rf"\{trig_function}\left({render_half_angle(angle)}\right)"
+    return normalize_scalar_latex(rf"\{trig_function}\left({render_half_angle(angle)}\right)")
 
 
 def pauli_rotation_basis_branches(axis: str, angle: str, bit: int) -> list[tuple[int, Amplitude, str]]:
@@ -927,6 +1500,7 @@ def merge_symbolic_terms(terms: list[SymbolicTerm]) -> list[SymbolicTerm]:
             continue
 
         existing.amplitude = combined_amplitude
+        existing.local_weights = None
 
     return list(grouped.values())
 
@@ -957,6 +1531,42 @@ def set_row_factor(term: SymbolicTerm, row: int, factor: tuple[str, int | str] |
     term.payloads[row] = str(value)
 
 
+def get_row_local_weight(term: SymbolicTerm, row: int) -> LocalWeight | None:
+    if term.local_weights is None:
+        return None
+    return term.local_weights.get(row, LocalWeight())
+
+
+def set_row_local_weight(term: SymbolicTerm, row: int, weight: LocalWeight | None) -> None:
+    if term.local_weights is None:
+        return
+    if weight is None:
+        term.local_weights.pop(row, None)
+        return
+    term.local_weights[row] = weight
+
+
+def multiply_local_weight(
+    weight: LocalWeight,
+    amplitude_factor: Amplitude | None = None,
+    scalar_factor: str = "1",
+) -> LocalWeight:
+    updated_amplitude = weight.amplitude if amplitude_factor is None else weight.amplitude.times(amplitude_factor)
+    return LocalWeight(
+        amplitude=updated_amplitude,
+        scalar=multiply_scalar_factors(weight.scalar, scalar_factor),
+    )
+
+
+def combine_local_weights(weights: list[LocalWeight]) -> LocalWeight:
+    amplitude = Amplitude()
+    scalar = "1"
+    for weight in weights:
+        amplitude = amplitude.times(weight.amplitude)
+        scalar = multiply_scalar_factors(scalar, weight.scalar)
+    return LocalWeight(amplitude=amplitude, scalar=scalar)
+
+
 def row_factor_expression(term: SymbolicTerm, row: int) -> str | None:
     if row in term.basis_bits:
         return rf"\ket{{{term.basis_bits[row]}}}"
@@ -970,6 +1580,7 @@ def apply_named_gate_to_basis_term(term: SymbolicTerm, row: int, label: str) -> 
     bit = term.basis_bits[row]
     normalized_label = canonical_gate_label(label)
     rotation = parse_pauli_rotation_label(normalized_label)
+    row_weight = get_row_local_weight(term, row)
 
     if rotation is not None:
         axis, angle = rotation
@@ -979,6 +1590,8 @@ def apply_named_gate_to_basis_term(term: SymbolicTerm, row: int, label: str) -> 
             updated.amplitude = updated.amplitude.times(amplitude_factor)
             updated.scalar = multiply_scalar_factors(updated.scalar, scalar_factor)
             updated.basis_bits[row] = updated_bit
+            if row_weight is not None:
+                set_row_local_weight(updated, row, multiply_local_weight(row_weight, amplitude_factor, scalar_factor))
             if updated.amplitude.to_latex() != "0" and updated.scalar != "0":
                 branches.append(updated)
         return branches
@@ -987,10 +1600,21 @@ def apply_named_gate_to_basis_term(term: SymbolicTerm, row: int, label: str) -> 
         zero_term = term.clone()
         zero_term.amplitude = zero_term.amplitude.multiply(sqrt2_power=1)
         zero_term.basis_bits[row] = 0
+        if row_weight is not None:
+            set_row_local_weight(zero_term, row, multiply_local_weight(row_weight, Amplitude(sqrt2_power=1)))
 
         one_term = term.clone()
         one_term.amplitude = one_term.amplitude.multiply(sign=-1 if bit == 1 else 1, sqrt2_power=1)
         one_term.basis_bits[row] = 1
+        if row_weight is not None:
+            set_row_local_weight(
+                one_term,
+                row,
+                multiply_local_weight(
+                    row_weight,
+                    Amplitude(real=-1 if bit == 1 else 1, imag=0, sqrt2_power=1),
+                ),
+            )
         return [zero_term, one_term]
 
     updated = term.clone()
@@ -999,18 +1623,43 @@ def apply_named_gate_to_basis_term(term: SymbolicTerm, row: int, label: str) -> 
     elif normalized_label == "Y":
         updated.basis_bits[row] = 1 - bit
         updated.amplitude = updated.amplitude.multiply(sign=-1 if bit == 1 else 1, i_power=1)
+        if row_weight is not None:
+            set_row_local_weight(
+                updated,
+                row,
+                multiply_local_weight(
+                    row_weight,
+                    Amplitude(real=0, imag=-1 if bit == 1 else 1),
+                ),
+            )
     elif normalized_label == "Z":
         if bit == 1:
             updated.amplitude = updated.amplitude.multiply(sign=-1)
+            if row_weight is not None:
+                set_row_local_weight(updated, row, multiply_local_weight(row_weight, Amplitude(real=-1)))
     elif normalized_label == "S":
         if bit == 1:
             updated.amplitude = updated.amplitude.multiply(i_power=1)
+            if row_weight is not None:
+                set_row_local_weight(updated, row, multiply_local_weight(row_weight, Amplitude(real=0, imag=1)))
     elif normalized_label == "T":
         if bit == 1:
             updated.amplitude = updated.amplitude.times(Amplitude(real=1, imag=1, sqrt2_power=1))
+            if row_weight is not None:
+                set_row_local_weight(
+                    updated,
+                    row,
+                    multiply_local_weight(row_weight, Amplitude(real=1, imag=1, sqrt2_power=1)),
+                )
     elif normalized_label == "Tdg":
         if bit == 1:
             updated.amplitude = updated.amplitude.times(Amplitude(real=1, imag=-1, sqrt2_power=1))
+            if row_weight is not None:
+                set_row_local_weight(
+                    updated,
+                    row,
+                    multiply_local_weight(row_weight, Amplitude(real=1, imag=-1, sqrt2_power=1)),
+                )
     else:
         return None
 
@@ -1043,18 +1692,24 @@ def apply_gate_to_term(term: SymbolicTerm, target_row: int, span: int, label: st
 
     updated = term.clone()
     factors: list[str] = []
+    local_weights: list[LocalWeight] = []
     for row in range(target_row, target_row + span):
         current = row_factor_expression(updated, row)
         if current is None:
             raise ValueError(f"Gate target row {row} has no symbolic factor to act on")
         factors.append(current)
+        if updated.local_weights is not None:
+            local_weights.append(get_row_local_weight(updated, row) or LocalWeight())
         updated.basis_bits.pop(row, None)
         updated.payloads.pop(row, None)
+        set_row_local_weight(updated, row, None)
 
     factor_body = r" \otimes ".join(factors)
     if span > 1:
         factor_body = rf"\left({factor_body}\right)"
     updated.payloads[target_row] = apply_operator(label, factor_body)
+    if updated.local_weights is not None:
+        set_row_local_weight(updated, target_row, combine_local_weights(local_weights))
     return [updated]
 
 
@@ -1069,9 +1724,11 @@ def evolve_terms(terms: list[SymbolicTerm], slice_info: LogicalSlice) -> list[Sy
             except KeyError as exc:
                 raise ValueError(f"AND control row {exc.args[0]} is not in the computational basis") from exc
             updated.basis_bits[slice_info.target_row] = control_value
+            set_row_local_weight(updated, slice_info.target_row, LocalWeight())
         elif slice_info.kind == "and_uncompute":
             assert slice_info.target_row is not None
             updated.basis_bits.pop(slice_info.target_row, None)
+            set_row_local_weight(updated, slice_info.target_row, None)
         elif slice_info.kind == "controlled_x":
             assert slice_info.target_row is not None
             if all(updated.basis_bits.get(row) == expected for row, expected in slice_info.controls):
@@ -1089,8 +1746,12 @@ def evolve_terms(terms: list[SymbolicTerm], slice_info: LogicalSlice) -> list[Sy
             if all(updated.basis_bits.get(row) == expected for row, expected in slice_info.controls):
                 left_factor = get_row_factor(updated, slice_info.target_row)
                 right_factor = get_row_factor(updated, slice_info.secondary_row)
+                left_weight = get_row_local_weight(updated, slice_info.target_row)
+                right_weight = get_row_local_weight(updated, slice_info.secondary_row)
                 set_row_factor(updated, slice_info.target_row, right_factor)
                 set_row_factor(updated, slice_info.secondary_row, left_factor)
+                set_row_local_weight(updated, slice_info.target_row, right_weight)
+                set_row_local_weight(updated, slice_info.secondary_row, left_weight)
         elif slice_info.kind == "gate":
             assert slice_info.target_row is not None
             next_terms.extend(apply_gate_to_term(updated, slice_info.target_row, slice_info.span, slice_info.label))
@@ -1177,10 +1838,14 @@ def multiply_latex_factors(left: str, right: str) -> str:
 
 
 def scalar_probability_latex(scalar: str) -> str:
-    result = "1"
-    for factor in split_top_level_space_factors(scalar):
-        result = multiply_latex_factors(result, scalar_probability_factor_latex(factor))
-    return result
+    try:
+        probability = scalar_probability_expression(parse_scalar_expression(normalize_scalar_latex(scalar)))
+        return render_scalar_expression(simplify_scalar_expression(probability))
+    except ValueError:
+        result = "1"
+        for factor in split_top_level_space_factors(scalar):
+            result = multiply_latex_factors(result, scalar_probability_factor_latex(factor))
+        return result
 
 
 def render_measurement_probability_contribution(amplitude: Amplitude, scalar: str) -> str:
@@ -1198,7 +1863,7 @@ def render_measurement_probability_contribution(amplitude: Amplitude, scalar: st
 
 
 def render_measurement_coefficient(amplitude: Amplitude, scalar: str) -> str:
-    scalar_text = scalar.strip()
+    scalar_text = normalize_scalar_latex(scalar)
     effective_amplitude = amplitude
     if scalar_text.startswith("-"):
         scalar_text = scalar_text[1:].strip()
@@ -1282,7 +1947,7 @@ def measurement_term_key(term: MeasurementRenderedTerm) -> tuple[tuple[tuple[int
 
 
 def render_scalar_weighted_expression(amplitude: Amplitude, scalar: str, expression: str) -> str:
-    scalar_text = scalar.strip()
+    scalar_text = normalize_scalar_latex(scalar)
     effective_amplitude = amplitude
     if scalar_text.startswith("-"):
         scalar_text = scalar_text[1:].strip()
@@ -1548,6 +2213,186 @@ def render_measurement_state_latex(
     return r"\left\{\begin{array}{ll}" + r" \\ ".join(pieces) + r"\end{array}\right."
 
 
+@dataclass(frozen=True)
+class LocalSignature:
+    kind: str
+    value: int | str
+    amplitude: Amplitude = field(default_factory=Amplitude)
+    scalar: str = "1"
+
+
+def local_signature_sort_key(signature: LocalSignature) -> tuple[object, ...]:
+    kind_order = 0 if signature.kind == "basis" else 1
+    value = signature.value if signature.kind == "basis" else str(signature.value)
+    return (
+        kind_order,
+        value,
+        signature.scalar,
+        signature.amplitude.sqrt2_power,
+        signature.amplitude.real,
+        signature.amplitude.imag,
+    )
+
+
+def residual_signature_sort_key(signature: tuple[LocalSignature, ...]) -> tuple[tuple[object, ...], ...]:
+    return tuple(local_signature_sort_key(component) for component in signature)
+
+
+def make_local_signature(term: SymbolicTerm, row: int) -> LocalSignature | None:
+    factor = get_row_factor(term, row)
+    if factor is None or term.local_weights is None:
+        return None
+    weight = term.local_weights.get(row)
+    if weight is None:
+        return None
+    return LocalSignature(
+        kind=factor[0],
+        value=factor[1],
+        amplitude=weight.amplitude,
+        scalar=weight.scalar,
+    )
+
+
+def row_wire_suffix(row_labels: list[str], row: int) -> str | None:
+    if 0 <= row < len(row_labels):
+        name = extract_trailing_subscript(row_labels[row])
+        if name is not None:
+            return rf"_{{{name}}}"
+    return None
+
+
+def render_local_signature_component(
+    signature: LocalSignature,
+    row: int,
+    row_labels: list[str],
+    *,
+    include_basis_suffix: bool,
+) -> str:
+    if signature.kind == "basis":
+        factor = rf"\ket{{{signature.value}}}"
+        if include_basis_suffix:
+            suffix = row_wire_suffix(row_labels, row)
+            if suffix is not None:
+                factor += suffix
+    else:
+        factor = wrap_tensor_factor(str(signature.value))
+    return render_scalar_weighted_expression(signature.amplitude, signature.scalar, factor)
+
+
+def render_row_product_expression(signatures: list[LocalSignature], row: int, row_labels: list[str]) -> str:
+    ordered_signatures = sorted(signatures, key=local_signature_sort_key)
+    basis_only = all(signature.kind == "basis" for signature in ordered_signatures)
+    if len(ordered_signatures) == 1:
+        return render_local_signature_component(
+            ordered_signatures[0],
+            row,
+            row_labels,
+            include_basis_suffix=basis_only,
+        )
+
+    pieces = [
+        render_local_signature_component(signature, row, row_labels, include_basis_suffix=False)
+        for signature in ordered_signatures
+    ]
+    expression = rf"\left({' + '.join(pieces).replace('+ -', '- ')}\right)"
+    if basis_only:
+        suffix = row_wire_suffix(row_labels, row)
+        if suffix is not None:
+            return expression + suffix
+    return expression
+
+
+def build_term_from_local_signatures(
+    row_order: list[int],
+    signatures: tuple[LocalSignature, ...],
+) -> SymbolicTerm:
+    if len(row_order) != len(signatures):
+        raise ValueError("Row/signature arity mismatch while rebuilding a factorized symbolic term")
+
+    basis_bits: dict[int, int] = {}
+    payloads: dict[int, str] = {}
+    local_weights: dict[int, LocalWeight] = {}
+    for row, signature in zip(row_order, signatures):
+        if signature.kind == "basis":
+            basis_bits[row] = int(signature.value)
+        else:
+            payloads[row] = str(signature.value)
+        local_weights[row] = LocalWeight(amplitude=signature.amplitude, scalar=signature.scalar)
+
+    combined_weight = combine_local_weights(list(local_weights.values()))
+    return SymbolicTerm(
+        amplitude=combined_weight.amplitude,
+        scalar=combined_weight.scalar,
+        basis_bits=basis_bits,
+        payloads=payloads,
+        local_weights=local_weights,
+    )
+
+
+def render_factorized_product_state(
+    terms: list[SymbolicTerm],
+    row_order: list[int],
+    row_labels: list[str],
+) -> str | None:
+    if not terms or any(term.local_weights is None for term in terms):
+        return None
+
+    active_rows = [row for row in row_order if any(row in term.basis_bits or row in term.payloads for term in terms)]
+    if not active_rows:
+        return None
+
+    if len(active_rows) == 1:
+        row = active_rows[0]
+        signatures = {make_local_signature(term, row) for term in terms}
+        if any(signature is None for signature in signatures):
+            return None
+        return render_row_product_expression([signature for signature in signatures if signature is not None], row, row_labels)
+
+    for row in (active_rows[0], active_rows[-1]):
+        remaining_rows = [candidate for candidate in active_rows if candidate != row]
+        local_signatures: set[LocalSignature] = set()
+        residual_signatures: set[tuple[LocalSignature, ...]] = set()
+        pairings: set[tuple[LocalSignature, tuple[LocalSignature, ...]]] = set()
+
+        for term in terms:
+            local_signature = make_local_signature(term, row)
+            if local_signature is None:
+                break
+            residual_signature_items: list[LocalSignature] = []
+            for other_row in remaining_rows:
+                residual_signature = make_local_signature(term, other_row)
+                if residual_signature is None:
+                    break
+                residual_signature_items.append(residual_signature)
+            else:
+                residual_signature_tuple = tuple(residual_signature_items)
+                local_signatures.add(local_signature)
+                residual_signatures.add(residual_signature_tuple)
+                pairings.add((local_signature, residual_signature_tuple))
+                continue
+            break
+        else:
+            if len(terms) != len(local_signatures) * len(residual_signatures):
+                continue
+            if any((local_signature, residual_signature) not in pairings for local_signature in local_signatures for residual_signature in residual_signatures):
+                continue
+
+            local_expression = render_row_product_expression(list(local_signatures), row, row_labels)
+            if not remaining_rows:
+                return local_expression
+
+            reduced_terms = [
+                build_term_from_local_signatures(remaining_rows, residual_signature)
+                for residual_signature in sorted(residual_signatures, key=residual_signature_sort_key)
+            ]
+            remainder = render_state_latex(reduced_terms, remaining_rows, row_labels)
+            if row == active_rows[0]:
+                return rf"{local_expression} \otimes {remainder}"
+            return rf"{remainder} \otimes {local_expression}"
+
+    return None
+
+
 def render_term(term: SymbolicTerm, row_order: list[int]) -> str:
     factors: list[str] = []
     index = 0
@@ -1613,7 +2458,11 @@ def has_payload_before_basis_row(terms: list[SymbolicTerm], row_order: list[int]
     return False
 
 
-def render_state_latex(terms: list[SymbolicTerm], row_order: list[int]) -> str:
+def render_state_latex(terms: list[SymbolicTerm], row_order: list[int], row_labels: list[str]) -> str:
+    factorized = render_factorized_product_state(terms, row_order, row_labels)
+    if factorized is not None:
+        return factorized
+
     if any(term.scalar != "1" for term in terms) or has_payload_before_basis_row(terms, row_order):
         pieces = [
             render_term(term, row_order)
@@ -1769,7 +2618,7 @@ def build_discursive_block(
             else:
                 terms = evolve_terms(terms, slice_info)
                 active_rows = [row for row in all_rows if any(row in term.basis_bits or row in term.payloads for term in terms)]
-                rendered_state = render_state_latex(terms, active_rows)
+                rendered_state = render_state_latex(terms, active_rows, row_labels)
             step_number = run_offset if run_length > 1 else None
             blocks.append(rf"\noindent{slice_heading_text(slice_number, step_number)} {slice_info.description}\par")
             blocks.append(render_state_block(state_index, rendered_state))

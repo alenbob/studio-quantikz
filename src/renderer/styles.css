@@ -1897,6 +1897,13 @@ select,
   color: var(--danger);
 }
 
+.export-generated-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .text-toggle-switch {
   position: relative;
   display: inline-grid;

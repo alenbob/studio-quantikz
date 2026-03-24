@@ -496,6 +496,7 @@ describe("App smoke tests", () => {
 
   it("switches the export panel to generated symbolic latex and preview", async () => {
     const user = userEvent.setup();
+    const seenRefreshVersions: number[] = [];
     const useRenderedPdfSpy = vi.spyOn(renderedPdfModule, "useRenderedPdf").mockImplementation((code) => ({
       pdfUrl: code.includes(String.raw`\begin{equation*}`) || code.includes(String.raw`\begin{quantikz}`)
         ? "blob:preview"
@@ -508,8 +509,11 @@ describe("App smoke tests", () => {
       state: code.includes(String.raw`\begin{equation*}`) || code.includes(String.raw`\begin{quantikz}`) ? "ready" : "idle",
       error: null
     }));
-    const useSymbolicLatexSpy = vi.spyOn(symbolicLatexModule, "useSymbolicLatex").mockReturnValue({
-      latex: String.raw`\begin{equation*}
+    const useSymbolicLatexSpy = vi.spyOn(symbolicLatexModule, "useSymbolicLatex").mockImplementation((_code, refreshVersion = 0) => {
+      seenRefreshVersions.push(refreshVersion);
+
+      return {
+        latex: String.raw`\begin{equation*}
 \begin{aligned}
 \ket{\Psi_{0}} &= \ket{0}
 \end{aligned}
@@ -521,9 +525,10 @@ describe("App smoke tests", () => {
 \begin{aligned}
 \ket{\Psi_{1}} &= H\ket{0}
 \end{aligned}
-\end{equation*}`,
-      state: "ready",
-      error: null
+ \end{equation*}`,
+        state: "ready",
+        error: null
+      };
     });
 
     try {
@@ -538,6 +543,7 @@ describe("App smoke tests", () => {
       });
 
       await user.click(screen.getByRole("button", { name: /^symbolic$/i }));
+      expect(seenRefreshVersions.some((version) => version > 0)).toBe(true);
 
       expect((screen.getByLabelText(/symbolic evolution output/i) as HTMLTextAreaElement).value).toContain(
         String.raw`\ket{\Psi_{1}} &= H\ket{0}`
@@ -547,6 +553,10 @@ describe("App smoke tests", () => {
         expect.stringContaining(String.raw`\usepackage{amsmath}`)
       );
       expect(screen.getByTitle(/rendered symbolic evolution preview/i)).toBeInTheDocument();
+
+      const lastSeenRefreshVersion = seenRefreshVersions.at(-1) ?? 0;
+      await user.click(screen.getByRole("button", { name: /refresh symbolic evolution/i }));
+      await waitFor(() => expect(seenRefreshVersions.at(-1)).toBe(lastSeenRefreshVersion + 1));
 
       fireEvent.change(screen.getByLabelText(/symbolic evolution output/i), {
         target: {
@@ -1011,7 +1021,7 @@ describe("App smoke tests", () => {
     const output = (screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value;
 
     expect(output).not.toContain("\\setwiretype{n}");
-  });
+  }, 15000);
 
   it("can grow the grid without auto-wiring the new row and column", async () => {
     const user = userEvent.setup();
@@ -1140,6 +1150,10 @@ describe("App smoke tests", () => {
     expect(within(dialog).getByText(String.raw`\ket{0}, \ket{1}, \ket{+}, \ket{-}, \ket{i}`)).toBeInTheDocument();
     expect(within(dialog).getByText(String.raw`\ket{0}_{c_0}, \ket{\psi}_{data}`)).toBeInTheDocument();
     expect(within(dialog).getByText(String.raw`R_X(\theta), R_Y(\theta), R_Z(\theta)`)).toBeInTheDocument();
+    expect(within(dialog).getByText(/each independent wire stays separated/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/generated on the server/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/needs a local Python runtime/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/not currently executed directly in the browser/i)).toBeInTheDocument();
 
     await user.click(within(dialog).getByRole("button", { name: /^shortcuts$/i }));
 

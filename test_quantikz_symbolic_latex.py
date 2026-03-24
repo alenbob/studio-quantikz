@@ -4,6 +4,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+from quantikz_symbolic_latex import normalize_scalar_latex
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent
@@ -150,6 +151,15 @@ NAMED_WIRE_CONTROLLED_RY_CASCADE_CIRCUIT = textwrap.dedent(
     \begin{quantikz}[row sep={0.9cm,between origins}, column sep=0.7cm]
     \lstick{$\ket{0}_{c_0}$} &  & \gate{R_y(2\arccos{\sqrt{b}})} & \ctrl{1} &  \\
     \lstick{$\ket{0}_{c_1}$} & \gate{R_y(2\arccos{\sqrt{a}})} & \ctrl{-1} & \targ{} &
+    \end{quantikz}
+    """
+).strip()
+
+FRACTIONAL_CONTROLLED_RY_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}[row sep={0.9cm,between origins}, column sep=0.7cm]
+    \lstick{$\ket{0}_{c_0}$} &  & \gate{R_y(2\arccos{\sqrt{\frac15}})} & \ctrl{1} &  \\
+    \lstick{$\ket{0}_{c_1}$} & \gate{R_y(2\arccos{\sqrt{\frac{tN}{\lambda}}})} & \ctrl{-1} & \targ{} &
     \end{quantikz}
     """
 ).strip()
@@ -304,7 +314,10 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
 
         output = result.stdout
         self.assertIn(r"\ket{\Psi_{0}} &= \ket{+}_{c_0} \otimes \ket{+}_{c_1}", output)
-        self.assertIn(r"\ket{\Psi_{1}} &= \frac{1}{2} (\ket{00} + \ket{01} + \ket{10} + \ket{11})", output)
+        self.assertIn(
+            r"\ket{\Psi_{1}} &= \left(\frac{1}{\sqrt{2}} \ket{0} + \frac{1}{\sqrt{2}} \ket{1}\right)_{c_0} \otimes \left(\frac{1}{\sqrt{2}} \ket{0} + \frac{1}{\sqrt{2}} \ket{1}\right)_{c_1}",
+            output,
+        )
         self.assertIn(r"\textbf{Slice 1: } swap $c_0$ and $c_1$", output)
 
     def test_supports_nested_blank_ancilla_rows(self) -> None:
@@ -360,7 +373,7 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
             )
 
         output = result.stdout
-        self.assertIn(r"\ket{\Psi_{1}} &= \frac{1}{\sqrt{2}} (\ket{0} + \ket{1})", output)
+        self.assertIn(r"\ket{\Psi_{1}} &= \left(\frac{1}{\sqrt{2}} \ket{0} + \frac{1}{\sqrt{2}} \ket{1}\right)", output)
         self.assertIn(r"\ket{\Psi_{2}} &= \ket{0}", output)
 
     def test_applies_named_pauli_and_phase_gates_to_basis_states(self) -> None:
@@ -372,7 +385,7 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
             (
                 "z_plus.tex",
                 Z_PLUS_CIRCUIT,
-                [r"\ket{\Psi_{1}} &= \frac{1}{\sqrt{2}} \ket{0} - \frac{1}{\sqrt{2}} \ket{1}"],
+                [r"\ket{\Psi_{1}} &= \left(\frac{1}{\sqrt{2}} \ket{0} - \frac{1}{\sqrt{2}} \ket{1}\right)"],
             ),
         ]
 
@@ -399,8 +412,8 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
                 "pauli_rotation.tex",
                 PAULI_ROTATION_CIRCUIT,
                 [
-                    r"\ket{\Psi_{1}} &= \cos\left(\frac{\theta}{2}\right) \ket{01} - i \sin\left(\frac{\theta}{2}\right) \ket{11}",
-                    r"\ket{\Psi_{2}} &= -\cos\left(\frac{\theta}{2}\right) \sin\left(\frac{\arccos(t)}{2}\right) \ket{00} + \cos\left(\frac{\theta}{2}\right) \cos\left(\frac{\arccos(t)}{2}\right) \ket{01} + i \sin\left(\frac{\theta}{2}\right) \sin\left(\frac{\arccos(t)}{2}\right) \ket{10} - i \sin\left(\frac{\theta}{2}\right) \cos\left(\frac{\arccos(t)}{2}\right) \ket{11}",
+                    r"\ket{\Psi_{1}} &= \left(\cos\left(\frac{\theta}{2}\right) \ket{0} - i \sin\left(\frac{\theta}{2}\right) \ket{1}\right) \otimes \ket{1}",
+                    r"\ket{\Psi_{2}} &= \left(\cos\left(\frac{\theta}{2}\right) \ket{0} - i \sin\left(\frac{\theta}{2}\right) \ket{1}\right) \otimes \left(-\sin\left(\frac{\arccos(t)}{2}\right) \ket{0} + \cos\left(\frac{\arccos(t)}{2}\right) \ket{1}\right)",
                 ],
             ),
             (
@@ -440,13 +453,13 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
             )
 
         output = result.stdout
-        self.assertIn(r"\ket{\Psi_{1}} &= \sqrt{a} \ket{00} + \sqrt{1-a} \ket{01}", output)
+        self.assertIn(r"\ket{\Psi_{1}} &= \ket{0} \otimes \left(\sqrt{a} \ket{0} + \sqrt{1 - a} \ket{1}\right)", output)
         self.assertIn(
-            r"\ket{\Psi_{2}} &= \sqrt{a} \ket{00} + \sqrt{(1-a)b} \ket{01} + \sqrt{(1-a)(1-b)} \ket{11}",
+            r"\ket{\Psi_{2}} &= \sqrt{a} \ket{00} + \sqrt{(1 - a) b} \ket{01} + \sqrt{(1 - a) (1 - b)} \ket{11}",
             output,
         )
         self.assertIn(
-            r"\ket{\Psi_{3}} &= \sqrt{a} \ket{00} + \sqrt{(1-a)b} \ket{01} + \sqrt{(1-a)(1-b)} \ket{10}",
+            r"\ket{\Psi_{3}} &= \sqrt{a} \ket{00} + \sqrt{(1 - a) b} \ket{01} + \sqrt{(1 - a) (1 - b)} \ket{10}",
             output,
         )
 
@@ -464,8 +477,48 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
 
         output = result.stdout
         self.assertIn(r"\ket{\Psi_{0}} &= \ket{0}_{c_0} \otimes \ket{0}_{c_1}", output)
+        self.assertIn(
+            r"\ket{\Psi_{1}} &= \ket{0}_{c_0} \otimes \left(\sqrt{a} \ket{0} + \sqrt{1 - a} \ket{1}\right)_{c_1}",
+            output,
+        )
         self.assertIn(r"\textbf{Slice 3: } controlled $X$ on $c_1$", output)
         self.assertNotIn(r"\textbf{Slice 3: } controlled $X$ on $a_{1}$", output)
+
+    def test_simplifies_fractional_rotation_coefficients_with_symbolic_parser(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = pathlib.Path(temp_dir) / "fractional_controlled_ry.tex"
+            input_path.write_text(FRACTIONAL_CONTROLLED_RY_CIRCUIT, encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH), str(input_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        output = result.stdout
+        self.assertIn(
+            r"\ket{\Psi_{1}} &= \ket{0}_{c_0} \otimes \left(\sqrt{\frac{tN}{\lambda}} \ket{0} + \sqrt{1 - \frac{tN}{\lambda}} \ket{1}\right)_{c_1}",
+            output,
+        )
+        self.assertIn(
+            r"\ket{\Psi_{2}} &= \sqrt{\frac{tN}{\lambda}} \ket{00} + \sqrt{\frac{1}{5} (1 - \frac{tN}{\lambda})} \ket{01} + \sqrt{\frac{4}{5} (1 - \frac{tN}{\lambda})} \ket{11}",
+            output,
+        )
+
+    def test_renders_general_nonnegative_radical_products_as_single_roots(self) -> None:
+        self.assertEqual(
+            normalize_scalar_latex(r"\frac{2}{\sqrt{5}} \sqrt{1 - \frac{tN}{\lambda}}"),
+            r"\sqrt{\frac{4}{5} (1 - \frac{tN}{\lambda})}",
+        )
+        self.assertEqual(
+            normalize_scalar_latex(r"\frac{1}{3} \sqrt{x}"),
+            r"\sqrt{\frac{1}{9} x}",
+        )
+        self.assertEqual(
+            normalize_scalar_latex(r"a \frac{2}{\sqrt{5}} \sqrt{x}"),
+            r"a \sqrt{\frac{4}{5} x}",
+        )
 
     def test_uses_wire_names_for_measurements(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -556,8 +609,8 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
         output = result.stdout
         self.assertIn(r"\ket{\Psi_{0}} &= \ket{00} \otimes \ket{1}", output)
         self.assertIn(r"\textbf{Slice 1: } controlled $YY$", output)
-        self.assertIn(r"\ket{\Psi_{1}} &= -\ket{111}", output)
-        self.assertIn(r"\ket{\Psi_{2}} &= -\ket{101}", output)
+        self.assertIn(r"\ket{\Psi_{1}} &= i \ket{1} \otimes i \ket{1} \otimes \ket{1}", output)
+        self.assertIn(r"\ket{\Psi_{2}} &= i \ket{1} \otimes i \ket{0} \otimes \ket{1}", output)
 
     def test_supports_i_basis_state(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -572,7 +625,7 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
             )
 
         output = result.stdout
-        self.assertIn(r"\ket{\Psi_{1}} &= \frac{1}{\sqrt{2}} \ket{0} - \frac{i}{\sqrt{2}} \ket{1}", output)
+        self.assertIn(r"\ket{\Psi_{1}} &= \left(\frac{1}{\sqrt{2}} \ket{0} - \frac{i}{\sqrt{2}} \ket{1}\right)", output)
 
     def test_interprets_wide_h_as_hadamard_on_each_qubit(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -588,7 +641,10 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
 
         output = result.stdout
         self.assertIn(r"\textbf{Slice 1: } apply $H$", output)
-        self.assertIn(r"\ket{\Psi_{1}} &= \frac{1}{2} (\ket{00} + \ket{01} + \ket{10} + \ket{11})", output)
+        self.assertIn(
+            r"\ket{\Psi_{1}} &= \left(\frac{1}{\sqrt{2}} \ket{0} + \frac{1}{\sqrt{2}} \ket{1}\right) \otimes \left(\frac{1}{\sqrt{2}} \ket{0} + \frac{1}{\sqrt{2}} \ket{1}\right)",
+            output,
+        )
 
     def test_expands_multiple_same_column_operations_into_separate_steps(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -606,9 +662,9 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
         self.assertIn(r"\textbf{Slice 1, step 1: } apply $H$", output)
         self.assertIn(r"\textbf{Slice 1, step 2: } apply $X$", output)
         self.assertIn(r"\textbf{Slice 2: } apply $Z$", output)
-        self.assertIn(r"\ket{\Psi_{1}} &= \frac{1}{\sqrt{2}} (\ket{01} + \ket{11})", output)
-        self.assertIn(r"\ket{\Psi_{2}} &= \frac{1}{\sqrt{2}} (\ket{00} + \ket{10})", output)
-        self.assertIn(r"\ket{\Psi_{3}} &= \frac{1}{\sqrt{2}} \ket{00} - \frac{1}{\sqrt{2}} \ket{10}", output)
+        self.assertIn(r"\ket{\Psi_{1}} &= \left(\frac{1}{\sqrt{2}} \ket{0} + \frac{1}{\sqrt{2}} \ket{1}\right) \otimes \ket{1}", output)
+        self.assertIn(r"\ket{\Psi_{2}} &= \left(\frac{1}{\sqrt{2}} \ket{0} + \frac{1}{\sqrt{2}} \ket{1}\right) \otimes \ket{0}", output)
+        self.assertIn(r"\ket{\Psi_{3}} &= \left(\frac{1}{\sqrt{2}} \ket{0} - \frac{1}{\sqrt{2}} \ket{1}\right) \otimes \ket{0}", output)
 
 
 if __name__ == "__main__":

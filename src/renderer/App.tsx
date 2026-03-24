@@ -115,6 +115,10 @@ const SYMBOLIC_HELP_SECTIONS: Array<{
       {
         label: String.raw`\ctrl{...}, \targ{}, \swap{...}`,
         description: "Controls and swaps are interpreted exactly while the participating control row is still in the computational basis."
+      },
+      {
+        label: "Separable slices",
+        description: "As long as the current symbolic state is still a tensor product, each independent wire stays separated in the rendered state. Once rows become entangled, the renderer falls back to joint basis-state sums."
       }
     ]
   },
@@ -136,6 +140,27 @@ const SYMBOLIC_HELP_SECTIONS: Array<{
       {
         label: String.raw`R_Y(2\arccos{\sqrt{x}})`,
         description: "Recognized half-angle forms are simplified on basis inputs, for example to \\sqrt{x} and \\sqrt{1-x} branch coefficients."
+      },
+      {
+        label: String.raw`\frac{1}{5}, \frac{tN}{\lambda}`,
+        description: "The scalar parser simplifies common rational and square-root algebra in branch coefficients, for example 1-\\frac{1}{5} and \\sqrt{(1-x)\\frac{1}{5}}."
+      }
+    ]
+  },
+  {
+    title: "Where it runs",
+    items: [
+      {
+        label: "Deployed website",
+        description: "Symbolic LaTeX is generated on the server, so people using the hosted site do not need a local Python installation."
+      },
+      {
+        label: "Local preview and dev",
+        description: "The local preview and dev servers call the symbolic Python script on this machine, so symbolic mode needs a local Python runtime there."
+      },
+      {
+        label: "Browser-only static build",
+        description: "This is not a browser-only feature today. The symbolic interpreter is implemented in Python and is not currently executed directly in the browser."
       }
     ]
   },
@@ -149,10 +174,6 @@ const SYMBOLIC_HELP_SECTIONS: Array<{
       {
         label: "Measurements after rotations",
         description: "Measurement probabilities are also derived after symbolic R_X, R_Y, and R_Z rotations; when rotated branches interfere, the result is kept as an exact |...|^2 expression instead of being over-simplified."
-      },
-      {
-        label: "Post-measurement states",
-        description: "After a measurement, each branch displays only the remaining unmeasured subsystem. The measured wire is removed from the branch statevector."
       },
       {
         label: "Controls through symbolism",
@@ -384,6 +405,7 @@ export default function App(): JSX.Element {
   const [selectedWireLabel, setSelectedWireLabel] = useState<{ row: number; side: WireLabelSide } | null>(null);
   const [selectedStructure, setSelectedStructure] = useState<StructureSelection | null>(null);
   const [symbolicEditorCode, setSymbolicEditorCode] = useState("");
+  const [symbolicRefreshVersion, setSymbolicRefreshVersion] = useState(0);
   const [workbenchLayoutMode, setWorkbenchLayoutMode] = useState<WorkbenchLayoutMode>("left-rail-tall");
   const stateRef = useRef(state);
   const clipboardRef = useRef<CircuitClipboard | null>(null);
@@ -391,6 +413,7 @@ export default function App(): JSX.Element {
   const historySheetOpenRef = useRef(isHistorySheetOpen);
   const selectedWireLabelRef = useRef(selectedWireLabel);
   const selectedStructureRef = useRef(selectedStructure);
+  const exportPanelModeRef = useRef<ExportPanelMode>(exportPanelMode);
   const lastGeneratedSymbolicLatexRef = useRef("");
   const leftPanelRef = useRef<HTMLDivElement | null>(null);
   const workspacePanelRef = useRef<HTMLElement | null>(null);
@@ -423,7 +446,7 @@ export default function App(): JSX.Element {
     resolvedExportSource.code,
     resolvedExportSource.preamble
   );
-  const symbolicLatexResult = useSymbolicLatex(resolvedExportSource.code);
+  const symbolicLatexResult = useSymbolicLatex(resolvedExportSource.code, symbolicRefreshVersion);
   const isSymbolicMode = exportPanelMode === "symbolic";
   const normalizedSymbolicPreamble = useMemo(
     () => normalizeSymbolicPreamble(state.exportSymbolicPreamble),
@@ -451,6 +474,15 @@ export default function App(): JSX.Element {
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
+
+  useEffect(() => {
+    const previousMode = exportPanelModeRef.current;
+    exportPanelModeRef.current = exportPanelMode;
+
+    if (previousMode !== "symbolic" && exportPanelMode === "symbolic" && resolvedExportSource.code.trim()) {
+      setSymbolicRefreshVersion((currentVersion) => currentVersion + 1);
+    }
+  }, [exportPanelMode, resolvedExportSource.code]);
 
   useEffect(() => {
     setGridDrafts((currentDrafts) => {
@@ -1184,6 +1216,14 @@ export default function App(): JSX.Element {
     dispatch({ type: "setTool", tool });
   }
 
+  function handleRefreshSymbolicLatex(): void {
+    if (!resolvedExportSource.code.trim() || symbolicLatexResult.state === "loading") {
+      return;
+    }
+
+    setSymbolicRefreshVersion((currentVersion) => currentVersion + 1);
+  }
+
   const symbolicCodeEdited = Boolean(symbolicEditorCode.trim()) && symbolicEditorCode !== symbolicLatexResult.latex;
   const symbolicTextareaPlaceholder = !resolvedExportSource.code.trim()
     ? "Generate or paste Quantikz code to populate the symbolic LaTeX editor."
@@ -1760,9 +1800,19 @@ export default function App(): JSX.Element {
                       Convert to visual
                     </button>
                   ) : (
-                    <span className={`export-generated-status ${symbolicLatexResult.state === "error" ? "is-error" : ""}`}>
-                      {symbolicStatusText}
-                    </span>
+                    <div className="export-generated-actions">
+                      <span className={`export-generated-status ${symbolicLatexResult.state === "error" ? "is-error" : ""}`}>
+                        {symbolicStatusText}
+                      </span>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={handleRefreshSymbolicLatex}
+                        disabled={!resolvedExportSource.code.trim() || symbolicLatexResult.state === "loading"}
+                      >
+                        Refresh symbolic evolution
+                      </button>
+                    </div>
                   )}
                 </div>
                 <div className="export-pane-body">

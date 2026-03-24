@@ -64,7 +64,7 @@ function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
 }
 
-export function useSymbolicLatex(code: string): SymbolicLatexResult {
+export function useSymbolicLatex(code: string, refreshVersion = 0): SymbolicLatexResult {
   const [latex, setLatex] = useState("");
   const [state, setState] = useState<SymbolicLatexState>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -107,7 +107,7 @@ export function useSymbolicLatex(code: string): SymbolicLatexResult {
     return () => {
       controller.abort();
     };
-  }, [code]);
+  }, [code, refreshVersion]);
 
   useEffect(() => () => {
     if (abortRef.current) {

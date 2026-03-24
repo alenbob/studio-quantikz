@@ -95,6 +95,12 @@ Two small syntax rules matter a lot:
 
 The symbolic view does not try to understand every possible gate label. It recognizes a specific set of conventions and keeps everything else as an opaque symbolic operator.
 
+Runtime availability:
+
+- On the deployed website, symbolic LaTeX is generated on the server. End users do not need a local Python installation for that hosted flow.
+- In local development and the local preview server, the symbolic endpoint shells out to the local Python interpreter. If Python is unavailable there, symbolic generation fails.
+- A fully static browser-only build does not currently run the symbolic interpreter. The symbolic pipeline is implemented in Python rather than in-browser JavaScript or WASM.
+
 - Recognized input product states: `\ket{0}`, `\ket{1}`, `\ket{+}`, `\ket{-}`, `\ket{i}`, and multi-wire products like `\ket{00}`.
 - If an `\lstick` label ends with a top-level subscript such as `\ket{0}_{c_0}` or `\ket{\psi}_{data}`, that trailing subscript is interpreted as the wire name and reused in slice descriptions and measurement labels.
 - Exact single-qubit basis-state rules: `H`, `X`, `Y`, `Z`, `S`, `T`, and `T^\dagger`.
@@ -102,6 +108,8 @@ The symbolic view does not try to understand every possible gate label. It recog
 - Accepted rotation aliases: `RX(\theta)`, `RY(\theta)`, `RZ(\theta)`, lower-case axis letters like `R_x(\theta)` or `R_{y}(\theta)`, and labels with spaces inside such as `R_z(2\phi + \pi/3)`.
 - Angle expressions are preserved literally. Examples that are understood as angles include `\theta`, `\pi/7`, `2\phi + \pi/3`, and `\arccos(t)`.
 - Special half-angle simplification is recognized for `2\arccos(...)` and `2\arcsin(...)`. In particular, `R_Y(2\arccos{\sqrt{x}})` expands using `\sqrt{x}` and `\sqrt{1-x}` coefficients.
+- Common scalar algebra in those branch coefficients is simplified structurally. Examples include `1-\frac{1}{5} \rightarrow \frac{4}{5}` and `\sqrt{(1-x)\frac{1}{5}} \rightarrow \frac{1}{\sqrt{5}}\sqrt{1-x}`.
+- As long as the current symbolic state is still separable, the renderer keeps independent wires as explicit tensor factors. Once supported operations entangle rows, it falls back to joint basis-state sums for that subsystem.
 
 For basis inputs, the symbolic view expands the Pauli-axis rotations using the standard physics convention:
 
