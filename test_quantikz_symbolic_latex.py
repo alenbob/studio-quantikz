@@ -111,10 +111,113 @@ Y_CIRCUIT = textwrap.dedent(
     """
 ).strip()
 
+T_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}
+    \lstick{$\ket{1}$} & \gate{T} & \meter{}
+    \end{quantikz}
+    """
+).strip()
+
+PAULI_ROTATION_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}
+    \lstick{$\ket{0}$} & \gate{R_X(\theta)} \\
+    \lstick{$\ket{1}$} & \gate{R_{y}(\arccos(t))}
+    \end{quantikz}
+    """
+).strip()
+
+RZ_ROTATION_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}
+    \lstick{$\ket{1}$} & \gate{R_z(2\phi + \pi/3)}
+    \end{quantikz}
+    """
+).strip()
+
+CONTROLLED_RY_CASCADE_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}[row sep={0.9cm,between origins}, column sep=0.7cm]
+    \lstick{$\ket{0}$} &  & \gate{R_y(2\arccos{\sqrt{b}})} & \ctrl{1} &  \\
+    \lstick{$\ket{0}$} & \gate{R_y(2\arccos{\sqrt{a}})} & \ctrl{-1} & \targ{} &
+    \end{quantikz}
+    """
+).strip()
+
+NAMED_WIRE_CONTROLLED_RY_CASCADE_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}[row sep={0.9cm,between origins}, column sep=0.7cm]
+    \lstick{$\ket{0}_{c_0}$} &  & \gate{R_y(2\arccos{\sqrt{b}})} & \ctrl{1} &  \\
+    \lstick{$\ket{0}_{c_1}$} & \gate{R_y(2\arccos{\sqrt{a}})} & \ctrl{-1} & \targ{} &
+    \end{quantikz}
+    """
+).strip()
+
+NAMED_WIRE_MEASUREMENT_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}
+    \lstick{$\ket{1}_{c_0}$} & \meter{}
+    \end{quantikz}
+    """
+).strip()
+
+ROTATED_MEASUREMENT_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}
+    \lstick{$\ket{0}$} & \gate{R_y(\theta)} & \meter{}
+    \end{quantikz}
+    """
+).strip()
+
+INTERFERING_ROTATED_MEASUREMENT_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}
+    \lstick{$\ket{0}$} & \gate{H} & \gate{R_y(\theta)} & \meter{}
+    \end{quantikz}
+    """
+).strip()
+
+POST_MEASUREMENT_REMAINDER_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}
+    \lstick{$\ket{+}$} & \meter{} \\
+    \lstick{$\ket{\psi}$} &
+    \end{quantikz}
+    """
+).strip()
+
 Z_PLUS_CIRCUIT = textwrap.dedent(
     r"""
     \begin{quantikz}
     \lstick{$\ket{+}$} & \gate{Z}
+    \end{quantikz}
+    """
+).strip()
+
+WIDE_CONTROLLED_YY_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}[row sep={0.9cm,between origins}, column sep=0.7cm]
+    \lstick[wires=2,braces=none]{$\ket{00}$} & \gate[wires=2]{YY} &  & \\
+     & \wire[d][1]{q} & \gate{X} & \\
+    \lstick{$\ket{1}$} & \control{} &  &
+    \end{quantikz}
+    """
+).strip()
+
+I_STATE_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}
+    \lstick{$\ket{i}$} & \gate{Z}
+    \end{quantikz}
+    """
+).strip()
+
+WIDE_HADAMARD_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}
+    \lstick[wires=2]{$\ket{00}$} & \gate[wires=2]{H} \\
+     &
     \end{quantikz}
     """
 ).strip()
@@ -202,7 +305,7 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
         output = result.stdout
         self.assertIn(r"\ket{\Psi_{0}} &= \ket{+}_{c_0} \otimes \ket{+}_{c_1}", output)
         self.assertIn(r"\ket{\Psi_{1}} &= \frac{1}{2} (\ket{00} + \ket{01} + \ket{10} + \ket{11})", output)
-        self.assertIn(r"\textbf{Slice 1: } swap $q_{0}$ and $q_{1}$", output)
+        self.assertIn(r"\textbf{Slice 1: } swap $c_0$ and $c_1$", output)
 
     def test_supports_nested_blank_ancilla_rows(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -239,10 +342,10 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
 
         output = result.stdout
         self.assertIn(r"\ket{\Psi_{7}} &= \left\{\begin{array}{ll}", output)
-        self.assertIn(r"\Pr(q_{1}=0)=\frac{3}{4}", output)
-        self.assertIn(r"\Pr(q_{1}=1)=\frac{1}{4}", output)
+        self.assertIn(r"\Pr(0=0)=\frac{3}{4}", output)
+        self.assertIn(r"\Pr(0=1)=\frac{1}{4}", output)
         self.assertNotIn(r"\underbrace{", output)
-        self.assertIn(r"\textbf{Slice 7: } measure $q_{1}$", output)
+        self.assertIn(r"\textbf{Slice 7: } measure $0$", output)
 
     def test_applies_hadamard_to_basis_states_and_recombines_duplicate_terms(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -264,6 +367,7 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
         circuits = [
             ("xz.tex", XZ_CIRCUIT, [r"\ket{\Psi_{1}} &= \ket{1}", r"\ket{\Psi_{2}} &= -\ket{1}"]),
             ("s.tex", S_CIRCUIT, [r"\ket{\Psi_{1}} &= i \ket{1}"]),
+            ("t.tex", T_CIRCUIT, [r"\ket{\Psi_{1}} &= \frac{1 + i}{\sqrt{2}} \ket{1}", r"\Pr(q_{0}=1)=1"]),
             ("y.tex", Y_CIRCUIT, [r"\ket{\Psi_{1}} &= i \ket{1}"]),
             (
                 "z_plus.tex",
@@ -288,6 +392,203 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
                 output = result.stdout
                 for expected in expected_snippets:
                     self.assertIn(expected, output)
+
+    def test_renders_pauli_axis_rotations_as_basis_state_branches(self) -> None:
+        circuits = [
+            (
+                "pauli_rotation.tex",
+                PAULI_ROTATION_CIRCUIT,
+                [
+                    r"\ket{\Psi_{1}} &= \cos\left(\frac{\theta}{2}\right) \ket{01} - i \sin\left(\frac{\theta}{2}\right) \ket{11}",
+                    r"\ket{\Psi_{2}} &= -\cos\left(\frac{\theta}{2}\right) \sin\left(\frac{\arccos(t)}{2}\right) \ket{00} + \cos\left(\frac{\theta}{2}\right) \cos\left(\frac{\arccos(t)}{2}\right) \ket{01} + i \sin\left(\frac{\theta}{2}\right) \sin\left(\frac{\arccos(t)}{2}\right) \ket{10} - i \sin\left(\frac{\theta}{2}\right) \cos\left(\frac{\arccos(t)}{2}\right) \ket{11}",
+                ],
+            ),
+            (
+                "rz_rotation.tex",
+                RZ_ROTATION_CIRCUIT,
+                [r"\exp\left(i \frac{2\phi+\pi/3}{2}\right) \ket{1}"],
+            ),
+        ]
+
+        for filename, circuit, expected_snippets in circuits:
+            with self.subTest(filename=filename):
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    input_path = pathlib.Path(temp_dir) / filename
+                    input_path.write_text(circuit, encoding="utf-8")
+
+                    result = subprocess.run(
+                        [sys.executable, str(SCRIPT_PATH), str(input_path)],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                    )
+
+                output = result.stdout
+                for expected in expected_snippets:
+                    self.assertIn(expected, output)
+
+    def test_propagates_controls_through_symbolic_ry_branches(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = pathlib.Path(temp_dir) / "controlled_ry_cascade.tex"
+            input_path.write_text(CONTROLLED_RY_CASCADE_CIRCUIT, encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH), str(input_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        output = result.stdout
+        self.assertIn(r"\ket{\Psi_{1}} &= \sqrt{a} \ket{00} + \sqrt{1-a} \ket{01}", output)
+        self.assertIn(
+            r"\ket{\Psi_{2}} &= \sqrt{a} \ket{00} + \sqrt{(1-a)b} \ket{01} + \sqrt{(1-a)(1-b)} \ket{11}",
+            output,
+        )
+        self.assertIn(
+            r"\ket{\Psi_{3}} &= \sqrt{a} \ket{00} + \sqrt{(1-a)b} \ket{01} + \sqrt{(1-a)(1-b)} \ket{10}",
+            output,
+        )
+
+    def test_uses_lstick_subscripts_as_wire_names(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = pathlib.Path(temp_dir) / "named_wire_controlled_ry.tex"
+            input_path.write_text(NAMED_WIRE_CONTROLLED_RY_CASCADE_CIRCUIT, encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH), str(input_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        output = result.stdout
+        self.assertIn(r"\ket{\Psi_{0}} &= \ket{0}_{c_0} \otimes \ket{0}_{c_1}", output)
+        self.assertIn(r"\textbf{Slice 3: } controlled $X$ on $c_1$", output)
+        self.assertNotIn(r"\textbf{Slice 3: } controlled $X$ on $a_{1}$", output)
+
+    def test_uses_wire_names_for_measurements(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = pathlib.Path(temp_dir) / "named_wire_measurement.tex"
+            input_path.write_text(NAMED_WIRE_MEASUREMENT_CIRCUIT, encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH), str(input_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        output = result.stdout
+        self.assertIn(r"\textbf{Slice 1: } measure $c_0$", output)
+        self.assertIn(r"\Pr(c_0=1)=1", output)
+
+    def test_derives_measurement_probabilities_after_rotations(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = pathlib.Path(temp_dir) / "rotated_measurement.tex"
+            input_path.write_text(ROTATED_MEASUREMENT_CIRCUIT, encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH), str(input_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        output = result.stdout
+        self.assertIn(r"\Pr(q_{0}=0)=\cos^2\left(\frac{\theta}{2}\right)", output)
+        self.assertIn(r"\Pr(q_{0}=1)=\sin^2\left(\frac{\theta}{2}\right)", output)
+
+    def test_keeps_exact_interference_terms_in_rotated_measurements(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = pathlib.Path(temp_dir) / "interfering_rotated_measurement.tex"
+            input_path.write_text(INTERFERING_ROTATED_MEASUREMENT_CIRCUIT, encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH), str(input_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        output = result.stdout
+        self.assertIn(
+            r"\Pr(q_{0}=0)=\left|\frac{1}{\sqrt{2}} \cos\left(\frac{\theta}{2}\right) - \frac{1}{\sqrt{2}} \sin\left(\frac{\theta}{2}\right)\right|^2",
+            output,
+        )
+        self.assertIn(
+            r"\Pr(q_{0}=1)=\left|\frac{1}{\sqrt{2}} \sin\left(\frac{\theta}{2}\right) + \frac{1}{\sqrt{2}} \cos\left(\frac{\theta}{2}\right)\right|^2",
+            output,
+        )
+
+    def test_removes_measured_qubits_from_branch_states(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = pathlib.Path(temp_dir) / "post_measurement_remainder.tex"
+            input_path.write_text(POST_MEASUREMENT_REMAINDER_CIRCUIT, encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH), str(input_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        output = result.stdout
+        self.assertIn(
+            r"\ket{\Psi_{1}} &= \left\{\begin{array}{ll}\frac{1}{\sqrt{2}} \ket{\psi}, & \Pr(q_{0}=0)=\frac{1}{2} \\ \frac{1}{\sqrt{2}} \ket{\psi}, & \Pr(q_{0}=1)=\frac{1}{2}\end{array}\right.",
+            output,
+        )
+        self.assertNotIn(r"\ket{0} \otimes \ket{\psi}", output)
+        self.assertNotIn(r"\ket{1} \otimes \ket{\psi}", output)
+
+    def test_supports_multiwire_basis_labels_and_controlled_wide_gates(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = pathlib.Path(temp_dir) / "wide_controlled_yy.tex"
+            input_path.write_text(WIDE_CONTROLLED_YY_CIRCUIT, encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH), str(input_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        output = result.stdout
+        self.assertIn(r"\ket{\Psi_{0}} &= \ket{00} \otimes \ket{1}", output)
+        self.assertIn(r"\textbf{Slice 1: } controlled $YY$", output)
+        self.assertIn(r"\ket{\Psi_{1}} &= -\ket{111}", output)
+        self.assertIn(r"\ket{\Psi_{2}} &= -\ket{101}", output)
+
+    def test_supports_i_basis_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = pathlib.Path(temp_dir) / "i_state.tex"
+            input_path.write_text(I_STATE_CIRCUIT, encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH), str(input_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        output = result.stdout
+        self.assertIn(r"\ket{\Psi_{1}} &= \frac{1}{\sqrt{2}} \ket{0} - \frac{i}{\sqrt{2}} \ket{1}", output)
+
+    def test_interprets_wide_h_as_hadamard_on_each_qubit(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = pathlib.Path(temp_dir) / "wide_h.tex"
+            input_path.write_text(WIDE_HADAMARD_CIRCUIT, encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH), str(input_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        output = result.stdout
+        self.assertIn(r"\textbf{Slice 1: } apply $H$", output)
+        self.assertIn(r"\ket{\Psi_{1}} &= \frac{1}{2} (\ket{00} + \ket{01} + \ket{10} + \ket{11})", output)
 
     def test_expands_multiple_same_column_operations_into_separate_steps(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

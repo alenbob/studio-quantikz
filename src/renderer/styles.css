@@ -612,10 +612,22 @@ select,
   margin-bottom: 20px;
 }
 
+.shortcut-sheet-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  gap: 10px;
+}
+
 .shortcut-sheet-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 18px;
+}
+
+.shortcut-sheet-grid-single {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .history-sheet {
@@ -808,6 +820,10 @@ select,
   line-height: 1.4;
 }
 
+.shortcut-row-help {
+  grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
+}
+
 .shortcut-key {
   min-width: 44px;
   min-height: 34px;
@@ -822,6 +838,23 @@ select,
   justify-content: flex-start;
   letter-spacing: 0.04em;
   text-transform: none;
+}
+
+.help-sheet-tabs {
+  flex-wrap: nowrap;
+}
+
+.help-inline-code {
+  display: block;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff8ef;
+  font-family: "SF Mono", "Menlo", monospace;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .palette-preview-wire,
@@ -2066,6 +2099,11 @@ select,
     flex-direction: column;
   }
 
+  .shortcut-sheet-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
   .shortcut-launcher {
     align-self: flex-start;
   }
@@ -2083,6 +2121,10 @@ select,
   .shortcut-sheet-header {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .shortcut-row-help {
+    grid-template-columns: 1fr;
   }
 
   .history-sheet-actions {

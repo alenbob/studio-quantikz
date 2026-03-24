@@ -91,6 +91,50 @@ Two small syntax rules matter a lot:
 - Commands like `\targ`, `\meter`, `\control`, and `\targX` should be written with empty braces: `\targ{}`, `\meter{}`.
 - If you want a wire to continue past the last gate in a row, leave a trailing `&` after that gate.
 
+## Symbolic interpretation conventions
+
+The symbolic view does not try to understand every possible gate label. It recognizes a specific set of conventions and keeps everything else as an opaque symbolic operator.
+
+- Recognized input product states: `\ket{0}`, `\ket{1}`, `\ket{+}`, `\ket{-}`, `\ket{i}`, and multi-wire products like `\ket{00}`.
+- If an `\lstick` label ends with a top-level subscript such as `\ket{0}_{c_0}` or `\ket{\psi}_{data}`, that trailing subscript is interpreted as the wire name and reused in slice descriptions and measurement labels.
+- Exact single-qubit basis-state rules: `H`, `X`, `Y`, `Z`, `S`, `T`, and `T^\dagger`.
+- Recognized Pauli-axis rotation labels: `R_X(\theta)`, `R_Y(\theta)`, `R_Z(\theta)`.
+- Accepted rotation aliases: `RX(\theta)`, `RY(\theta)`, `RZ(\theta)`, lower-case axis letters like `R_x(\theta)` or `R_{y}(\theta)`, and labels with spaces inside such as `R_z(2\phi + \pi/3)`.
+- Angle expressions are preserved literally. Examples that are understood as angles include `\theta`, `\pi/7`, `2\phi + \pi/3`, and `\arccos(t)`.
+- Special half-angle simplification is recognized for `2\arccos(...)` and `2\arcsin(...)`. In particular, `R_Y(2\arccos{\sqrt{x}})` expands using `\sqrt{x}` and `\sqrt{1-x}` coefficients.
+
+For basis inputs, the symbolic view expands the Pauli-axis rotations using the standard physics convention:
+
+- `R_X(\theta) = e^{-i \theta X / 2}`
+- `R_Y(\theta) = e^{-i \theta Y / 2}`
+- `R_Z(\theta) = e^{-i \theta Z / 2}`
+
+That means, for example:
+
+```latex
+\[
+\begin{quantikz}
+\lstick{\ket{0}} & \gate{R_X(\theta)}
+\end{quantikz}
+\]
+```
+
+is rendered symbolically as
+
+```latex
+\cos\left(\frac{\theta}{2}\right)\ket{0} - i \sin\left(\frac{\theta}{2}\right)\ket{1}
+```
+
+On computational-basis inputs, those rotations are expanded into basis-state branches instead of being kept as opaque local payloads. That means supported later controls continue to work term by term through the expanded branches.
+
+Current limits of the symbolic interpreter:
+
+- Controls are interpreted exactly through supported basis-state expansions, but not through arbitrary opaque symbolic payloads.
+- Measurements are exact for computational-basis states and the explicitly supported `H/S/T/T^\dagger/X/Y/Z` basis-state transforms.
+- Measurement probabilities after `R_X`, `R_Y`, and `R_Z` are also derived symbolically. When multiple rotated branches interfere on the same measurement outcome, the probability is kept as an exact `\left|...\right|^2` expression rather than being over-simplified.
+- After a measurement, each branch displays only the remaining unmeasured subsystem. The measured wire is removed from the branch state shown in the symbolic output.
+- Unrecognized gate labels are preserved as opaque operators, for example `A\ket{\psi}`.
+
 ## 1. Single-qubit circuits
 
 ```latex

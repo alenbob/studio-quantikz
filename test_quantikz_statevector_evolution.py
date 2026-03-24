@@ -10,6 +10,45 @@ import quantikz_statevector_evolution as evolution
 REPO_ROOT = pathlib.Path(__file__).resolve().parent
 EXAMPLE_PATH = REPO_ROOT / "quantikz_example.tex"
 SCRIPT_PATH = REPO_ROOT / "quantikz_statevector_evolution.py"
+WIDE_CONTROLLED_YY_CIRCUIT = r"""
+\begin{quantikz}[row sep={0.9cm,between origins}, column sep=0.7cm]
+\lstick[wires=2,braces=none]{$\ket{00}$} & \gate[wires=2]{YY} &  & \\
+ & \wire[d][1]{q} & \gate{X} & \\
+\lstick{$\ket{1}$} & \control{} &  &
+\end{quantikz}
+"""
+WIDE_HADAMARD_CIRCUIT = r"""
+\begin{quantikz}
+\lstick[wires=2]{$\ket{00}$} & \gate[wires=2]{H} \\
+ &
+\end{quantikz}
+"""
+SPECIAL_STATE_CIRCUITS = {
+    "plus": (
+        r"""
+\begin{quantikz}
+\lstick{$\ket{+}$} & \gate{Z}
+\end{quantikz}
+""",
+        "1/sqrt(2)|0> - 1/sqrt(2)|1>",
+    ),
+    "minus": (
+        r"""
+\begin{quantikz}
+\lstick{$\ket{-}$} & \gate{X}
+\end{quantikz}
+""",
+        "-1/sqrt(2)|0> + 1/sqrt(2)|1>",
+    ),
+    "i": (
+        r"""
+\begin{quantikz}
+\lstick{$\ket{i}$} & \gate{Z}
+\end{quantikz}
+""",
+        "1/sqrt(2)|0> - i/sqrt(2)|1>",
+    ),
+}
 
 
 class QuantikzStatevectorEvolutionTests(unittest.TestCase):
@@ -89,6 +128,31 @@ class QuantikzStatevectorEvolutionTests(unittest.TestCase):
             ],
         )
         self.assertIn("remaining state on q1: |0>", measurement_slice.state)
+
+    def test_expands_multiwire_initial_states_and_controlled_wide_gates(self) -> None:
+        evolution_result = evolution.symbolic_evolution_for_source(WIDE_CONTROLLED_YY_CIRCUIT)[0]
+
+        self.assertEqual(evolution_result.initial_state, r"\ket{00}_{q0,q1} x \ket{1}")
+        self.assertEqual(
+            [slice_evolution.operations for slice_evolution in evolution_result.slices],
+            [["C[q2=1] YY(q0,q1)"], ["X(q1)"]],
+        )
+        self.assertEqual(evolution_result.slices[0].expanded_state, "-|111>")
+        self.assertEqual(evolution_result.slices[1].expanded_state, "-|101>")
+
+    def test_expands_plus_minus_and_i_initial_states(self) -> None:
+        for name, (source, expected_state) in SPECIAL_STATE_CIRCUITS.items():
+            with self.subTest(name=name):
+                evolution_result = evolution.symbolic_evolution_for_source(source)[0]
+                self.assertEqual(evolution_result.slices[0].expanded_state, expected_state)
+
+    def test_interprets_wide_h_as_hadamard_on_each_qubit(self) -> None:
+        evolution_result = evolution.symbolic_evolution_for_source(WIDE_HADAMARD_CIRCUIT)[0]
+
+        self.assertEqual(evolution_result.slices[0].operations, ["H(q0,q1)"])
+        expanded_state = evolution_result.slices[0].expanded_state or ""
+        for basis_state in ("|00>", "|01>", "|10>", "|11>"):
+            self.assertIn(basis_state, expanded_state)
 
     def test_cli_json_output_handles_env_index(self) -> None:
         result = subprocess.run(

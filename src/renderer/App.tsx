@@ -54,6 +54,7 @@ type ExportPanelMode = "quantikz" | "symbolic";
 type ExportPaneView = "content" | "preamble";
 type DownloadMenuTarget = "main" | `history:${string}` | null;
 type WorkbenchLayoutMode = "left-rail-tall" | "workspace-tall";
+type HelpSheetMode = "shortcuts" | "symbolic";
 
 const TOAST_DURATION_MS = 4000;
 const WORKBENCH_LAYOUT_TOLERANCE_PX = 1;
@@ -81,6 +82,84 @@ const GENERAL_SHORTCUTS: Array<{ key: string; description: string }> = [
   { key: "H", description: "Open the cached Quantikz export history." },
   { key: "Delete / Backspace", description: "Delete the current selection or wire label." },
   { key: "Escape", description: "Close the open sheet, leave paste mode, and return to select." }
+];
+
+const SYMBOLIC_HELP_SECTIONS: Array<{
+  title: string;
+  items: Array<{ label: string; description: string }>;
+}> = [
+  {
+    title: "Recognized states",
+    items: [
+      {
+        label: String.raw`\ket{0}, \ket{1}, \ket{+}, \ket{-}, \ket{i}`,
+        description: "Accepted as exact single-wire input product states."
+      },
+      {
+        label: String.raw`\ket{00}, \ket{101}, ...`,
+        description: "Multi-wire computational-basis product labels are expanded wire by wire."
+      },
+      {
+        label: String.raw`\ket{0}_{c_0}, \ket{\psi}_{data}`,
+        description: "A trailing lstick subscript is interpreted as the wire name and reused in slice descriptions and measurement labels."
+      }
+    ]
+  },
+  {
+    title: "Exact basis rules",
+    items: [
+      {
+        label: String.raw`H, X, Y, Z, S, T, T^\dagger`,
+        description: "Applied exactly on computational-basis inputs and preserved through supported symbolic evolution."
+      },
+      {
+        label: String.raw`\ctrl{...}, \targ{}, \swap{...}`,
+        description: "Controls and swaps are interpreted exactly while the participating control row is still in the computational basis."
+      }
+    ]
+  },
+  {
+    title: "Rotation conventions",
+    items: [
+      {
+        label: String.raw`R_X(\theta), R_Y(\theta), R_Z(\theta)`,
+        description: "Interpreted with the physics convention e^{-i \theta \sigma_\alpha / 2} on basis inputs."
+      },
+      {
+        label: String.raw`RX(\theta), R_{y}(\phi), R_z(2\phi + \pi/3)`,
+        description: "Aliases with brace subscripts, lower-case axes, and literal angle expressions are normalized and preserved."
+      },
+      {
+        label: String.raw`\arccos(t), \pi/7, 2\phi + \pi/3`,
+        description: "Angle expressions are kept literally in the symbolic output instead of being numerically evaluated."
+      },
+      {
+        label: String.raw`R_Y(2\arccos{\sqrt{x}})`,
+        description: "Recognized half-angle forms are simplified on basis inputs, for example to \\sqrt{x} and \\sqrt{1-x} branch coefficients."
+      }
+    ]
+  },
+  {
+    title: "Current limits",
+    items: [
+      {
+        label: "Opaque gates",
+        description: "Unrecognized gate labels remain opaque symbolic operators, for example A|psi> rendered as A\\ket{\\psi}."
+      },
+      {
+        label: "Measurements after rotations",
+        description: "Measurement probabilities are also derived after symbolic R_X, R_Y, and R_Z rotations; when rotated branches interfere, the result is kept as an exact |...|^2 expression instead of being over-simplified."
+      },
+      {
+        label: "Post-measurement states",
+        description: "After a measurement, each branch displays only the remaining unmeasured subsystem. The measured wire is removed from the branch statevector."
+      },
+      {
+        label: "Controls through symbolism",
+        description: "Supported rotations expand into basis-state branches so later supported controls keep working term by term, but opaque symbolic payloads are not fully analyzed as controls."
+      }
+    ]
+  }
 ];
 
 function formatHistoryTimestamp(createdAt: string): string {
@@ -293,6 +372,7 @@ export default function App(): JSX.Element {
   const [clipboard, setClipboard] = useState<CircuitClipboard | null>(null);
   const [isPasteMode, setPasteMode] = useState(false);
   const [isShortcutSheetOpen, setShortcutSheetOpen] = useState(false);
+  const [helpSheetMode, setHelpSheetMode] = useState<HelpSheetMode>("shortcuts");
   const [isHistorySheetOpen, setHistorySheetOpen] = useState(false);
   const [exportHistoryEntries, setExportHistoryEntries] = useState<ExportHistoryEntry[]>(() => loadExportHistory());
   const [exportPanelMode, setExportPanelMode] = useState<ExportPanelMode>("quantikz");
@@ -1126,6 +1206,13 @@ export default function App(): JSX.Element {
   const previewHeadingLabel = isSymbolicMode ? "Symbolic preview" : "Figure preview";
   const previewAltText = isSymbolicMode ? "Rendered symbolic evolution preview" : "Rendered Quantikz figure preview";
   const currentExportAssetSource = getCurrentExportAssetSource();
+  const helpSheetEyebrow = helpSheetMode === "symbolic" ? "Symbolic" : "Keyboard";
+  const helpSheetTitle = helpSheetMode === "symbolic" ? "Symbolic interpretation" : "Shortcuts";
+
+  function handleOpenHelpSheet(): void {
+    setHelpSheetMode(isSymbolicMode ? "symbolic" : "shortcuts");
+    setShortcutSheetOpen(true);
+  }
 
   return (
     <div className="app-shell">
@@ -1137,9 +1224,9 @@ export default function App(): JSX.Element {
             <button
               type="button"
               className="shortcut-launcher"
-              aria-label="Show keyboard shortcuts"
-              title="Show keyboard shortcuts"
-              onClick={() => setShortcutSheetOpen(true)}
+              aria-label={isSymbolicMode ? "Show symbolic conventions" : "Show keyboard shortcuts"}
+              title={isSymbolicMode ? "Show symbolic conventions" : "Show keyboard shortcuts"}
+              onClick={handleOpenHelpSheet}
             >
               <span className="shortcut-chip" aria-hidden="true">Help</span>
               <img src={cmdIcon} alt="" className="shortcut-help-icon" aria-hidden="true" />
@@ -1293,13 +1380,33 @@ export default function App(): JSX.Element {
             className="shortcut-sheet history-sheet"
             role="dialog"
             aria-modal="true"
-            aria-labelledby="shortcut-sheet-title"
+            aria-labelledby="help-sheet-title"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="shortcut-sheet-header">
               <div>
-                <p className="eyebrow">Keyboard</p>
-                <h2 id="shortcut-sheet-title">Shortcuts</h2>
+                <p className="eyebrow">{helpSheetEyebrow}</p>
+                <h2 id="help-sheet-title">{helpSheetTitle}</h2>
+              </div>
+              <div className="shortcut-sheet-actions">
+                <div className="export-editor-tabs help-sheet-tabs" role="tablist" aria-label="Help topics">
+                  <button
+                    type="button"
+                    className={`export-editor-tab ${helpSheetMode === "shortcuts" ? "is-active" : ""}`}
+                    aria-pressed={helpSheetMode === "shortcuts"}
+                    onClick={() => setHelpSheetMode("shortcuts")}
+                  >
+                    Shortcuts
+                  </button>
+                  <button
+                    type="button"
+                    className={`export-editor-tab ${helpSheetMode === "symbolic" ? "is-active" : ""}`}
+                    aria-pressed={helpSheetMode === "symbolic"}
+                    onClick={() => setHelpSheetMode("symbolic")}
+                  >
+                    Symbolic
+                  </button>
+                </div>
               </div>
               <button
                 type="button"
@@ -1310,36 +1417,56 @@ export default function App(): JSX.Element {
               </button>
             </div>
 
-            <div className="shortcut-sheet-grid">
-              <section className="shortcut-section" aria-label="Tool shortcuts">
-                <h3>Tool switching</h3>
-                <div className="shortcut-list">
-                  {TOOL_SHORTCUTS.map(({ tool, label, description, shortcutKey }) => (
-                    <div key={tool} className="shortcut-row">
-                      <span className="shortcut-key">{shortcutKey}</span>
-                      <div>
-                        <strong>{label}</strong>
-                        <p>{description}</p>
+            {helpSheetMode === "shortcuts" ? (
+              <div className="shortcut-sheet-grid">
+                <section className="shortcut-section" aria-label="Tool shortcuts">
+                  <h3>Tool switching</h3>
+                  <div className="shortcut-list">
+                    {TOOL_SHORTCUTS.map(({ tool, label, description, shortcutKey }) => (
+                      <div key={tool} className="shortcut-row">
+                        <span className="shortcut-key">{shortcutKey}</span>
+                        <div>
+                          <strong>{label}</strong>
+                          <p>{description}</p>
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
-              </section>
+                    ))}
+                  </div>
+                </section>
 
-              <section className="shortcut-section" aria-label="General shortcuts">
-                <h3>General actions</h3>
-                <div className="shortcut-list">
-                  {GENERAL_SHORTCUTS.map(({ key, description }) => (
-                    <div key={key} className="shortcut-row">
-                      <span className="shortcut-key shortcut-key-wide">{key}</span>
-                      <div>
-                        <p>{description}</p>
+                <section className="shortcut-section" aria-label="General shortcuts">
+                  <h3>General actions</h3>
+                  <div className="shortcut-list">
+                    {GENERAL_SHORTCUTS.map(({ key, description }) => (
+                      <div key={key} className="shortcut-row">
+                        <span className="shortcut-key shortcut-key-wide">{key}</span>
+                        <div>
+                          <p>{description}</p>
+                        </div>
                       </div>
+                    ))}
+                  </div>
+                </section>
+              </div>
+            ) : (
+              <div className="shortcut-sheet-grid shortcut-sheet-grid-single">
+                {SYMBOLIC_HELP_SECTIONS.map((section) => (
+                  <section key={section.title} className="shortcut-section" aria-label={section.title}>
+                    <h3>{section.title}</h3>
+                    <div className="shortcut-list">
+                      {section.items.map((item) => (
+                        <div key={`${section.title}-${item.label}`} className="shortcut-row shortcut-row-help">
+                          <code className="help-inline-code">{item.label}</code>
+                          <div>
+                            <p>{item.description}</p>
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              </section>
-            </div>
+                  </section>
+                ))}
+              </div>
+            )}
           </section>
         </div>
       )}

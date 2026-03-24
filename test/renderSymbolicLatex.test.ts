@@ -45,6 +45,67 @@ const SAME_COLUMN_GATES_CIRCUIT = String.raw`\begin{quantikz}
 \lstick{$\ket{1}$} & \gate{X} &
 \end{quantikz}`;
 
+const T_GATE_CIRCUIT = String.raw`\begin{quantikz}
+\lstick{$\ket{1}$} & \gate{T} & \meter{}
+\end{quantikz}`;
+
+const PAULI_ROTATION_CIRCUIT = String.raw`\begin{quantikz}
+\lstick{$\ket{0}$} & \gate{R_X(\theta)} \\
+\lstick{$\ket{1}$} & \gate{R_{y}(\arccos(t))}
+\end{quantikz}`;
+
+const RZ_ROTATION_CIRCUIT = String.raw`\begin{quantikz}
+\lstick{$\ket{1}$} & \gate{R_z(2\phi + \pi/3)}
+\end{quantikz}`;
+
+const CONTROLLED_RY_ROW_ORDER_CIRCUIT = String.raw`\begin{quantikz}[row sep={0.9cm,between origins}, column sep=0.7cm]
+\lstick{$\ket{0}$} &  & \gate{R_y(\arccos{1/3})} &  &  &  &  \\
+\lstick{$\ket{1}$} &  & \ctrl{-1} &  &  &  &
+\end{quantikz}`;
+
+const CONTROLLED_RY_CASCADE_CIRCUIT = String.raw`\begin{quantikz}[row sep={0.9cm,between origins}, column sep=0.7cm]
+\lstick{$\ket{0}$} &  & \gate{R_y(2\arccos{\sqrt{b}})} & \ctrl{1} &  \\
+\lstick{$\ket{0}$} & \gate{R_y(2\arccos{\sqrt{a}})} & \ctrl{-1} & \targ{} &
+\end{quantikz}`;
+
+const NAMED_WIRE_CONTROLLED_RY_CASCADE_CIRCUIT = String.raw`\begin{quantikz}[row sep={0.9cm,between origins}, column sep=0.7cm]
+\lstick{$\ket{0}_{c_0}$} &  & \gate{R_y(2\arccos{\sqrt{b}})} & \ctrl{1} &  \\
+\lstick{$\ket{0}_{c_1}$} & \gate{R_y(2\arccos{\sqrt{a}})} & \ctrl{-1} & \targ{} &
+\end{quantikz}`;
+
+const NAMED_WIRE_MEASUREMENT_CIRCUIT = String.raw`\begin{quantikz}
+\lstick{$\ket{1}_{c_0}$} & \meter{}
+\end{quantikz}`;
+
+const ROTATED_MEASUREMENT_CIRCUIT = String.raw`\begin{quantikz}
+\lstick{$\ket{0}$} & \gate{R_y(\theta)} & \meter{}
+\end{quantikz}`;
+
+const INTERFERING_ROTATED_MEASUREMENT_CIRCUIT = String.raw`\begin{quantikz}
+\lstick{$\ket{0}$} & \gate{H} & \gate{R_y(\theta)} & \meter{}
+\end{quantikz}`;
+
+const POST_MEASUREMENT_REMAINDER_CIRCUIT = String.raw`\begin{quantikz}
+\lstick{$\ket{+}$} & \meter{} \\
+\lstick{$\ket{\psi}$} &
+\end{quantikz}`;
+
+const WIDE_CONTROLLED_YY_CIRCUIT = String.raw`\begin{quantikz}[row sep={0.9cm,between origins}, column sep=0.7cm]
+\lstick[wires=2,braces=none]{$\ket{00}$} & \gate[wires=2]{YY} &  & \\
+ & \wire[d][1]{q} & \gate{X} & \\
+\lstick{$\ket{1}$} & \control{} &  &
+\end{quantikz}`;
+
+const WIDE_HADAMARD_CIRCUIT = String.raw`\begin{quantikz}
+\lstick[wires=2]{$\ket{00}$} & \gate[wires=2]{H} \\
+ &
+\end{quantikz}`;
+
+const SYMBOLIC_GATE_WITH_LATER_CONTROLLED_X_CIRCUIT = String.raw`\begin{quantikz}[row sep={0.9cm,between origins}, column sep=0.7cm]
+\lstick{$\ket{0}$} & \gate{H} & \ctrl{1} &  & \ctrl{1} & \gate{H} & \meter{} \\
+\lstick{$\ket{0}$} &  & \targ{} & \gate{A} & \targ{} &  &  &
+\end{quantikz}`;
+
 describe("renderSymbolicLatex", () => {
   it("returns generated latex from the Python symbolic engine", async () => {
     const result = await renderSymbolicLatex(AND_CIRCUIT);
@@ -87,7 +148,7 @@ describe("renderSymbolicLatex", () => {
     expect(result).toMatchObject({
       success: true,
       envIndex: 0,
-      latex: expect.stringContaining(String.raw`\textbf{Slice 1: } swap $q_{0}$ and $q_{1}$`)
+      latex: expect.stringContaining(String.raw`\textbf{Slice 1: } swap $c_0$ and $c_1$`)
     });
   });
 
@@ -123,6 +184,178 @@ describe("renderSymbolicLatex", () => {
     expect(result.latex).toContain(String.raw`\ket{\Psi_{1}} &= \frac{1}{\sqrt{2}} (\ket{0} + \ket{1})`);
   });
 
+  it("applies the T gate as an exact phase on basis states", async () => {
+    const result = await renderSymbolicLatex(T_GATE_CIRCUIT);
+
+    expect(result).toMatchObject({
+      success: true,
+      envIndex: 0
+    });
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    expect(result.latex).toContain(String.raw`\ket{\Psi_{1}} &= \frac{1 + i}{\sqrt{2}} \ket{1}`);
+    expect(result.latex).toContain(String.raw`\Pr(q_{0}=1)=1`);
+  });
+
+  it("renders Pauli-axis rotations as symbolic basis-state branches", async () => {
+    const result = await renderSymbolicLatex(PAULI_ROTATION_CIRCUIT);
+
+    expect(result).toMatchObject({
+      success: true,
+      envIndex: 0
+    });
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    expect(result.latex).toContain(
+      String.raw`\ket{\Psi_{1}} &= \cos\left(\frac{\theta}{2}\right) \ket{01} - i \sin\left(\frac{\theta}{2}\right) \ket{11}`
+    );
+    expect(result.latex).toContain(
+      String.raw`\ket{\Psi_{2}} &= -\cos\left(\frac{\theta}{2}\right) \sin\left(\frac{\arccos(t)}{2}\right) \ket{00} + \cos\left(\frac{\theta}{2}\right) \cos\left(\frac{\arccos(t)}{2}\right) \ket{01} + i \sin\left(\frac{\theta}{2}\right) \sin\left(\frac{\arccos(t)}{2}\right) \ket{10} - i \sin\left(\frac{\theta}{2}\right) \cos\left(\frac{\arccos(t)}{2}\right) \ket{11}`
+    );
+  });
+
+  it("normalizes R_z-style labels and preserves the angle expression literally", async () => {
+    const result = await renderSymbolicLatex(RZ_ROTATION_CIRCUIT);
+
+    expect(result).toMatchObject({
+      success: true,
+      envIndex: 0
+    });
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    expect(result.latex).toContain(String.raw`\exp\left(i \frac{2\phi+\pi/3}{2}\right) \ket{1}`);
+  });
+
+  it("keeps qubit order correct when a controlled rotation branches the upper row", async () => {
+    const result = await renderSymbolicLatex(CONTROLLED_RY_ROW_ORDER_CIRCUIT);
+
+    expect(result).toMatchObject({
+      success: true,
+      envIndex: 0
+    });
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    expect(result.latex).toContain(
+      String.raw`\ket{\Psi_{1}} &= \cos\left(\frac{\arccos{1/3}}{2}\right) \ket{01} + \sin\left(\frac{\arccos{1/3}}{2}\right) \ket{11}`
+    );
+    expect(result.latex).not.toContain(String.raw`\ket{10}`);
+  });
+
+  it("propagates controls through symbolic R_y branches and simplifies 2 arccos sqrt angles", async () => {
+    const result = await renderSymbolicLatex(CONTROLLED_RY_CASCADE_CIRCUIT);
+
+    expect(result).toMatchObject({
+      success: true,
+      envIndex: 0
+    });
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    expect(result.latex).toContain(String.raw`\ket{\Psi_{1}} &= \sqrt{a} \ket{00} + \sqrt{1-a} \ket{01}`);
+    expect(result.latex).toContain(
+      String.raw`\ket{\Psi_{2}} &= \sqrt{a} \ket{00} + \sqrt{(1-a)b} \ket{01} + \sqrt{(1-a)(1-b)} \ket{11}`
+    );
+    expect(result.latex).toContain(
+      String.raw`\ket{\Psi_{3}} &= \sqrt{a} \ket{00} + \sqrt{(1-a)b} \ket{01} + \sqrt{(1-a)(1-b)} \ket{10}`
+    );
+  });
+
+  it("uses trailing lstick subscripts as wire names in symbolic slice text", async () => {
+    const result = await renderSymbolicLatex(NAMED_WIRE_CONTROLLED_RY_CASCADE_CIRCUIT);
+
+    expect(result).toMatchObject({
+      success: true,
+      envIndex: 0
+    });
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    expect(result.latex).toContain(String.raw`\ket{\Psi_{0}} &= \ket{0}_{c_0} \otimes \ket{0}_{c_1}`);
+    expect(result.latex).toContain(String.raw`\textbf{Slice 3: } controlled $X$ on $c_1$`);
+    expect(result.latex).not.toContain(String.raw`\textbf{Slice 3: } controlled $X$ on $a_{1}$`);
+  });
+
+  it("uses named wires in measurement descriptions and probability labels", async () => {
+    const result = await renderSymbolicLatex(NAMED_WIRE_MEASUREMENT_CIRCUIT);
+
+    expect(result).toMatchObject({
+      success: true,
+      envIndex: 0
+    });
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    expect(result.latex).toContain(String.raw`\textbf{Slice 1: } measure $c_0$`);
+    expect(result.latex).toContain(String.raw`\Pr(c_0=1)=1`);
+  });
+
+  it("derives measurement probabilities after a symbolic rotation", async () => {
+    const result = await renderSymbolicLatex(ROTATED_MEASUREMENT_CIRCUIT);
+
+    expect(result).toMatchObject({
+      success: true,
+      envIndex: 0
+    });
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    expect(result.latex).toContain(
+      String.raw`\Pr(q_{0}=0)=\cos^2\left(\frac{\theta}{2}\right)`
+    );
+    expect(result.latex).toContain(
+      String.raw`\Pr(q_{0}=1)=\sin^2\left(\frac{\theta}{2}\right)`
+    );
+  });
+
+  it("keeps exact interference terms when measuring after mixed H and rotation evolution", async () => {
+    const result = await renderSymbolicLatex(INTERFERING_ROTATED_MEASUREMENT_CIRCUIT);
+
+    expect(result).toMatchObject({
+      success: true,
+      envIndex: 0
+    });
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    expect(result.latex).toContain(
+      String.raw`\Pr(q_{0}=0)=\left|\frac{1}{\sqrt{2}} \cos\left(\frac{\theta}{2}\right) - \frac{1}{\sqrt{2}} \sin\left(\frac{\theta}{2}\right)\right|^2`
+    );
+    expect(result.latex).toContain(
+      String.raw`\Pr(q_{0}=1)=\left|\frac{1}{\sqrt{2}} \sin\left(\frac{\theta}{2}\right) + \frac{1}{\sqrt{2}} \cos\left(\frac{\theta}{2}\right)\right|^2`
+    );
+  });
+
+  it("removes the measured qubit from the post-measurement branch state", async () => {
+    const result = await renderSymbolicLatex(POST_MEASUREMENT_REMAINDER_CIRCUIT);
+
+    expect(result).toMatchObject({
+      success: true,
+      envIndex: 0
+    });
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    expect(result.latex).toContain(
+      String.raw`\ket{\Psi_{1}} &= \left\{\begin{array}{ll}\frac{1}{\sqrt{2}} \ket{\psi}, & \Pr(q_{0}=0)=\frac{1}{2} \\ \frac{1}{\sqrt{2}} \ket{\psi}, & \Pr(q_{0}=1)=\frac{1}{2}\end{array}\right.`
+    );
+    expect(result.latex).not.toContain(String.raw`\ket{0} \otimes \ket{\psi}`);
+    expect(result.latex).not.toContain(String.raw`\ket{1} \otimes \ket{\psi}`);
+  });
+
   it("expands multiple same-column operations into sequential symbolic steps", async () => {
     const result = await renderSymbolicLatex(SAME_COLUMN_GATES_CIRCUIT);
 
@@ -140,6 +373,55 @@ describe("renderSymbolicLatex", () => {
     expect(result.latex).toContain(String.raw`\ket{\Psi_{1}} &= \frac{1}{\sqrt{2}} (\ket{01} + \ket{11})`);
     expect(result.latex).toContain(String.raw`\ket{\Psi_{2}} &= \frac{1}{\sqrt{2}} (\ket{00} + \ket{10})`);
     expect(result.latex).toContain(String.raw`\ket{\Psi_{3}} &= \frac{1}{\sqrt{2}} \ket{00} - \frac{1}{\sqrt{2}} \ket{10}`);
+  });
+
+  it("supports multiwire basis labels and controlled wide gates", async () => {
+    const result = await renderSymbolicLatex(WIDE_CONTROLLED_YY_CIRCUIT);
+
+    expect(result).toMatchObject({
+      success: true,
+      envIndex: 0
+    });
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    expect(result.latex).toContain(String.raw`\ket{\Psi_{0}} &= \ket{00} \otimes \ket{1}`);
+    expect(result.latex).toContain(String.raw`\textbf{Slice 1: } controlled $YY$`);
+    expect(result.latex).toContain(String.raw`\ket{\Psi_{1}} &= -\ket{111}`);
+    expect(result.latex).toContain(String.raw`\ket{\Psi_{2}} &= -\ket{101}`);
+  });
+
+  it("interprets a wide H as a Hadamard on each covered qubit", async () => {
+    const result = await renderSymbolicLatex(WIDE_HADAMARD_CIRCUIT);
+
+    expect(result).toMatchObject({
+      success: true,
+      envIndex: 0
+    });
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    expect(result.latex).toContain(String.raw`\textbf{Slice 1: } apply $H$`);
+    expect(result.latex).toContain(String.raw`\ket{\Psi_{1}} &= \frac{1}{2} (\ket{00} + \ket{01} + \ket{10} + \ket{11})`);
+  });
+
+  it("supports a controlled X after a symbolic single-qubit gate", async () => {
+    const result = await renderSymbolicLatex(SYMBOLIC_GATE_WITH_LATER_CONTROLLED_X_CIRCUIT);
+
+    expect(result).toMatchObject({
+      success: true,
+      envIndex: 0
+    });
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    expect(result.latex).toContain(String.raw`\textbf{Slice 3: } apply $A$`);
+    expect(result.latex).toContain(String.raw`\ket{\Psi_{3}} &= \frac{1}{\sqrt{2}} (\ket{0} \otimes A\ket{0} + \ket{1} \otimes A\ket{1})`);
+    expect(result.latex).toContain(String.raw`\textbf{Slice 4: } controlled $X$ on $a_{1}$`);
+    expect(result.latex).toContain(String.raw`\ket{\Psi_{4}} &= \frac{1}{\sqrt{2}} (\ket{0} \otimes A\ket{0} + \ket{1} \otimes XA\ket{1})`);
   });
 
   it("propagates unsupported-circuit errors from the Python engine", async () => {

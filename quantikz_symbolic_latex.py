@@ -12,10 +12,13 @@ from fractions import Fraction
 
 from quantikz_statevector_evolution import (
     ParsedCommand,
+    canonical_gate_label,
+    decompose_tensor_product_gate_label,
     find_quantikz_environments,
     parse_command_sequence,
     parse_connector,
     parse_label_command,
+    parse_product_state_symbols,
     parse_int,
     parse_wires_option,
     split_top_level,
@@ -119,12 +122,14 @@ class Amplitude:
 @dataclass
 class SymbolicTerm:
     amplitude: Amplitude
+    scalar: str = "1"
     basis_bits: dict[int, int] = field(default_factory=dict)
     payloads: dict[int, str] = field(default_factory=dict)
 
     def clone(self) -> "SymbolicTerm":
         return SymbolicTerm(
             amplitude=self.amplitude,
+            scalar=self.scalar,
             basis_bits=dict(self.basis_bits),
             payloads=dict(self.payloads),
         )
@@ -136,6 +141,7 @@ class LogicalSlice:
     controls: list[tuple[int, int]]
     target_row: int | None
     secondary_row: int | None
+    span: int
     label: str
     description: str
     source_columns: list[int]
@@ -144,11 +150,25 @@ class LogicalSlice:
 @dataclass
 class MeasurementRenderedTerm:
     amplitude: Amplitude
+    scalar: str = "1"
     basis_bits: dict[int, int] = field(default_factory=dict)
     payloads: dict[int, str] = field(default_factory=dict)
 
 
-def extract_environment_grid(source_text: str, env_index: int) -> tuple[list[str], list[list[str]]]:
+@dataclass
+class MeasurementContribution:
+    amplitude: Amplitude
+    scalar: str = "1"
+
+
+@dataclass
+class MeasurementSymbolicTerm:
+    contributions: list[MeasurementContribution] = field(default_factory=list)
+    basis_bits: dict[int, int] = field(default_factory=dict)
+    payloads: dict[int, str] = field(default_factory=dict)
+
+
+def extract_environment_grid(source_text: str, env_index: int) -> tuple[list[str], dict[int, tuple[str, int]], list[list[str]]]:
     environments = find_quantikz_environments(source_text)
     if not environments:
         raise ValueError("No quantikz environment found")
@@ -161,12 +181,14 @@ def extract_environment_grid(source_text: str, env_index: int) -> tuple[list[str
         raise ValueError("Selected environment does not contain any circuit rows")
 
     row_labels = [""] * len(raw_rows)
+    label_spans: dict[int, tuple[str, int]] = {}
     row_cells: list[list[str]] = []
     for row_index, raw_row in enumerate(raw_rows):
         cells = [cell.strip() for cell in split_top_level(raw_row, "&")]
         left_label, first_remainder = parse_label_command(cells[0] if cells else "", "lstick")
         if left_label is not None:
             row_labels[row_index] = left_label.label
+            label_spans[row_index] = (left_label.label, left_label.span)
             cells[0] = first_remainder
         _, last_remainder = parse_label_command(cells[-1] if cells else "", "rstick")
         if cells:
@@ -175,7 +197,7 @@ def extract_environment_grid(source_text: str, env_index: int) -> tuple[list[str
 
     column_count = max(len(cells) for cells in row_cells)
     normalized_rows = [cells + [""] * (column_count - len(cells)) for cells in row_cells]
-    return row_labels, normalized_rows
+    return row_labels, label_spans, normalized_rows
 
 
 def is_noop_command(command: ParsedCommand) -> bool:
@@ -185,7 +207,7 @@ def is_noop_command(command: ParsedCommand) -> bool:
 def classify_column(row_cells: list[str]) -> dict[str, object]:
     controls: list[tuple[int, int]] = []
     control_targets: list[tuple[int, int, int]] = []
-    gates: list[tuple[int, str]] = []
+    gates: list[tuple[int, int, str]] = []
     meters: list[int] = []
     targets: list[int] = []
     swap_starts: list[tuple[int, int]] = []
@@ -214,7 +236,7 @@ def classify_column(row_cells: list[str]) -> dict[str, object]:
                 substantive = True
                 continue
             if command.name == "gate":
-                gates.append((row, command.args[0] if command.args else "?"))
+                gates.append((row, parse_wires_option(command.options), command.args[0] if command.args else "?"))
                 substantive = True
                 continue
             if command.name == "meter":
@@ -335,12 +357,67 @@ def controlled_gate_description(label: str) -> str:
     return rf"controlled ${label.strip()}$"
 
 
-def ancilla_description(action: str, row: int) -> str:
-    return rf"{action} ancilla $a_{{{row}}}$"
+def extract_trailing_subscript(label: str) -> str | None:
+    stripped = label.strip()
+    if not stripped:
+        return None
+
+    if stripped.endswith("}"):
+        depth = 0
+        for index in range(len(stripped) - 1, -1, -1):
+            char = stripped[index]
+            if char == "}":
+                depth += 1
+            elif char == "{":
+                depth -= 1
+                if depth == 0:
+                    if index > 0 and stripped[index - 1] == "_":
+                        return stripped[index + 1 : -1].strip() or None
+                    return None
+            if depth < 0:
+                return None
+        return None
+
+    match = re.search(r"_([A-Za-z0-9\\]+)$", stripped)
+    if match is None:
+        return None
+    return match.group(1)
 
 
-def qubit_description(action: str, row: int) -> str:
-    return rf"{action} $q_{{{row}}}$"
+def row_reference(row_labels: list[str], row: int, fallback_prefix: str) -> str:
+    if 0 <= row < len(row_labels):
+        named_reference = extract_trailing_subscript(row_labels[row])
+        if named_reference is not None:
+            return named_reference
+    return rf"{fallback_prefix}_{{{row}}}"
+
+
+def ancilla_description(action: str, row_labels: list[str], row: int) -> str:
+    return rf"{action} ancilla ${row_reference(row_labels, row, 'a')}$"
+
+
+def qubit_description(action: str, row_labels: list[str], row: int) -> str:
+    return rf"{action} ${row_reference(row_labels, row, 'q')}$"
+
+
+def controls_for_gate_span(column: dict[str, object], gate_row: int, gate_span: int) -> list[tuple[int, int]]:
+    gate_rows = set(range(gate_row, gate_row + gate_span))
+    matched = {
+        (row, expected)
+        for row, target_row, expected in column["control_targets"]
+        if target_row in gate_rows
+    }
+    standalone_controls = list(column["controls"])
+    connectors = column["connectors_to_rows"]
+    for control_row, expected in standalone_controls:
+        if gate_rows & connectors.get(control_row, set()):
+            matched.add((control_row, expected))
+            continue
+        for source_row, endpoints in connectors.items():
+            if source_row in gate_rows and control_row in endpoints:
+                matched.add((control_row, expected))
+                break
+    return sorted(matched)
 
 
 def build_logical_slices(row_labels: list[str], grid: list[list[str]]) -> list[LogicalSlice]:
@@ -366,8 +443,9 @@ def build_logical_slices(row_labels: list[str], grid: list[list[str]]) -> list[L
                         controls=list(current["controls"]),
                         target_row=compute_row,
                         secondary_row=None,
+                        span=1,
                         label=rf"\text{{compute AND into ancilla }}a_{{{compute_row}}}",
-                        description=ancilla_description("compute AND into", compute_row),
+                        description=ancilla_description("compute AND into", row_labels, compute_row),
                         source_columns=[index],
                     ),
                 )
@@ -388,15 +466,16 @@ def build_logical_slices(row_labels: list[str], grid: list[list[str]]) -> list[L
                             controls=list(current["controls"]),
                             target_row=connector_corner_target,
                             secondary_row=None,
+                            span=1,
                             label=(
                                 rf"\text{{uncompute AND and remove ancilla }}a_{{{connector_corner_target}}}"
                                 if is_uncompute
                                 else rf"\text{{compute AND into ancilla }}a_{{{connector_corner_target}}}"
                             ),
                             description=(
-                                ancilla_description("uncompute AND and remove", connector_corner_target)
+                                ancilla_description("uncompute AND and remove", row_labels, connector_corner_target)
                                 if is_uncompute
-                                else ancilla_description("compute AND into", connector_corner_target)
+                                else ancilla_description("compute AND into", row_labels, connector_corner_target)
                             ),
                             source_columns=[index],
                         ),
@@ -421,8 +500,9 @@ def build_logical_slices(row_labels: list[str], grid: list[list[str]]) -> list[L
                             controls=list(current["controls"]),
                             target_row=uncompute_row,
                             secondary_row=None,
+                            span=1,
                             label=rf"\text{{uncompute AND and remove ancilla }}a_{{{uncompute_row}}}",
-                            description=ancilla_description("uncompute AND and remove", uncompute_row),
+                            description=ancilla_description("uncompute AND and remove", row_labels, uncompute_row),
                             source_columns=[index, index + 1],
                         ),
                     )
@@ -454,11 +534,12 @@ def build_logical_slices(row_labels: list[str], grid: list[list[str]]) -> list[L
                         controls=controls,
                         target_row=top_row,
                         secondary_row=bottom_row,
+                        span=1,
                         label="SWAP",
                         description=(
-                            rf"controlled swap between $q_{{{top_row}}}$ and $q_{{{bottom_row}}}$"
+                            rf"controlled swap between ${row_reference(row_labels, top_row, 'q')}$ and ${row_reference(row_labels, bottom_row, 'q')}$"
                             if controls
-                            else rf"swap $q_{{{top_row}}}$ and $q_{{{bottom_row}}}$"
+                            else rf"swap ${row_reference(row_labels, top_row, 'q')}$ and ${row_reference(row_labels, bottom_row, 'q')}$"
                         ),
                         source_columns=[index],
                     ),
@@ -468,12 +549,8 @@ def build_logical_slices(row_labels: list[str], grid: list[list[str]]) -> list[L
         if unused_swap_targets:
             raise ValueError(f"Swap target marker at row {unused_swap_targets[0]} is missing a matching \\swap")
 
-        for gate_row, gate_label in current["gates"]:
-            controls = sorted(
-                (row, expected)
-                for row, target_row, expected in current["control_targets"]
-                if target_row == gate_row
-            )
+        for gate_row, gate_span, gate_label in current["gates"]:
+            controls = controls_for_gate_span(current, gate_row, gate_span)
             column_slices.append(
                 (
                     gate_row,
@@ -483,6 +560,7 @@ def build_logical_slices(row_labels: list[str], grid: list[list[str]]) -> list[L
                         controls=controls,
                         target_row=gate_row,
                         secondary_row=None,
+                        span=gate_span,
                         label=gate_label,
                         description=controlled_gate_description(gate_label) if controls else gate_description(gate_label),
                         source_columns=[index],
@@ -507,8 +585,9 @@ def build_logical_slices(row_labels: list[str], grid: list[list[str]]) -> list[L
                         controls=controls,
                         target_row=target_row,
                         secondary_row=None,
+                        span=1,
                         label="X",
-                        description=rf"controlled $X$ on $a_{{{target_row}}}$",
+                        description=rf"controlled $X$ on ${row_reference(row_labels, target_row, 'a')}$",
                         source_columns=[index],
                     ),
                 )
@@ -524,8 +603,9 @@ def build_logical_slices(row_labels: list[str], grid: list[list[str]]) -> list[L
                         controls=[],
                         target_row=measured_row,
                         secondary_row=None,
+                        span=1,
                         label="measure",
-                        description=qubit_description("measure", measured_row),
+                        description=qubit_description("measure", row_labels, measured_row),
                         source_columns=[index],
                     ),
                 )
@@ -537,57 +617,87 @@ def build_logical_slices(row_labels: list[str], grid: list[list[str]]) -> list[L
     return logical_slices
 
 
-def parse_label_kind(label: str) -> tuple[str, str]:
-    normalized = label.strip()
-    ket_match = re.match(r"^\\ket\{([^{}]+)\}", normalized)
-    if not ket_match:
-        return "payload", normalized or r"\ket{\psi}"
-    ket_value = ket_match.group(1)
-    if ket_value in {"0", "1", "+", "-"}:
-        return ket_value, normalized
-    return "payload", normalized
+def apply_initial_state_symbol(term: SymbolicTerm, row: int, symbol: str) -> list[SymbolicTerm]:
+    if symbol == "0":
+        updated = term.clone()
+        updated.basis_bits[row] = 0
+        return [updated]
+    if symbol == "1":
+        updated = term.clone()
+        updated.basis_bits[row] = 1
+        return [updated]
+    if symbol == "+":
+        zero_term = term.clone()
+        zero_term.amplitude = zero_term.amplitude.multiply(sqrt2_power=1)
+        zero_term.basis_bits[row] = 0
+
+        one_term = term.clone()
+        one_term.amplitude = one_term.amplitude.multiply(sqrt2_power=1)
+        one_term.basis_bits[row] = 1
+        return [zero_term, one_term]
+    if symbol == "-":
+        zero_term = term.clone()
+        zero_term.amplitude = zero_term.amplitude.multiply(sqrt2_power=1)
+        zero_term.basis_bits[row] = 0
+
+        one_term = term.clone()
+        one_term.amplitude = one_term.amplitude.multiply(sign=-1, sqrt2_power=1)
+        one_term.basis_bits[row] = 1
+        return [zero_term, one_term]
+    if symbol == "i":
+        zero_term = term.clone()
+        zero_term.amplitude = zero_term.amplitude.multiply(sqrt2_power=1)
+        zero_term.basis_bits[row] = 0
+
+        one_term = term.clone()
+        one_term.amplitude = one_term.amplitude.multiply(i_power=1, sqrt2_power=1)
+        one_term.basis_bits[row] = 1
+        return [zero_term, one_term]
+    if symbol == "-i":
+        zero_term = term.clone()
+        zero_term.amplitude = zero_term.amplitude.multiply(sqrt2_power=1)
+        zero_term.basis_bits[row] = 0
+
+        one_term = term.clone()
+        one_term.amplitude = one_term.amplitude.multiply(i_power=-1, sqrt2_power=1)
+        one_term.basis_bits[row] = 1
+        return [zero_term, one_term]
+    raise ValueError(f"Unsupported initial-state symbol: {symbol}")
 
 
-def make_initial_terms(row_labels: list[str], temporary_rows: set[int]) -> list[SymbolicTerm]:
-    active_rows = [row for row, label in enumerate(row_labels) if label.strip() and row not in temporary_rows]
+def make_initial_terms(
+    row_labels: list[str],
+    label_spans: dict[int, tuple[str, int]],
+    temporary_rows: set[int],
+) -> list[SymbolicTerm]:
     terms = [SymbolicTerm(amplitude=Amplitude())]
+    consumed: set[int] = set()
 
-    for row in active_rows:
-        label = row_labels[row]
-        kind, payload = parse_label_kind(label)
+    for row in range(len(row_labels)):
+        if row in consumed or row in temporary_rows:
+            continue
+        span_entry = label_spans.get(row)
+        label = span_entry[0] if span_entry is not None else row_labels[row]
+        span = span_entry[1] if span_entry is not None else 1
+        if not label.strip():
+            continue
+
+        covered_rows = list(range(row, row + span))
+        consumed.update(covered_rows)
+        symbols = parse_product_state_symbols(label, span)
         next_terms: list[SymbolicTerm] = []
         for term in terms:
-            if kind == "0":
-                updated = term.clone()
-                updated.basis_bits[row] = 0
-                next_terms.append(updated)
-            elif kind == "1":
-                updated = term.clone()
-                updated.basis_bits[row] = 1
-                next_terms.append(updated)
-            elif kind == "+":
-                zero_term = term.clone()
-                zero_term.amplitude = zero_term.amplitude.multiply(sqrt2_power=1)
-                zero_term.basis_bits[row] = 0
-                next_terms.append(zero_term)
-
-                one_term = term.clone()
-                one_term.amplitude = one_term.amplitude.multiply(sqrt2_power=1)
-                one_term.basis_bits[row] = 1
-                next_terms.append(one_term)
-            elif kind == "-":
-                zero_term = term.clone()
-                zero_term.amplitude = zero_term.amplitude.multiply(sqrt2_power=1)
-                zero_term.basis_bits[row] = 0
-                next_terms.append(zero_term)
-
-                one_term = term.clone()
-                one_term.amplitude = one_term.amplitude.multiply(sign=-1, sqrt2_power=1)
-                one_term.basis_bits[row] = 1
-                next_terms.append(one_term)
+            if symbols is not None:
+                partial_terms = [term]
+                for target_row, symbol in zip(covered_rows, symbols):
+                    expanded_terms: list[SymbolicTerm] = []
+                    for partial_term in partial_terms:
+                        expanded_terms.extend(apply_initial_state_symbol(partial_term, target_row, symbol))
+                    partial_terms = expanded_terms
+                next_terms.extend(partial_terms)
             else:
                 updated = term.clone()
-                updated.payloads[row] = payload
+                updated.payloads[row] = label
                 next_terms.append(updated)
         terms = next_terms
 
@@ -595,16 +705,210 @@ def make_initial_terms(row_labels: list[str], temporary_rows: set[int]) -> list[
 
 
 def is_named_single_qubit_gate(label: str) -> bool:
-    return label.strip() in {"H", "S", "X", "Y", "Z"}
+    normalized = canonical_gate_label(label)
+    return normalized in {"H", "S", "T", "Tdg", "X", "Y", "Z"} or parse_pauli_rotation_label(normalized) is not None
+
+
+def parse_pauli_rotation_label(label: str) -> tuple[str, str] | None:
+    match = re.fullmatch(r"R([XYZ])\((.*)\)", label)
+    if match is None:
+        return None
+    return match.group(1), match.group(2).strip()
+
+
+def render_half_angle(angle: str) -> str:
+    return rf"\frac{{{angle}}}{{2}}"
+
+
+def unwrap_enclosed_expression(text: str, open_char: str, close_char: str) -> str | None:
+    stripped = text.strip()
+    if not stripped.startswith(open_char) or not stripped.endswith(close_char):
+        return None
+
+    depth = 0
+    for index, char in enumerate(stripped):
+        if char == open_char:
+            depth += 1
+        elif char == close_char:
+            depth -= 1
+            if depth == 0 and index != len(stripped) - 1:
+                return None
+        if depth < 0:
+            return None
+
+    if depth != 0:
+        return None
+    return stripped[1:-1]
+
+
+def strip_outer_grouping(expression: str) -> str:
+    stripped = expression.strip()
+    while True:
+        for open_char, close_char in (("{", "}"), ("(", ")")):
+            inner = unwrap_enclosed_expression(stripped, open_char, close_char)
+            if inner is not None:
+                stripped = inner.strip()
+                break
+        else:
+            return stripped
+
+
+def extract_function_argument(text: str) -> str | None:
+    stripped = text.strip()
+    if not stripped:
+        return None
+    for open_char, close_char in (("{", "}"), ("(", ")")):
+        inner = unwrap_enclosed_expression(stripped, open_char, close_char)
+        if inner is not None:
+            return inner.strip()
+    return stripped
+
+
+def extract_sqrt_argument(expression: str) -> str | None:
+    stripped = strip_outer_grouping(expression)
+    if not stripped.startswith(r"\sqrt"):
+        return None
+    remainder = stripped[len(r"\sqrt") :]
+    inner = unwrap_enclosed_expression(remainder, "{", "}")
+    if inner is None:
+        return None
+    return inner.strip()
+
+
+def negate_scalar(scalar: str) -> str:
+    stripped = scalar.strip()
+    if stripped == "1":
+        return "-1"
+    if stripped == "-1":
+        return "1"
+    if stripped.startswith("-"):
+        return stripped[1:].strip()
+    return f"-{stripped}"
+
+
+def wrap_product_factor(expression: str) -> str:
+    stripped = strip_outer_grouping(expression)
+    if re.fullmatch(r"[A-Za-z0-9]+", stripped):
+        return stripped
+    if re.fullmatch(r"\\[A-Za-z]+(?:_\{[^{}]+\}|_[A-Za-z0-9]+)?", stripped):
+        return stripped
+    return f"({stripped})"
+
+
+def multiply_radicands(left: str, right: str) -> str:
+    return f"{wrap_product_factor(left)}{wrap_product_factor(right)}"
+
+
+def multiply_scalar_factors(left: str, right: str) -> str:
+    left_stripped = left.strip()
+    right_stripped = right.strip()
+    if left_stripped == "0" or right_stripped == "0":
+        return "0"
+    if left_stripped == "1":
+        return right_stripped
+    if right_stripped == "1":
+        return left_stripped
+    if left_stripped == "-1":
+        return negate_scalar(right_stripped)
+    if right_stripped == "-1":
+        return negate_scalar(left_stripped)
+    if left_stripped.startswith("-"):
+        return negate_scalar(multiply_scalar_factors(left_stripped[1:].strip(), right_stripped))
+    if right_stripped.startswith("-"):
+        return negate_scalar(multiply_scalar_factors(left_stripped, right_stripped[1:].strip()))
+
+    left_sqrt = extract_sqrt_argument(left_stripped)
+    right_sqrt = extract_sqrt_argument(right_stripped)
+    if left_sqrt is not None and right_sqrt is not None:
+        return rf"\sqrt{{{multiply_radicands(left_sqrt, right_sqrt)}}}"
+
+    return f"{left_stripped} {right_stripped}"
+
+
+def parse_double_inverse_trig_angle(angle: str) -> tuple[str, str] | None:
+    normalized = angle.replace(" ", "")
+    for function_name in (r"\arccos", r"\arcsin"):
+        for prefix in (f"2{function_name}", f"2*{function_name}"):
+            if not normalized.startswith(prefix):
+                continue
+            argument = extract_function_argument(normalized[len(prefix) :])
+            if argument is not None:
+                return function_name, argument
+    return None
+
+
+def complementary_half_angle_factor(argument: str) -> str:
+    sqrt_argument = extract_sqrt_argument(argument)
+    if sqrt_argument is not None:
+        return rf"\sqrt{{1-{strip_outer_grouping(sqrt_argument)}}}"
+
+    base = strip_outer_grouping(argument)
+    if re.fullmatch(r"[A-Za-z0-9]+", base) or re.fullmatch(r"\\[A-Za-z]+", base):
+        squared = rf"{base}^2"
+    else:
+        squared = rf"({base})^2"
+    return rf"\sqrt{{1-{squared}}}"
+
+
+def simplify_half_angle_trig(angle: str, trig_function: str) -> str | None:
+    parsed = parse_double_inverse_trig_angle(angle)
+    if parsed is None:
+        return None
+
+    function_name, argument = parsed
+    if function_name == r"\arccos":
+        if trig_function == "cos":
+            return argument
+        return complementary_half_angle_factor(argument)
+    if trig_function == "sin":
+        return argument
+    return complementary_half_angle_factor(argument)
+
+
+def half_angle_trig_factor(angle: str, trig_function: str) -> str:
+    simplified = simplify_half_angle_trig(angle, trig_function)
+    if simplified is not None:
+        return simplified
+    return rf"\{trig_function}\left({render_half_angle(angle)}\right)"
+
+
+def pauli_rotation_basis_branches(axis: str, angle: str, bit: int) -> list[tuple[int, Amplitude, str]]:
+    cosine = half_angle_trig_factor(angle, "cos")
+    sine = half_angle_trig_factor(angle, "sin")
+    if axis == "X":
+        if bit == 0:
+            return [
+                (0, Amplitude(), cosine),
+                (1, Amplitude(real=0, imag=-1), sine),
+            ]
+        return [
+            (0, Amplitude(real=0, imag=-1), sine),
+            (1, Amplitude(), cosine),
+        ]
+    if axis == "Y":
+        if bit == 0:
+            return [
+                (0, Amplitude(), cosine),
+                (1, Amplitude(), sine),
+            ]
+        return [
+            (0, Amplitude(real=-1), sine),
+            (1, Amplitude(), cosine),
+        ]
+    if axis == "Z":
+        phase = rf"\exp\left({'-' if bit == 0 else ''}i {render_half_angle(angle)}\right)"
+        return [(bit, Amplitude(), phase)]
+    raise ValueError(f"Unsupported Pauli rotation axis: {axis}")
 
 
 def merge_symbolic_terms(terms: list[SymbolicTerm]) -> list[SymbolicTerm]:
-    grouped: dict[tuple[tuple[tuple[int, int], ...], tuple[tuple[int, str], ...]], SymbolicTerm] = {}
+    grouped: dict[tuple[tuple[tuple[int, int], ...], tuple[tuple[int, str], ...], str], SymbolicTerm] = {}
 
     for term in terms:
         key = (
             tuple(sorted(term.basis_bits.items())),
             tuple(sorted(term.payloads.items())),
+            term.scalar,
         )
         existing = grouped.get(key)
         if existing is None:
@@ -653,12 +957,31 @@ def set_row_factor(term: SymbolicTerm, row: int, factor: tuple[str, int | str] |
     term.payloads[row] = str(value)
 
 
+def row_factor_expression(term: SymbolicTerm, row: int) -> str | None:
+    if row in term.basis_bits:
+        return rf"\ket{{{term.basis_bits[row]}}}"
+    return term.payloads.get(row)
+
+
 def apply_named_gate_to_basis_term(term: SymbolicTerm, row: int, label: str) -> list[SymbolicTerm] | None:
     if row not in term.basis_bits:
         return None
 
     bit = term.basis_bits[row]
-    normalized_label = label.strip()
+    normalized_label = canonical_gate_label(label)
+    rotation = parse_pauli_rotation_label(normalized_label)
+
+    if rotation is not None:
+        axis, angle = rotation
+        branches: list[SymbolicTerm] = []
+        for updated_bit, amplitude_factor, scalar_factor in pauli_rotation_basis_branches(axis, angle, bit):
+            updated = term.clone()
+            updated.amplitude = updated.amplitude.times(amplitude_factor)
+            updated.scalar = multiply_scalar_factors(updated.scalar, scalar_factor)
+            updated.basis_bits[row] = updated_bit
+            if updated.amplitude.to_latex() != "0" and updated.scalar != "0":
+                branches.append(updated)
+        return branches
 
     if normalized_label == "H":
         zero_term = term.clone()
@@ -682,9 +1005,56 @@ def apply_named_gate_to_basis_term(term: SymbolicTerm, row: int, label: str) -> 
     elif normalized_label == "S":
         if bit == 1:
             updated.amplitude = updated.amplitude.multiply(i_power=1)
+    elif normalized_label == "T":
+        if bit == 1:
+            updated.amplitude = updated.amplitude.times(Amplitude(real=1, imag=1, sqrt2_power=1))
+    elif normalized_label == "Tdg":
+        if bit == 1:
+            updated.amplitude = updated.amplitude.times(Amplitude(real=1, imag=-1, sqrt2_power=1))
     else:
         return None
 
+    return [updated]
+
+
+def apply_gate_to_term(term: SymbolicTerm, target_row: int, span: int, label: str) -> list[SymbolicTerm]:
+    components = decompose_tensor_product_gate_label(label, span)
+    if components is not None:
+        evolved_terms = [term.clone()]
+        for row, component in zip(range(target_row, target_row + span), components):
+            next_terms: list[SymbolicTerm] = []
+            for evolved_term in evolved_terms:
+                if component == "I":
+                    next_terms.append(evolved_term)
+                    continue
+                if is_named_single_qubit_gate(component):
+                    named_terms = apply_named_gate_to_basis_term(evolved_term, row, component)
+                    if named_terms is not None:
+                        next_terms.extend(named_terms)
+                        continue
+                current = row_factor_expression(evolved_term, row)
+                if current is None:
+                    raise ValueError(f"Gate target row {row} has no symbolic factor to act on")
+                evolved_term.basis_bits.pop(row, None)
+                evolved_term.payloads[row] = apply_operator(component, current)
+                next_terms.append(evolved_term)
+            evolved_terms = next_terms
+        return evolved_terms
+
+    updated = term.clone()
+    factors: list[str] = []
+    for row in range(target_row, target_row + span):
+        current = row_factor_expression(updated, row)
+        if current is None:
+            raise ValueError(f"Gate target row {row} has no symbolic factor to act on")
+        factors.append(current)
+        updated.basis_bits.pop(row, None)
+        updated.payloads.pop(row, None)
+
+    factor_body = r" \otimes ".join(factors)
+    if span > 1:
+        factor_body = rf"\left({factor_body}\right)"
+    updated.payloads[target_row] = apply_operator(label, factor_body)
     return [updated]
 
 
@@ -706,9 +1076,13 @@ def evolve_terms(terms: list[SymbolicTerm], slice_info: LogicalSlice) -> list[Sy
             assert slice_info.target_row is not None
             if all(updated.basis_bits.get(row) == expected for row, expected in slice_info.controls):
                 current_value = updated.basis_bits.get(slice_info.target_row)
-                if current_value is None:
-                    raise ValueError(f"Controlled X target row {slice_info.target_row} is not in the computational basis")
-                updated.basis_bits[slice_info.target_row] = 1 - current_value
+                if current_value is not None:
+                    updated.basis_bits[slice_info.target_row] = 1 - current_value
+                else:
+                    current = row_factor_expression(updated, slice_info.target_row)
+                    if current is None:
+                        raise ValueError(f"Controlled X target row {slice_info.target_row} has no symbolic factor to act on")
+                    updated.payloads[slice_info.target_row] = apply_operator("X", current)
         elif slice_info.kind == "swap":
             assert slice_info.target_row is not None
             assert slice_info.secondary_row is not None
@@ -719,33 +1093,13 @@ def evolve_terms(terms: list[SymbolicTerm], slice_info: LogicalSlice) -> list[Sy
                 set_row_factor(updated, slice_info.secondary_row, left_factor)
         elif slice_info.kind == "gate":
             assert slice_info.target_row is not None
-            if is_named_single_qubit_gate(slice_info.label):
-                evolved_terms = apply_named_gate_to_basis_term(updated, slice_info.target_row, slice_info.label)
-                if evolved_terms is not None:
-                    next_terms.extend(evolved_terms)
-                    continue
-            current = updated.payloads.get(slice_info.target_row)
-            if current is None and slice_info.target_row in updated.basis_bits:
-                current = rf"\ket{{{updated.basis_bits[slice_info.target_row]}}}"
-                updated.basis_bits.pop(slice_info.target_row)
-            if current is None:
-                raise ValueError(f"Gate target row {slice_info.target_row} has no symbolic factor to act on")
-            updated.payloads[slice_info.target_row] = apply_operator(slice_info.label, current)
+            next_terms.extend(apply_gate_to_term(updated, slice_info.target_row, slice_info.span, slice_info.label))
+            continue
         elif slice_info.kind == "controlled_gate":
             assert slice_info.target_row is not None
             if all(updated.basis_bits.get(row) == expected for row, expected in slice_info.controls):
-                if is_named_single_qubit_gate(slice_info.label):
-                    evolved_terms = apply_named_gate_to_basis_term(updated, slice_info.target_row, slice_info.label)
-                    if evolved_terms is not None:
-                        next_terms.extend(evolved_terms)
-                        continue
-                current = updated.payloads.get(slice_info.target_row)
-                if current is None and slice_info.target_row in updated.basis_bits:
-                    current = rf"\ket{{{updated.basis_bits[slice_info.target_row]}}}"
-                    updated.basis_bits.pop(slice_info.target_row)
-                if current is None:
-                    raise ValueError(f"Controlled gate target row {slice_info.target_row} has no symbolic factor to act on")
-                updated.payloads[slice_info.target_row] = apply_operator(slice_info.label, current)
+                next_terms.extend(apply_gate_to_term(updated, slice_info.target_row, slice_info.span, slice_info.label))
+                continue
         elif slice_info.kind == "measure":
             next_terms.append(updated)
             continue
@@ -759,6 +1113,112 @@ def render_fraction_latex(value: Fraction) -> str:
     if value.denominator == 1:
         return str(value.numerator)
     return rf"\frac{{{value.numerator}}}{{{value.denominator}}}"
+
+
+def split_top_level_space_factors(value: str) -> list[str]:
+    stripped = value.strip()
+    if not stripped:
+        return []
+
+    factors: list[str] = []
+    start = 0
+    paren_depth = 0
+    brace_depth = 0
+
+    for index, char in enumerate(stripped):
+        if char == "(":
+            paren_depth += 1
+        elif char == ")":
+            paren_depth -= 1
+        elif char == "{":
+            brace_depth += 1
+        elif char == "}":
+            brace_depth -= 1
+        elif char.isspace() and paren_depth == 0 and brace_depth == 0:
+            factor = stripped[start:index].strip()
+            if factor:
+                factors.append(factor)
+            start = index + 1
+
+    trailing = stripped[start:].strip()
+    if trailing:
+        factors.append(trailing)
+    return factors
+
+
+def scalar_probability_factor_latex(factor: str) -> str:
+    stripped = factor.strip()
+    if not stripped or stripped in {"1", "-1"}:
+        return "1"
+    if stripped.startswith("-"):
+        return scalar_probability_factor_latex(stripped[1:].strip())
+    if stripped.startswith(r"\exp\left(") and stripped.endswith(r"\right)"):
+        return "1"
+    sqrt_argument = extract_sqrt_argument(stripped)
+    if sqrt_argument is not None:
+        return sqrt_argument
+    if stripped.startswith(r"\cos\left(") and stripped.endswith(r"\right)"):
+        return stripped.replace(r"\cos\left", r"\cos^2\left", 1)
+    if stripped.startswith(r"\sin\left(") and stripped.endswith(r"\right)"):
+        return stripped.replace(r"\sin\left", r"\sin^2\left", 1)
+    return rf"\left|{stripped}\right|^2"
+
+
+def multiply_latex_factors(left: str, right: str) -> str:
+    left_stripped = left.strip()
+    right_stripped = right.strip()
+    if left_stripped == "0" or right_stripped == "0":
+        return "0"
+    if left_stripped == "1":
+        return right_stripped
+    if right_stripped == "1":
+        return left_stripped
+    return f"{left_stripped} {right_stripped}"
+
+
+def scalar_probability_latex(scalar: str) -> str:
+    result = "1"
+    for factor in split_top_level_space_factors(scalar):
+        result = multiply_latex_factors(result, scalar_probability_factor_latex(factor))
+    return result
+
+
+def render_measurement_probability_contribution(amplitude: Amplitude, scalar: str) -> str:
+    amplitude_probability = amplitude.probability()
+    if amplitude_probability == 0:
+        return "0"
+
+    scalar_probability = scalar_probability_latex(scalar)
+    amplitude_text = render_fraction_latex(amplitude_probability)
+    if scalar_probability == "1":
+        return amplitude_text
+    if amplitude_probability == 1:
+        return scalar_probability
+    return f"{amplitude_text} {scalar_probability}"
+
+
+def render_measurement_coefficient(amplitude: Amplitude, scalar: str) -> str:
+    scalar_text = scalar.strip()
+    effective_amplitude = amplitude
+    if scalar_text.startswith("-"):
+        scalar_text = scalar_text[1:].strip()
+        effective_amplitude = effective_amplitude.multiply(sign=-1)
+
+    amplitude_text = effective_amplitude.to_latex()
+    if scalar_text == "1":
+        return amplitude_text
+    if amplitude_text == "1":
+        return scalar_text
+    if amplitude_text == "-1":
+        return f"-{scalar_text}"
+    return f"{amplitude_text} {scalar_text}"
+
+
+def measurement_symbolic_term_key(term: MeasurementSymbolicTerm) -> tuple[tuple[tuple[int, int], ...], tuple[tuple[int, str], ...]]:
+    return (
+        tuple(sorted(term.basis_bits.items())),
+        tuple(sorted(term.payloads.items())),
+    )
 
 
 def measurement_factor_options(term: SymbolicTerm, row: int) -> list[tuple[int, Amplitude]]:
@@ -790,6 +1250,14 @@ def measurement_factor_options(term: SymbolicTerm, row: int) -> list[tuple[int, 
         return [(0, Amplitude())]
     if normalized == r"S\ket{1}":
         return [(1, Amplitude(real=0, imag=1))]
+    if normalized == r"T\ket{0}":
+        return [(0, Amplitude())]
+    if normalized == r"T\ket{1}":
+        return [(1, Amplitude(real=1, imag=1, sqrt2_power=1))]
+    if normalized == r"Tdg\ket{0}":
+        return [(0, Amplitude())]
+    if normalized == r"Tdg\ket{1}":
+        return [(1, Amplitude(real=1, imag=-1, sqrt2_power=1))]
     if normalized == r"H\ket{0}":
         return [
             (0, Amplitude(sqrt2_power=1)),
@@ -801,15 +1269,45 @@ def measurement_factor_options(term: SymbolicTerm, row: int) -> list[tuple[int, 
             (1, Amplitude(real=-1, sqrt2_power=1)),
         ]
     raise ValueError(
-        f"Measurement on row {row} is only supported for computational-basis states and simple H/S/X/Y/Z-applied basis states"
+        f"Measurement on row {row} is only supported for computational-basis states and simple H/S/T/Tdg/X/Y/Z-applied basis states"
     )
 
 
-def measurement_term_key(term: MeasurementRenderedTerm) -> tuple[tuple[tuple[int, int], ...], tuple[tuple[int, str], ...]]:
+def measurement_term_key(term: MeasurementRenderedTerm) -> tuple[tuple[tuple[int, int], ...], tuple[tuple[int, str], ...], str]:
     return (
         tuple(sorted(term.basis_bits.items())),
         tuple(sorted(term.payloads.items())),
+        term.scalar,
     )
+
+
+def render_scalar_weighted_expression(amplitude: Amplitude, scalar: str, expression: str) -> str:
+    scalar_text = scalar.strip()
+    effective_amplitude = amplitude
+    if scalar_text.startswith("-"):
+        scalar_text = scalar_text[1:].strip()
+        effective_amplitude = effective_amplitude.multiply(sign=-1)
+
+    amplitude_text = effective_amplitude.to_latex()
+    if scalar_text == "1":
+        if amplitude_text == "1":
+            return expression
+        if amplitude_text == "-1":
+            return f"-{expression}"
+        return f"{amplitude_text} {expression}"
+
+    if amplitude_text == "1":
+        return f"{scalar_text} {expression}"
+    if amplitude_text == "-1":
+        return f"-{scalar_text} {expression}"
+    return f"{amplitude_text} {scalar_text} {expression}"
+
+
+def wrap_tensor_factor(factor: str) -> str:
+    stripped = factor.strip()
+    if " + " in stripped or " - " in stripped[1:]:
+        return rf"\left({stripped}\right)"
+    return stripped
 
 
 def render_measurement_term(term: MeasurementRenderedTerm, row_order: list[int]) -> str:
@@ -826,27 +1324,71 @@ def render_measurement_term(term: MeasurementRenderedTerm, row_order: list[int])
                 index += 1
             factors.append(rf"\ket{{{''.join(bits)}}}")
             continue
-        factors.append(term.payloads[row])
+        factors.append(wrap_tensor_factor(term.payloads[row]))
         index += 1
 
     factor_body = r" \otimes ".join(factors)
-    return render_amplitude_weighted_expression(term.amplitude, factor_body)
+    if not factor_body:
+        return render_measurement_coefficient(term.amplitude, term.scalar)
+    return render_scalar_weighted_expression(term.amplitude, term.scalar, factor_body)
 
 
-def project_measurement_terms(
+def render_measurement_symbolic_term(term: MeasurementSymbolicTerm, row_order: list[int]) -> str:
+    factors: list[str] = []
+    index = 0
+    active_rows = [row for row in row_order if row in term.basis_bits or row in term.payloads]
+    while index < len(active_rows):
+        row = active_rows[index]
+        if row in term.basis_bits:
+            bits = [str(term.basis_bits[row])]
+            index += 1
+            while index < len(active_rows) and active_rows[index] in term.basis_bits:
+                bits.append(str(term.basis_bits[active_rows[index]]))
+                index += 1
+            factors.append(rf"\ket{{{''.join(bits)}}}")
+            continue
+        factors.append(wrap_tensor_factor(term.payloads[row]))
+        index += 1
+
+    factor_body = r" \otimes ".join(factors)
+    contribution_texts = [
+        render_measurement_coefficient(contribution.amplitude, contribution.scalar)
+        for contribution in term.contributions
+        if contribution.amplitude.to_latex() != "0" and contribution.scalar != "0"
+    ]
+    if not contribution_texts:
+        return "0"
+
+    coefficient = " + ".join(contribution_texts).replace("+ -", "- ")
+    if not factor_body:
+        return coefficient
+    if coefficient == "1":
+        return factor_body
+    if coefficient == "-1":
+        return f"-{factor_body}"
+    if len(contribution_texts) > 1:
+        coefficient = rf"\left({coefficient}\right)"
+    return f"{coefficient} {factor_body}"
+
+
+def project_measurement_terms_exact(
     terms: list[SymbolicTerm],
     measured_row: int,
 ) -> dict[int, list[MeasurementRenderedTerm]]:
-    grouped: dict[int, dict[tuple[tuple[tuple[int, int], ...], tuple[tuple[int, str], ...]], MeasurementRenderedTerm]] = {}
+    grouped: dict[
+        int,
+        dict[tuple[tuple[tuple[int, int], ...], tuple[tuple[int, str], ...], str], MeasurementRenderedTerm],
+    ] = {}
 
     for term in terms:
         for outcome, factor_amplitude in measurement_factor_options(term, measured_row):
             projected = MeasurementRenderedTerm(
                 amplitude=term.amplitude.times(factor_amplitude),
+                scalar=term.scalar,
                 basis_bits=dict(term.basis_bits),
                 payloads=dict(term.payloads),
             )
-            projected.basis_bits[measured_row] = outcome
+            projected.basis_bits.pop(measured_row, None)
             projected.payloads.pop(measured_row, None)
             key = measurement_term_key(projected)
             branch = grouped.setdefault(outcome, {})
@@ -857,6 +1399,7 @@ def project_measurement_terms(
                 combined = existing.amplitude.add(projected.amplitude)
                 branch[key] = MeasurementRenderedTerm(
                     amplitude=combined,
+                    scalar=existing.scalar,
                     basis_bits=existing.basis_bits,
                     payloads=existing.payloads,
                 )
@@ -871,8 +1414,114 @@ def project_measurement_terms(
     return projected_branches
 
 
-def render_measurement_state_latex(terms: list[SymbolicTerm], row_order: list[int], measured_row: int) -> str:
-    projected = project_measurement_terms(terms, measured_row)
+def project_measurement_terms_symbolic(
+    terms: list[SymbolicTerm],
+    measured_row: int,
+) -> dict[int, list[MeasurementSymbolicTerm]]:
+    grouped: dict[
+        int,
+        dict[tuple[tuple[tuple[int, int], ...], tuple[tuple[int, str], ...]], MeasurementSymbolicTerm],
+    ] = {}
+
+    for term in terms:
+        for outcome, factor_amplitude in measurement_factor_options(term, measured_row):
+            contribution = MeasurementContribution(
+                amplitude=term.amplitude.times(factor_amplitude),
+                scalar=term.scalar,
+            )
+            if contribution.amplitude.to_latex() == "0" or contribution.scalar == "0":
+                continue
+
+            projected = MeasurementSymbolicTerm(
+                contributions=[contribution],
+                basis_bits=dict(term.basis_bits),
+                payloads=dict(term.payloads),
+            )
+            projected.basis_bits.pop(measured_row, None)
+            projected.payloads.pop(measured_row, None)
+            key = measurement_symbolic_term_key(projected)
+            branch = grouped.setdefault(outcome, {})
+            existing = branch.get(key)
+            if existing is None:
+                branch[key] = projected
+                continue
+
+            merged = False
+            for existing_contribution in existing.contributions:
+                if existing_contribution.scalar != contribution.scalar:
+                    continue
+                existing_contribution.amplitude = existing_contribution.amplitude.add(contribution.amplitude)
+                merged = True
+                break
+            if not merged:
+                existing.contributions.append(contribution)
+
+            existing.contributions = [
+                current
+                for current in existing.contributions
+                if current.amplitude.to_latex() != "0" and current.scalar != "0"
+            ]
+
+    projected_branches: dict[int, list[MeasurementSymbolicTerm]] = {}
+    for outcome, branch_terms in grouped.items():
+        projected_branches[outcome] = [
+            branch_term
+            for branch_term in branch_terms.values()
+            if branch_term.contributions
+        ]
+    return projected_branches
+
+
+def render_measurement_state_latex(
+    terms: list[SymbolicTerm],
+    row_order: list[int],
+    measured_row: int,
+    row_labels: list[str],
+) -> str:
+    if any(term.scalar != "1" for term in terms):
+        projected_symbolic = project_measurement_terms_symbolic(terms, measured_row)
+        pieces: list[str] = []
+
+        for outcome in sorted(projected_symbolic):
+            branch_terms = projected_symbolic[outcome]
+            if not branch_terms:
+                continue
+            branch_terms = sorted(
+                branch_terms,
+                key=lambda term: (
+                    tuple(sorted(term.basis_bits.items())),
+                    tuple(sorted(term.payloads.items())),
+                ),
+            )
+            branch_expr = " + ".join(render_measurement_symbolic_term(term, row_order) for term in branch_terms).replace("+ -", "- ")
+            if len(branch_terms) > 1:
+                branch_expr = rf"\left({branch_expr}\right)"
+
+            probability_pieces: list[str] = []
+            for branch_term in branch_terms:
+                if len(branch_term.contributions) == 1:
+                    contribution = branch_term.contributions[0]
+                    probability_piece = render_measurement_probability_contribution(contribution.amplitude, contribution.scalar)
+                else:
+                    coefficient = " + ".join(
+                        render_measurement_coefficient(contribution.amplitude, contribution.scalar)
+                        for contribution in branch_term.contributions
+                    ).replace("+ -", "- ")
+                    probability_piece = rf"\left|{coefficient}\right|^2"
+                if probability_piece != "0":
+                    probability_pieces.append(probability_piece)
+
+            if not probability_pieces:
+                continue
+            probability = " + ".join(probability_pieces).replace("+ -", "- ")
+            label = rf"\Pr({row_reference(row_labels, measured_row, 'q')}={outcome})={probability}"
+            pieces.append(rf"{branch_expr}, & {label}")
+
+        if not pieces:
+            raise ValueError(f"Measurement on row {measured_row} produced no valid outcome branches")
+        return r"\left\{\begin{array}{ll}" + r" \\ ".join(pieces) + r"\end{array}\right."
+
+    projected = project_measurement_terms_exact(terms, measured_row)
     pieces: list[str] = []
 
     for outcome in sorted(projected):
@@ -884,13 +1533,14 @@ def render_measurement_state_latex(terms: list[SymbolicTerm], row_order: list[in
             key=lambda term: (
                 tuple(sorted(term.basis_bits.items())),
                 tuple(sorted(term.payloads.items())),
+                term.scalar,
             ),
         )
         branch_expr = " + ".join(render_measurement_term(term, row_order) for term in branch_terms).replace("+ -", "- ")
         if len(branch_terms) > 1:
             branch_expr = rf"\left({branch_expr}\right)"
         probability = sum((term.amplitude.probability() for term in branch_terms), start=Fraction(0, 1))
-        label = rf"\Pr(q_{{{measured_row}}}={outcome})={render_fraction_latex(probability)}"
+        label = rf"\Pr({row_reference(row_labels, measured_row, 'q')}={outcome})={render_fraction_latex(probability)}"
         pieces.append(rf"{branch_expr}, & {label}")
 
     if not pieces:
@@ -912,11 +1562,11 @@ def render_term(term: SymbolicTerm, row_order: list[int]) -> str:
                 index += 1
             factors.append(rf"\ket{{{''.join(bits)}}}")
             continue
-        factors.append(term.payloads[row])
+        factors.append(wrap_tensor_factor(term.payloads[row]))
         index += 1
 
     factor_body = r" \otimes ".join(factors)
-    return render_amplitude_weighted_expression(term.amplitude, factor_body)
+    return render_scalar_weighted_expression(term.amplitude, term.scalar, factor_body)
 
 
 def render_grouped_terms(
@@ -932,7 +1582,7 @@ def render_grouped_terms(
     else:
         basis_expr = ""
 
-    payload_expr = r" \otimes ".join(payload_factors)
+    payload_expr = r" \otimes ".join(wrap_tensor_factor(factor) for factor in payload_factors)
     if basis_expr and payload_expr:
         return f"{basis_expr} \\otimes {payload_expr}"
     if payload_expr:
@@ -951,7 +1601,36 @@ def render_amplitude_weighted_expression(amplitude: Amplitude, expression: str) 
     return f"{amplitude_text} {expression}"
 
 
+def has_payload_before_basis_row(terms: list[SymbolicTerm], row_order: list[int]) -> bool:
+    active_rows = [row for row in row_order if any(row in term.basis_bits or row in term.payloads for term in terms)]
+    seen_payload = False
+    for row in active_rows:
+        if any(row in term.payloads for term in terms):
+            seen_payload = True
+            continue
+        if seen_payload and any(row in term.basis_bits for term in terms):
+            return True
+    return False
+
+
 def render_state_latex(terms: list[SymbolicTerm], row_order: list[int]) -> str:
+    if any(term.scalar != "1" for term in terms) or has_payload_before_basis_row(terms, row_order):
+        pieces = [
+            render_term(term, row_order)
+            for term in sorted(
+                terms,
+                key=lambda current: (
+                    tuple(sorted(current.basis_bits.items())),
+                    tuple(sorted(current.payloads.items())),
+                    current.scalar,
+                    current.amplitude.sqrt2_power,
+                    current.amplitude.real,
+                    current.amplitude.imag,
+                ),
+            )
+        ]
+        return " + ".join(pieces).replace("+ -", "- ")
+
     basis_rows = [row for row in row_order if any(row in term.basis_bits for term in terms)]
     payload_rows = [row for row in row_order if any(row in term.payloads for term in terms)]
 
@@ -1002,8 +1681,23 @@ def render_state_latex(terms: list[SymbolicTerm], row_order: list[int]) -> str:
     return render_amplitude_weighted_expression(common_amplitude, state)
 
 
-def render_initial_state_latex(row_labels: list[str], temporary_rows: set[int]) -> str:
-    factors = [label for row, label in enumerate(row_labels) if label.strip() and row not in temporary_rows]
+def render_initial_state_latex(
+    row_labels: list[str],
+    label_spans: dict[int, tuple[str, int]],
+    temporary_rows: set[int],
+) -> str:
+    factors: list[str] = []
+    consumed: set[int] = set()
+    for row in range(len(row_labels)):
+        if row in consumed or row in temporary_rows:
+            continue
+        span_entry = label_spans.get(row)
+        label = span_entry[0] if span_entry is not None else row_labels[row]
+        span = span_entry[1] if span_entry is not None else 1
+        if not label.strip():
+            continue
+        consumed.update(range(row, row + span))
+        factors.append(label)
     if not factors:
         raise ValueError("No labeled input rows were found")
     return r" \otimes ".join(factors)
@@ -1027,13 +1721,30 @@ def slice_heading_text(slice_number: int, step_number: int | None) -> str:
     return rf"\textbf{{Slice {slice_number}, step {step_number}: }}"
 
 
-def build_discursive_block(row_labels: list[str], logical_slices: list[LogicalSlice]) -> str:
-    temporary_rows = {slice_info.target_row for slice_info in logical_slices if slice_info.kind in {"and_compute", "and_uncompute"} and slice_info.target_row is not None}
-    terms = make_initial_terms(row_labels, temporary_rows)
-    persistent_rows = [row for row, label in enumerate(row_labels) if label.strip() and row not in temporary_rows]
-    all_rows = sorted({row for row in persistent_rows} | temporary_rows | {slice_info.target_row for slice_info in logical_slices if slice_info.target_row is not None})
+def slice_rows(slice_info: LogicalSlice) -> set[int]:
+    rows: set[int] = set()
+    if slice_info.target_row is not None:
+        rows.update(range(slice_info.target_row, slice_info.target_row + slice_info.span))
+    if slice_info.secondary_row is not None:
+        rows.add(slice_info.secondary_row)
+    return rows
 
-    blocks = [render_state_block(0, render_initial_state_latex(row_labels, temporary_rows))]
+
+def build_discursive_block(
+    row_labels: list[str],
+    label_spans: dict[int, tuple[str, int]],
+    logical_slices: list[LogicalSlice],
+) -> str:
+    temporary_rows = {slice_info.target_row for slice_info in logical_slices if slice_info.kind in {"and_compute", "and_uncompute"} and slice_info.target_row is not None}
+    terms = make_initial_terms(row_labels, label_spans, temporary_rows)
+    initial_rows = {
+        row
+        for term in terms
+        for row in set(term.basis_bits) | set(term.payloads)
+    }
+    all_rows = sorted(initial_rows | temporary_rows | {row for slice_info in logical_slices for row in slice_rows(slice_info)})
+
+    blocks = [render_state_block(0, render_initial_state_latex(row_labels, label_spans, temporary_rows))]
     slice_runs: list[tuple[int, int]] = []
     run_start = 0
     while run_start < len(logical_slices):
@@ -1054,7 +1765,7 @@ def build_discursive_block(row_labels: list[str], logical_slices: list[LogicalSl
                     raise ValueError("Measurement is only supported as the final logical slice in symbolic LaTeX output")
                 assert slice_info.target_row is not None
                 active_rows = [row for row in all_rows if any(row in term.basis_bits or row in term.payloads for term in terms)]
-                rendered_state = render_measurement_state_latex(terms, active_rows, slice_info.target_row)
+                rendered_state = render_measurement_state_latex(terms, active_rows, slice_info.target_row, row_labels)
             else:
                 terms = evolve_terms(terms, slice_info)
                 active_rows = [row for row in all_rows if any(row in term.basis_bits or row in term.payloads for term in terms)]
@@ -1067,9 +1778,9 @@ def build_discursive_block(row_labels: list[str], logical_slices: list[LogicalSl
 
 
 def generate_symbolic_latex(source_text: str, env_index: int = 0) -> str:
-    row_labels, grid = extract_environment_grid(source_text, env_index)
+    row_labels, label_spans, grid = extract_environment_grid(source_text, env_index)
     logical_slices = build_logical_slices(row_labels, grid)
-    return build_discursive_block(row_labels, logical_slices)
+    return build_discursive_block(row_labels, label_spans, logical_slices)
 
 
 def main() -> int:

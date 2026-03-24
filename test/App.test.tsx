@@ -1126,6 +1126,27 @@ describe("App smoke tests", () => {
     expect(screen.queryByRole("dialog", { name: /shortcuts/i })).not.toBeInTheDocument();
   });
 
+  it("shows symbolic conventions from the Help button while the symbolic export mode is active", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: /^symbolic$/i }));
+    await user.click(screen.getByRole("button", { name: /show symbolic conventions/i }));
+
+    const dialog = screen.getByRole("dialog", { name: /symbolic interpretation/i });
+
+    expect(dialog).toBeInTheDocument();
+    expect(within(dialog).getByText(/recognized states/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(String.raw`\ket{0}, \ket{1}, \ket{+}, \ket{-}, \ket{i}`)).toBeInTheDocument();
+    expect(within(dialog).getByText(String.raw`\ket{0}_{c_0}, \ket{\psi}_{data}`)).toBeInTheDocument();
+    expect(within(dialog).getByText(String.raw`R_X(\theta), R_Y(\theta), R_Z(\theta)`)).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole("button", { name: /^shortcuts$/i }));
+
+    expect(screen.getByRole("dialog", { name: /shortcuts/i })).toBeInTheDocument();
+    expect(within(screen.getByRole("dialog", { name: /shortcuts/i })).getByText(/tool switching/i)).toBeInTheDocument();
+  });
+
   it("opens the cached export history with H and loads an entry into the export panel", async () => {
     window.localStorage.clear();
     window.localStorage.setItem(

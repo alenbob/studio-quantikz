@@ -140,6 +140,9 @@ KNOWN_NOOPS = {
     "slice",
     "wireoverride",
 }
+KET_LABEL_PATTERN = re.compile(r"^\\ket\{([^{}]+)\}(.*)$")
+SUPPORTED_PRODUCT_STATE_SYMBOLS = {"0", "1", "+", "-", "i"}
+SUPPORTED_TENSOR_PRODUCT_GATES = {"H", "I", "S", "T", "X", "Y", "Z"}
 
 
 def find_quantikz_environments(source_text: str) -> list[QuantikzEnvironment]:
@@ -379,6 +382,31 @@ def parse_int(value: str) -> int | None:
         return None
 
 
+def parse_product_state_symbols(label: str, span: int) -> list[str] | None:
+    normalized = collapse_whitespace(label)
+    match = KET_LABEL_PATTERN.match(normalized)
+    if match is None:
+        return None
+    symbols = list(match.group(1))
+    if len(symbols) != span or any(symbol not in SUPPORTED_PRODUCT_STATE_SYMBOLS for symbol in symbols):
+        return None
+    return symbols
+
+
+def single_qubit_product_state(symbol: str) -> list[tuple[int, str]] | None:
+    if symbol == "0":
+        return [(0, "1")]
+    if symbol == "1":
+        return [(1, "1")]
+    if symbol == "+":
+        return [(0, "1/sqrt(2)"), (1, "1/sqrt(2)")]
+    if symbol == "-":
+        return [(0, "1/sqrt(2)"), (1, "-1/sqrt(2)")]
+    if symbol == "i":
+        return [(0, "1/sqrt(2)"), (1, "i/sqrt(2)")]
+    return None
+
+
 def parse_connector(command: ParsedCommand, row: int) -> ConnectorRef | None:
     if command.name == "vqw":
         offset = parse_int(command.args[0]) if command.args else None
@@ -446,15 +474,29 @@ def sub_expr(left: str, right: str) -> str:
     return f"({left}) - ({right})"
 
 
+def is_simple_scalar_expression(expr: str) -> bool:
+    return re.fullmatch(r"-?[A-Za-z0-9_\\]+(?:/[A-Za-z0-9_\\()]+)?", expr) is not None
+
+
 def mul_expr(prefix: str, expr: str) -> str:
+    prefix = strip_outer_parentheses(prefix.strip())
+    expr = strip_outer_parentheses(expr.strip())
     if prefix == "0" or expr == "0":
         return "0"
     if prefix == "1":
         return expr
     if expr == "1":
         return prefix
+    if prefix == "i" and expr == "i":
+        return "-1"
+    if prefix == "i" and expr == "-i":
+        return "1"
+    if prefix == "-i" and expr == "i":
+        return "1"
+    if prefix == "-i" and expr == "-i":
+        return "-1"
     if prefix == "-1":
-        return f"-({expr})"
+        return expr[1:] if expr.startswith("-") else (f"-{expr}" if is_simple_scalar_expression(expr) else f"-({expr})")
     return f"{prefix}*({expr})"
 
 
@@ -710,7 +752,8 @@ def canonical_gate_label(label: str) -> str:
     normalized = normalized.replace(r"T^{\dagger}", "Tdg")
     normalized = normalized.replace(r"T^\dagger", "Tdg")
     normalized = normalized.replace(r"T^{\\dagger}", "Tdg")
-    normalized = normalized.replace(r"R_Z", "RZ")
+    normalized = re.sub(r"R_\{?([XYZxyz])\}?\(", lambda match: f"R{match.group(1).upper()}(", normalized)
+    normalized = re.sub(r"R([xyz])\(", lambda match: f"R{match.group(1).upper()}(", normalized)
     return normalized
 
 
@@ -719,7 +762,25 @@ def parse_rz_parameter(canonical_label: str) -> str | None:
     return match.group(1) if match else None
 
 
-def apply_single_qubit_gate(terms: dict[int, str], num_qubits: int, qubit: int, label: str) -> dict[int, str] | None:
+def decompose_tensor_product_gate_label(label: str, span: int) -> list[str] | None:
+    canonical = canonical_gate_label(label)
+    if span == 1:
+        return [canonical]
+    if canonical == "H":
+        return ["H"] * span
+    if len(canonical) != span or any(component not in SUPPORTED_TENSOR_PRODUCT_GATES for component in canonical):
+        return None
+    return list(canonical)
+
+
+def apply_single_qubit_gate(
+    terms: dict[int, str],
+    num_qubits: int,
+    qubit: int,
+    label: str,
+    controls: list[tuple[int, str]] | None = None,
+) -> dict[int, str] | None:
+    controls = controls or []
     canonical = canonical_gate_label(label)
     next_terms = dict(terms)
     mask = bit_mask(num_qubits, qubit)
@@ -735,7 +796,9 @@ def apply_single_qubit_gate(terms: dict[int, str], num_qubits: int, qubit: int, 
         }.get(canonical)
         rz_parameter = parse_rz_parameter(canonical)
         for state, amplitude in next_terms.items():
-            if rz_parameter is not None:
+            if not controls_match(state, num_qubits, controls):
+                result[state] = amplitude
+            elif rz_parameter is not None:
                 phase = f"exp(i*({rz_parameter})/2)" if state & mask else f"exp(-i*({rz_parameter})/2)"
                 result[state] = mul_expr(phase, amplitude)
             elif state & mask:
@@ -754,6 +817,10 @@ def apply_single_qubit_gate(terms: dict[int, str], num_qubits: int, qubit: int, 
         one_state = zero_state | mask
         amplitude_zero = next_terms.get(zero_state, "0")
         amplitude_one = next_terms.get(one_state, "0")
+        if not controls_match(zero_state, num_qubits, controls):
+            result[zero_state] = amplitude_zero
+            result[one_state] = amplitude_one
+            continue
 
         if canonical == "H":
             result[zero_state] = div_expr(add_expr(amplitude_zero, amplitude_one), "sqrt(2)")
@@ -767,6 +834,28 @@ def apply_single_qubit_gate(terms: dict[int, str], num_qubits: int, qubit: int, 
         else:
             return None
 
+    return result
+
+
+def apply_gate(
+    terms: dict[int, str],
+    num_qubits: int,
+    qubits: list[int],
+    label: str,
+    controls: list[tuple[int, str]] | None = None,
+) -> dict[int, str] | None:
+    components = decompose_tensor_product_gate_label(label, len(qubits))
+    if components is None:
+        return None
+
+    result = dict(terms)
+    for qubit, component in zip(qubits, components):
+        if component == "I":
+            continue
+        updated = apply_single_qubit_gate(result, num_qubits, qubit, component, controls)
+        if updated is None:
+            return None
+        result = updated
     return result
 
 
@@ -819,20 +908,47 @@ def apply_swap(
     return result
 
 
-def initial_basis_state(row_labels: list[str], wire_types: list[str]) -> dict[int, str] | None:
-    bits: list[str] = []
-    for row, label in enumerate(row_labels):
-        if wire_types[row] != "quantum":
+def initial_basis_state(
+    row_labels: list[str],
+    wire_types: list[str],
+    label_spans: dict[int, tuple[str, int]],
+) -> dict[int, str] | None:
+    terms: dict[int, str] = {0: "1"}
+    consumed: set[int] = set()
+    num_qubits = len(row_labels)
+
+    for row in range(num_qubits):
+        if row in consumed:
+            continue
+
+        span_entry = label_spans.get(row)
+        label = span_entry[0] if span_entry is not None else row_labels[row]
+        span = span_entry[1] if span_entry is not None else 1
+        covered_rows = list(range(row, row + span))
+
+        if not label or any(index >= num_qubits or wire_types[index] != "quantum" for index in covered_rows):
             return None
-        normalized = collapse_whitespace(label)
-        if normalized == r"\ket{0}":
-            bits.append("0")
-        elif normalized == r"\ket{1}":
-            bits.append("1")
-        else:
+
+        symbols = parse_product_state_symbols(label, span)
+        if symbols is None:
             return None
-    state = int("".join(bits), 2) if bits else 0
-    return {state: "1"}
+
+        consumed.update(covered_rows)
+        for qubit, symbol in zip(covered_rows, symbols):
+            basis_terms = single_qubit_product_state(symbol)
+            if basis_terms is None:
+                return None
+
+            next_terms: dict[int, str] = {}
+            mask = bit_mask(num_qubits, qubit)
+            for state, amplitude in terms.items():
+                for bit, factor in basis_terms:
+                    updated_state = (state | mask) if bit else (state & ~mask)
+                    updated_amplitude = mul_expr(factor, amplitude)
+                    next_terms[updated_state] = add_expr(next_terms.get(updated_state, "0"), updated_amplitude)
+            terms = next_terms
+
+    return {state: amplitude for state, amplitude in terms.items() if amplitude != "0"}
 
 
 def format_initial_state(row_labels: list[str], label_spans: dict[int, tuple[str, int]]) -> str:
@@ -849,7 +965,7 @@ def format_initial_state(row_labels: list[str], label_spans: dict[int, tuple[str
                 parts.append(label)
             else:
                 wires = ",".join(f"q{index}" for index in range(row, row + span))
-                parts.append(f"{label}_(%s)" % wires)
+                parts.append(f"{label}_{{{wires}}}")
             continue
         if row_labels[row]:
             parts.append(row_labels[row])
@@ -866,13 +982,23 @@ def span_contains(control: ControlRef, row: int) -> bool:
     return lower <= row <= upper
 
 
-def controls_for_gate(gate: GateRef, controls: list[ControlRef]) -> list[tuple[int, str]]:
-    result: list[tuple[int, str]] = []
+def controls_for_gate(gate: GateRef, controls: list[ControlRef], connectors: list[ConnectorRef]) -> list[tuple[int, str]]:
+    result: set[tuple[int, str]] = set()
+    gate_rows = set(range(gate.row, gate.row + gate.span))
     for control in controls:
-        if control.endpoint is None:
+        if control.endpoint in gate_rows:
+            result.add((control.row, control.state))
             continue
-        if gate.row <= control.endpoint < gate.row + gate.span:
-            result.append((control.row, control.state))
+        if control.endpoint is None:
+            for connector in connectors:
+                if connector.wire_type != "quantum":
+                    continue
+                if connector.row in gate_rows and connector.endpoint == control.row:
+                    result.add((control.row, control.state))
+                    break
+                if connector.endpoint in gate_rows and connector.row == control.row:
+                    result.add((control.row, control.state))
+                    break
     return sorted(result)
 
 
@@ -1013,7 +1139,7 @@ def analyze_slice(
         )
 
     for gate in gates:
-        controls_here = controls_for_gate(gate, controls)
+        controls_here = controls_for_gate(gate, controls, connectors)
         used_control_rows.update(row for row, _ in controls_here)
         qubits = list(range(gate.row, gate.row + gate.span))
         if controls_here:
@@ -1125,11 +1251,9 @@ def evolve_statevector(
     measured_qubits: list[int] = []
     for operation in executable_ops:
         if operation.kind == "gate":
-            if operation.controls:
+            if not operation.qubits or operation.label is None:
                 return None, []
-            if operation.qubit is None or operation.label is None:
-                return None, []
-            updated = apply_single_qubit_gate(next_terms, num_qubits, operation.qubit, operation.label)
+            updated = apply_gate(next_terms, num_qubits, operation.qubits, operation.label, operation.controls)
             if updated is None:
                 return None, []
             next_terms = updated
@@ -1190,7 +1314,7 @@ def symbolic_evolution_for_environment(environment: QuantikzEnvironment) -> Circ
         columns = 0
     wire_types = parse_environment_wire_types(environment.options, len(raw_rows))
     initial_state = format_initial_state(row_labels, label_spans)
-    basis_terms = initial_basis_state(row_labels, wire_types)
+    basis_terms = initial_basis_state(row_labels, wire_types, label_spans)
 
     slices: list[SliceEvolution] = []
     symbolic_terms = basis_terms
@@ -1424,8 +1548,8 @@ def latexify_initial_state(initial_state: str) -> str | None:
     for factor in factors:
         if not factor:
             continue
-        if factor.startswith(r"\ket{") and factor.endswith("}"):
-            rendered.append(factor)
+        if factor.startswith(r"\ket{"):
+            rendered.append(replace_named_tokens(factor))
         elif factor.startswith("|") and factor.endswith(">"):
             rendered.append(latexify_ket(factor[1:-1]))
         else:
