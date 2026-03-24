@@ -65,6 +65,7 @@ import type {
   CircuitClipboard,
   CircuitItem,
   CircuitLayout,
+  ControlState,
   EditorState,
   EqualsColumnItem,
   FrameItem,
@@ -93,7 +94,7 @@ interface WorkspaceProps {
   onSelectWireLabelGroup: (row: number, side: WireLabelSide) => void;
   onMergeWireLabelGroup: (row: number, side: WireLabelSide) => void;
   onSelectStructure: (selection: StructureSelection) => void;
-  onPlaceItem: (tool: ItemType, placement: PlacementTarget) => void;
+  onPlaceItem: (tool: ItemType, placement: PlacementTarget, options?: { controlState?: ControlState }) => void;
   onDrawWire: (start: { row: number; col: number }, end: { row: number; col: number }) => void;
   onDrawGate: (start: { row: number; col: number }, end: { row: number; col: number }) => void;
   onDrawMeter: (start: { row: number; col: number }, endRow: number) => void;
@@ -1408,6 +1409,7 @@ export function Workspace({
   const boardRef = useRef<HTMLDivElement | null>(null);
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [hoverPlacement, setHoverPlacement] = useState<PlacementTarget | null>(null);
+  const [controlPlacementState, setControlPlacementState] = useState<ControlState>("filled");
   const [marquee, setMarquee] = useState<MarqueeSelection | null>(null);
   const [editingWireLabel, setEditingWireLabel] = useState<{ row: number; side: "left" | "right" } | null>(null);
   const [areaDraw, setAreaDraw] = useState<AreaDrawState | null>(null);
@@ -1561,7 +1563,7 @@ export function Workspace({
           id: "hover-preview-control",
           type: "controlDot",
           point: { row: hoverPlacement.row, col: hoverPlacement.col },
-          controlState: "filled",
+          controlState: controlPlacementState,
           color: DEFAULT_ABSENT_WIRE_COLOR
         })];
       case "targetPlus":
@@ -1581,7 +1583,7 @@ export function Workspace({
       default:
         return [];
     }
-  }, [areaDraw, dragPreviewProjection, hoverPlacement, hoverTool, isPasteMode, state.activeTool]);
+  }, [areaDraw, controlPlacementState, dragPreviewProjection, hoverPlacement, hoverTool, isPasteMode, state.activeTool]);
   const hoverProjectionWireItems = useMemo(
     () => hoverProjectionItems.filter((item) =>
       item.type === "verticalConnector" || (
@@ -1799,12 +1801,16 @@ export function Workspace({
     setHoverPlacement(resolvePlacement(clientX, clientY, tool));
   }
 
-  function placeWithTool(tool: ItemType, placement: PlacementTarget | null): void {
+  function placeWithTool(
+    tool: ItemType,
+    placement: PlacementTarget | null,
+    controlState: ControlState = "filled"
+  ): void {
     if (!placement) {
       return;
     }
 
-    onPlaceItem(tool, placement);
+    onPlaceItem(tool, placement, tool === "controlDot" ? { controlState } : undefined);
   }
 
   function placePastedClipboardFromPointer(clientX: number, clientY: number): void {
@@ -1833,7 +1839,7 @@ export function Workspace({
     setHoverPlacement(placement);
   }
 
-  function handleToolPointerDown(clientX: number, clientY: number): void {
+  function handleToolPointerDown(clientX: number, clientY: number, controlState: ControlState = "filled"): void {
     if (state.activeTool === "select") {
       return;
     }
@@ -1893,7 +1899,7 @@ export function Workspace({
     }
 
     if (placement.kind === "cell" && canPlaceCellToolAtRow(state.activeTool, placement.row, state.qubits)) {
-      placeWithTool(state.activeTool, placement);
+      placeWithTool(state.activeTool, placement, controlState);
     }
   }
 
@@ -1972,7 +1978,8 @@ export function Workspace({
           }
 
           if (state.activeTool !== "select") {
-            handleToolPointerDown(event.clientX, event.clientY);
+            setControlPlacementState(event.altKey ? "open" : "filled");
+            handleToolPointerDown(event.clientX, event.clientY, event.altKey ? "open" : "filled");
             return;
           }
 
@@ -2066,6 +2073,30 @@ export function Workspace({
       </g>
     );
   }
+
+  useEffect(() => {
+    if (state.activeTool !== "controlDot") {
+      setControlPlacementState("filled");
+      return;
+    }
+
+    const syncControlPlacementState = (event: KeyboardEvent): void => {
+      setControlPlacementState(event.altKey ? "open" : "filled");
+    };
+
+    const clearControlPlacementState = (): void => {
+      setControlPlacementState("filled");
+    };
+
+    window.addEventListener("keydown", syncControlPlacementState);
+    window.addEventListener("keyup", syncControlPlacementState);
+    window.addEventListener("blur", clearControlPlacementState);
+    return () => {
+      window.removeEventListener("keydown", syncControlPlacementState);
+      window.removeEventListener("keyup", syncControlPlacementState);
+      window.removeEventListener("blur", clearControlPlacementState);
+    };
+  }, [state.activeTool]);
 
   useEffect(() => {
     const board = boardRef.current;
@@ -2437,7 +2468,8 @@ export function Workspace({
               return;
             }
 
-            handleToolPointerDown(event.clientX, event.clientY);
+            setControlPlacementState(event.altKey ? "open" : "filled");
+            handleToolPointerDown(event.clientX, event.clientY, event.altKey ? "open" : "filled");
             return;
           }
 
@@ -2447,6 +2479,7 @@ export function Workspace({
         }}
         onPointerMove={(event) => {
           lastPointerRef.current = { clientX: event.clientX, clientY: event.clientY };
+          setControlPlacementState(event.altKey ? "open" : "filled");
 
           if (wireDraft) {
             updateWireDraftFromPointer(event.clientX, event.clientY);
@@ -2470,6 +2503,7 @@ export function Workspace({
           if (!dragState && !marquee && !areaDraw && !wireDraft) {
             setHoverPlacement(null);
           }
+          setControlPlacementState("filled");
           setSwapTooltip(null);
         }}
       >
@@ -2736,11 +2770,13 @@ export function Workspace({
                   }
 
                   if (state.activeTool === "pencil") {
-                    handleToolPointerDown(event.clientX, event.clientY);
+                    setControlPlacementState(event.altKey ? "open" : "filled");
+                    handleToolPointerDown(event.clientX, event.clientY, event.altKey ? "open" : "filled");
                     return;
                   }
 
-                  placeWithTool(state.activeTool, { kind: "cell", row, col });
+                  setControlPlacementState(event.altKey ? "open" : "filled");
+                  placeWithTool(state.activeTool, { kind: "cell", row, col }, event.altKey ? "open" : "filled");
                 }}
               />
             ))

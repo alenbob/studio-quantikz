@@ -111,6 +111,72 @@ const SYMBOLIC_GATE_WITH_LATER_CONTROLLED_X_CIRCUIT = String.raw`\begin{quantikz
 \lstick{$\ket{0}$} &  & \targ{} & \gate{A} & \targ{} &  &  &
 \end{quantikz}`;
 
+const BRANCHED_MULTI_CONTROLLED_SYMBOLIC_GATE_CIRCUIT = String.raw`\begin{quantikz}
+\lstick{$\ket{0}_{c_0}$} & \gate{H} & \ctrl{2} \\
+\lstick{$\ket{0}_{c_1}$} & \gate{H} & \ctrl{1} \\
+\lstick{$\ket{\psi}_{t}$} &  & \gate{A}
+\end{quantikz}`;
+
+const MIXED_MULTI_CONTROLLED_GATE_MISMATCH_CIRCUIT = String.raw`\begin{quantikz}
+\lstick{$\ket{1}_{c_0}$} & \ocontrol{} \wire[d][1]{q} \\
+\lstick{$\ket{1}_{c_1}$} & \ctrl{1} \\
+\lstick{$\ket{0}_{t}$} & \gate{X}
+\end{quantikz}`;
+
+const MIXED_MULTI_CONTROLLED_X_MISMATCH_CIRCUIT = String.raw`\begin{quantikz}
+\lstick{$\ket{1}_{c_0}$} & \ocontrol{} \wire[d][1]{q} \\
+\lstick{$\ket{1}_{c_1}$} & \ctrl{1} \\
+\lstick{$\ket{0}_{t}$} & \targ{}
+\end{quantikz}`;
+
+const UNLABELED_TOFFOLI_CIRCUIT = String.raw`\begin{quantikz}
+ & \ctrl{1} \\
+ & \ctrl{1} \\
+ & \targ{}
+\end{quantikz}`;
+
+const UNLABELED_MIXED_MULTI_CONTROLLED_GATE_CIRCUIT = String.raw`\begin{quantikz}
+ & \octrl{2} \\
+ & \ctrl{1} \\
+ & \gate{A}
+\end{quantikz}`;
+
+const UNLABELED_ALL_OPEN_MULTI_CONTROLLED_X_CIRCUIT = String.raw`\begin{quantikz}
+ & \octrl{2} \\
+ & \octrl{1} \\
+ & \targ{}
+\end{quantikz}`;
+
+const VARIED_ORDER_TARGET_TOP_OPEN_CONTROLS_CIRCUIT = String.raw`\begin{quantikz}
+ & \targ{} \\
+ & \octrl{-1} \\
+ & \octrl{-2}
+\end{quantikz}`;
+
+const VARIED_ORDER_GATE_MIDDLE_OPEN_CONTROLS_CIRCUIT = String.raw`\begin{quantikz}
+ & \octrl{1} \\
+ & \gate{A} \\
+ & \octrl{-1}
+\end{quantikz}`;
+
+const VARIED_ORDER_SWAP_WITH_CONTROL_BELOW_CIRCUIT = String.raw`\begin{quantikz}
+\lstick{$\ket{0}$} & \swap{1} \\
+\lstick{$\ket{1}$} & \targX{} \\
+\lstick{$\ket{0}$} & \octrl{-2}
+\end{quantikz}`;
+
+const VARIED_ORDER_CONTROLLED_MEASURE_MATCH_CIRCUIT = String.raw`\begin{quantikz}
+\lstick{$\ket{0}$} & \octrl{1} \\
+\lstick{$\ket{1}$} & \meter{} \\
+\lstick{$\ket{0}$} & \octrl{-1}
+\end{quantikz}`;
+
+const VARIED_ORDER_CONTROLLED_MEASURE_MISMATCH_CIRCUIT = String.raw`\begin{quantikz}
+\lstick{$\ket{1}$} & \ctrl{1} \\
+\lstick{$\ket{0}$} & \meter{} \\
+\lstick{$\ket{0}$} & \ctrl{-1}
+\end{quantikz}`;
+
 describe("renderSymbolicLatex", () => {
   it("returns generated latex from the Python symbolic engine", async () => {
     const result = await renderSymbolicLatex(AND_CIRCUIT);
@@ -144,6 +210,16 @@ describe("renderSymbolicLatex", () => {
       success: true,
       envIndex: 0,
       latex: expect.stringContaining(String.raw`\ket{\Psi_{0}} &= \ket{a} \otimes \ket{b} \otimes \ket{c}`)
+    });
+  });
+
+  it("defaults unlabeled input rows to ket{0}", async () => {
+    const result = await renderSymbolicLatex(UNLABELED_NO_OP_CIRCUIT);
+
+    expect(result).toMatchObject({
+      success: true,
+      envIndex: 0,
+      latex: expect.stringContaining(String.raw`\ket{\Psi_{0}} &= \ket{0} \otimes \ket{0}`)
     });
   });
 
@@ -463,13 +539,183 @@ describe("renderSymbolicLatex", () => {
     expect(result.latex).toContain(String.raw`\ket{\Psi_{4}} &= \frac{1}{\sqrt{2}} (\ket{0} \otimes A\ket{0} + \ket{1} \otimes XA\ket{1})`);
   }, 15000);
 
-  it("propagates unsupported-circuit errors from the Python engine", async () => {
-    const result = await renderSymbolicLatex(UNLABELED_NO_OP_CIRCUIT);
+  it("keeps multi-control symbolic gates branch-sensitive after prior Hadamards", async () => {
+    const result = await renderSymbolicLatex(BRANCHED_MULTI_CONTROLLED_SYMBOLIC_GATE_CIRCUIT);
 
     expect(result).toMatchObject({
-      success: false,
-      statusCode: 400,
-      error: expect.stringContaining("No labeled input rows were found")
+      success: true,
+      envIndex: 0
     });
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    expect(result.latex).toContain(String.raw`\textbf{Slice 2: } controlled $A$`);
+    expect(result.latex).toContain(
+      String.raw`\ket{\Psi_{3}} &= \frac{1}{2} ((\ket{00} + \ket{01} + \ket{10}) \otimes \ket{\psi}_{t} + \ket{11} \otimes A\ket{\psi}_{t})`
+    );
+  }, 15000);
+
+  it("requires the full mixed control bitstring before applying a controlled gate", async () => {
+    const result = await renderSymbolicLatex(MIXED_MULTI_CONTROLLED_GATE_MISMATCH_CIRCUIT);
+
+    expect(result).toMatchObject({
+      success: true,
+      envIndex: 0
+    });
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    expect(result.latex).toContain(String.raw`\textbf{Slice 1: } controlled $X$`);
+    expect(result.latex).toContain(
+      String.raw`\ket{\Psi_{1}} &= \ket{1}_{c_0} \otimes \ket{1}_{c_1} \otimes \ket{0}_{t}`
+    );
+    expect(result.latex).not.toContain(
+      String.raw`\ket{\Psi_{1}} &= \ket{1}_{c_0} \otimes \ket{1}_{c_1} \otimes \ket{1}_{t}`
+    );
+  });
+
+  it("requires the full mixed control bitstring before applying a controlled X target", async () => {
+    const result = await renderSymbolicLatex(MIXED_MULTI_CONTROLLED_X_MISMATCH_CIRCUIT);
+
+    expect(result).toMatchObject({
+      success: true,
+      envIndex: 0
+    });
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    expect(result.latex).toContain(String.raw`\textbf{Slice 1: } controlled $X$ on $t$`);
+    expect(result.latex).toContain(
+      String.raw`\ket{\Psi_{1}} &= \ket{1}_{c_0} \otimes \ket{1}_{c_1} \otimes \ket{0}_{t}`
+    );
+    expect(result.latex).not.toContain(
+      String.raw`\ket{\Psi_{1}} &= \ket{1}_{c_0} \otimes \ket{1}_{c_1} \otimes \ket{1}_{t}`
+    );
+  });
+
+  it("reads an unlabeled Toffoli stack as a controlled X on the third row", async () => {
+    const result = await renderSymbolicLatex(UNLABELED_TOFFOLI_CIRCUIT);
+
+    expect(result).toMatchObject({
+      success: true,
+      envIndex: 0
+    });
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    expect(result.latex).toContain(String.raw`\ket{\Psi_{0}} &= \ket{0} \otimes \ket{0} \otimes \ket{0}`);
+    expect(result.latex).toContain(String.raw`\textbf{Slice 1: } controlled $X$ on $a_{2}$`);
+    expect(result.latex).toContain(String.raw`\ket{\Psi_{1}} &= \ket{0} \otimes \ket{0} \otimes \ket{0}`);
+  }, 15000);
+
+  it("handles unlabeled mixed c0 and c1 multi-controlled gates without firing on the wrong bitstring", async () => {
+    const result = await renderSymbolicLatex(UNLABELED_MIXED_MULTI_CONTROLLED_GATE_CIRCUIT);
+
+    expect(result).toMatchObject({
+      success: true,
+      envIndex: 0
+    });
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    expect(result.latex).toContain(String.raw`\textbf{Slice 1: } controlled $A$`);
+    expect(result.latex).toContain(String.raw`\ket{\Psi_{1}} &= \ket{0} \otimes \ket{0} \otimes \ket{0}`);
+    expect(result.latex).not.toContain(String.raw`A\ket{0}`);
+  }, 15000);
+
+  it("handles unlabeled all-open multi-controlled X slices on the default zero state", async () => {
+    const result = await renderSymbolicLatex(UNLABELED_ALL_OPEN_MULTI_CONTROLLED_X_CIRCUIT);
+
+    expect(result).toMatchObject({
+      success: true,
+      envIndex: 0
+    });
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    expect(result.latex).toContain(String.raw`\textbf{Slice 1: } controlled $X$ on $a_{2}$`);
+    expect(result.latex).toContain(String.raw`\ket{\Psi_{1}} &= \ket{0} \otimes \ket{0} \otimes \ket{1}`);
+  }, 15000);
+
+  it("applies a varied-order connected target only when the full open-control bitstring matches", async () => {
+    const result = await renderSymbolicLatex(VARIED_ORDER_TARGET_TOP_OPEN_CONTROLS_CIRCUIT);
+
+    expect(result).toMatchObject({
+      success: true,
+      envIndex: 0
+    });
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    expect(result.latex).toContain(String.raw`\textbf{Slice 1: } controlled $X$ on $a_{0}$`);
+    expect(result.latex).toContain(String.raw`\ket{\Psi_{1}} &= \ket{1} \otimes \ket{0} \otimes \ket{0}`);
+  }, 15000);
+
+  it("applies a varied-order connected gate only when the full open-control bitstring matches", async () => {
+    const result = await renderSymbolicLatex(VARIED_ORDER_GATE_MIDDLE_OPEN_CONTROLS_CIRCUIT);
+
+    expect(result).toMatchObject({
+      success: true,
+      envIndex: 0
+    });
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    expect(result.latex).toContain(String.raw`\textbf{Slice 1: } controlled $A$`);
+    expect(result.latex).toContain(String.raw`\ket{\Psi_{1}} &= \ket{0} \otimes A\ket{0} \otimes \ket{0}`);
+  }, 15000);
+
+  it("applies a varied-order connected swap only when the full control bitstring matches", async () => {
+    const result = await renderSymbolicLatex(VARIED_ORDER_SWAP_WITH_CONTROL_BELOW_CIRCUIT);
+
+    expect(result).toMatchObject({
+      success: true,
+      envIndex: 0
+    });
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    expect(result.latex).toContain(String.raw`\textbf{Slice 1: } controlled swap between $q_{0}$ and $q_{1}$`);
+    expect(result.latex).toContain(String.raw`\ket{\Psi_{1}} &= \ket{1} \otimes \ket{0} \otimes \ket{0}`);
+  }, 15000);
+
+  it("applies a varied-order connected measurement only when the full control bitstring matches", async () => {
+    const result = await renderSymbolicLatex(VARIED_ORDER_CONTROLLED_MEASURE_MATCH_CIRCUIT);
+
+    expect(result).toMatchObject({
+      success: true,
+      envIndex: 0
+    });
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    expect(result.latex).toContain(String.raw`\textbf{Slice 1: } controlled measure $q_{1}$`);
+    expect(result.latex).toContain(String.raw`\Pr(q_{1}=1)=1`);
+  }, 15000);
+
+  it("leaves a varied-order connected measurement idle when the required control bitstring does not match", async () => {
+    const result = await renderSymbolicLatex(VARIED_ORDER_CONTROLLED_MEASURE_MISMATCH_CIRCUIT);
+
+    expect(result).toMatchObject({
+      success: true,
+      envIndex: 0
+    });
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    expect(result.latex).toContain(String.raw`\textbf{Slice 1: } controlled measure $q_{1}$`);
+    expect(result.latex).toContain(String.raw`\ket{\Psi_{1}} &= \ket{1} \otimes \ket{0} \otimes \ket{0}`);
+    expect(result.latex).not.toContain(String.raw`\Pr(q_{1}=0)`);
   }, 15000);
 });

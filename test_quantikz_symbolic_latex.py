@@ -241,6 +241,116 @@ SAME_COLUMN_GATES_CIRCUIT = textwrap.dedent(
     """
 ).strip()
 
+BRANCHED_MULTI_CONTROLLED_SYMBOLIC_GATE_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}
+    \lstick{$\ket{0}_{c_0}$} & \gate{H} & \ctrl{2} \\
+    \lstick{$\ket{0}_{c_1}$} & \gate{H} & \ctrl{1} \\
+    \lstick{$\ket{\psi}_{t}$} &  & \gate{A}
+    \end{quantikz}
+    """
+).strip()
+
+MIXED_MULTI_CONTROLLED_GATE_MISMATCH_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}
+    \lstick{$\ket{1}_{c_0}$} & \ocontrol{} \wire[d][1]{q} \\
+    \lstick{$\ket{1}_{c_1}$} & \ctrl{1} \\
+    \lstick{$\ket{0}_{t}$} & \gate{X}
+    \end{quantikz}
+    """
+).strip()
+
+MIXED_MULTI_CONTROLLED_X_MISMATCH_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}
+    \lstick{$\ket{1}_{c_0}$} & \ocontrol{} \wire[d][1]{q} \\
+    \lstick{$\ket{1}_{c_1}$} & \ctrl{1} \\
+    \lstick{$\ket{0}_{t}$} & \targ{}
+    \end{quantikz}
+    """
+).strip()
+
+UNLABELED_TOFFOLI_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}
+     & \ctrl{1} \\
+     & \ctrl{1} \\
+     & \targ{}
+    \end{quantikz}
+    """
+).strip()
+
+UNLABELED_MIXED_MULTI_CONTROLLED_GATE_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}
+     & \octrl{2} \\
+     & \ctrl{1} \\
+     & \gate{A}
+    \end{quantikz}
+    """
+).strip()
+
+UNLABELED_ALL_OPEN_MULTI_CONTROLLED_X_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}
+     & \octrl{2} \\
+     & \octrl{1} \\
+     & \targ{}
+    \end{quantikz}
+    """
+).strip()
+
+VARIED_ORDER_TARGET_TOP_OPEN_CONTROLS_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}
+     & \targ{} \\
+     & \octrl{-1} \\
+     & \octrl{-2}
+    \end{quantikz}
+    """
+).strip()
+
+VARIED_ORDER_GATE_MIDDLE_OPEN_CONTROLS_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}
+     & \octrl{1} \\
+     & \gate{A} \\
+     & \octrl{-1}
+    \end{quantikz}
+    """
+).strip()
+
+VARIED_ORDER_SWAP_WITH_CONTROL_BELOW_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}
+    \lstick{$\ket{0}$} & \swap{1} \\
+    \lstick{$\ket{1}$} & \targX{} \\
+    \lstick{$\ket{0}$} & \octrl{-2}
+    \end{quantikz}
+    """
+).strip()
+
+VARIED_ORDER_CONTROLLED_MEASURE_MATCH_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}
+    \lstick{$\ket{0}$} & \octrl{1} \\
+    \lstick{$\ket{1}$} & \meter{} \\
+    \lstick{$\ket{0}$} & \octrl{-1}
+    \end{quantikz}
+    """
+).strip()
+
+VARIED_ORDER_CONTROLLED_MEASURE_MISMATCH_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}
+    \lstick{$\ket{1}$} & \ctrl{1} \\
+    \lstick{$\ket{0}$} & \meter{} \\
+    \lstick{$\ket{0}$} & \ctrl{-1}
+    \end{quantikz}
+    """
+).strip()
+
 
 class QuantikzSymbolicLatexTests(unittest.TestCase):
     def test_generates_discursive_block_for_compute_and_uncompute_pattern(self) -> None:
@@ -665,6 +775,189 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
         self.assertIn(r"\ket{\Psi_{1}} &= \left(\frac{1}{\sqrt{2}} \ket{0} + \frac{1}{\sqrt{2}} \ket{1}\right) \otimes \ket{1}", output)
         self.assertIn(r"\ket{\Psi_{2}} &= \left(\frac{1}{\sqrt{2}} \ket{0} + \frac{1}{\sqrt{2}} \ket{1}\right) \otimes \ket{0}", output)
         self.assertIn(r"\ket{\Psi_{3}} &= \left(\frac{1}{\sqrt{2}} \ket{0} - \frac{1}{\sqrt{2}} \ket{1}\right) \otimes \ket{0}", output)
+
+    def test_requires_the_full_mixed_control_bitstring_for_controlled_gates(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = pathlib.Path(temp_dir) / "mixed_multi_control_gate.tex"
+            input_path.write_text(MIXED_MULTI_CONTROLLED_GATE_MISMATCH_CIRCUIT, encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH), str(input_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        output = result.stdout
+        self.assertIn(r"\textbf{Slice 1: } controlled $X$", output)
+        self.assertIn(
+            r"\ket{\Psi_{1}} &= \ket{1}_{c_0} \otimes \ket{1}_{c_1} \otimes \ket{0}_{t}",
+            output,
+        )
+        self.assertNotIn(
+            r"\ket{\Psi_{1}} &= \ket{1}_{c_0} \otimes \ket{1}_{c_1} \otimes \ket{1}_{t}",
+            output,
+        )
+
+    def test_keeps_multi_control_symbolic_gates_branch_sensitive_after_hadamards(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = pathlib.Path(temp_dir) / "branched_multi_control_gate.tex"
+            input_path.write_text(BRANCHED_MULTI_CONTROLLED_SYMBOLIC_GATE_CIRCUIT, encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH), str(input_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        output = result.stdout
+        self.assertIn(r"\textbf{Slice 2: } controlled $A$", output)
+        self.assertIn(
+            r"\ket{\Psi_{3}} &= \frac{1}{2} ((\ket{00} + \ket{01} + \ket{10}) \otimes \ket{\psi}_{t} + \ket{11} \otimes A\ket{\psi}_{t})",
+            output,
+        )
+
+    def test_requires_the_full_mixed_control_bitstring_for_controlled_x_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = pathlib.Path(temp_dir) / "mixed_multi_control_x.tex"
+            input_path.write_text(MIXED_MULTI_CONTROLLED_X_MISMATCH_CIRCUIT, encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH), str(input_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        output = result.stdout
+        self.assertIn(r"\textbf{Slice 1: } controlled $X$ on $t$", output)
+        self.assertIn(
+            r"\ket{\Psi_{1}} &= \ket{1}_{c_0} \otimes \ket{1}_{c_1} \otimes \ket{0}_{t}",
+            output,
+        )
+        self.assertNotIn(
+            r"\ket{\Psi_{1}} &= \ket{1}_{c_0} \otimes \ket{1}_{c_1} \otimes \ket{1}_{t}",
+            output,
+        )
+
+    def test_defaults_unlabeled_rows_to_zero_and_reads_an_unlabeled_toffoli(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = pathlib.Path(temp_dir) / "unlabeled_toffoli.tex"
+            input_path.write_text(UNLABELED_TOFFOLI_CIRCUIT, encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH), str(input_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        output = result.stdout
+        self.assertIn(r"\ket{\Psi_{0}} &= \ket{0} \otimes \ket{0} \otimes \ket{0}", output)
+        self.assertIn(r"\textbf{Slice 1: } controlled $X$ on $a_{2}$", output)
+        self.assertIn(r"\ket{\Psi_{1}} &= \ket{0} \otimes \ket{0} \otimes \ket{0}", output)
+
+    def test_handles_unlabeled_mixed_c0_c1_multi_controlled_gates_generally(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = pathlib.Path(temp_dir) / "unlabeled_mixed_multi_control_gate.tex"
+            input_path.write_text(UNLABELED_MIXED_MULTI_CONTROLLED_GATE_CIRCUIT, encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH), str(input_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        output = result.stdout
+        self.assertIn(r"\textbf{Slice 1: } controlled $A$", output)
+        self.assertIn(r"\ket{\Psi_{1}} &= \ket{0} \otimes \ket{0} \otimes \ket{0}", output)
+        self.assertNotIn(r"A\ket{0}", output)
+
+    def test_handles_unlabeled_all_open_multi_controlled_x_slices_generally(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = pathlib.Path(temp_dir) / "unlabeled_all_open_multi_control_x.tex"
+            input_path.write_text(UNLABELED_ALL_OPEN_MULTI_CONTROLLED_X_CIRCUIT, encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH), str(input_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        output = result.stdout
+        self.assertIn(r"\textbf{Slice 1: } controlled $X$ on $a_{2}$", output)
+        self.assertIn(r"\ket{\Psi_{1}} &= \ket{0} \otimes \ket{0} \otimes \ket{1}", output)
+
+    def test_applies_varied_order_connected_targets_gates_swaps_and_measurements_generally(self) -> None:
+        cases = [
+            (
+                "varied_target_top.tex",
+                VARIED_ORDER_TARGET_TOP_OPEN_CONTROLS_CIRCUIT,
+                [
+                    r"\textbf{Slice 1: } controlled $X$ on $a_{0}$",
+                    r"\ket{\Psi_{1}} &= \ket{1} \otimes \ket{0} \otimes \ket{0}",
+                ],
+                [],
+            ),
+            (
+                "varied_gate_middle.tex",
+                VARIED_ORDER_GATE_MIDDLE_OPEN_CONTROLS_CIRCUIT,
+                [
+                    r"\textbf{Slice 1: } controlled $A$",
+                    r"\ket{\Psi_{1}} &= \ket{0} \otimes A\ket{0} \otimes \ket{0}",
+                ],
+                [],
+            ),
+            (
+                "varied_swap_below.tex",
+                VARIED_ORDER_SWAP_WITH_CONTROL_BELOW_CIRCUIT,
+                [
+                    r"\textbf{Slice 1: } controlled swap between $q_{0}$ and $q_{1}$",
+                    r"\ket{\Psi_{1}} &= \ket{1} \otimes \ket{0} \otimes \ket{0}",
+                ],
+                [],
+            ),
+            (
+                "varied_measure_match.tex",
+                VARIED_ORDER_CONTROLLED_MEASURE_MATCH_CIRCUIT,
+                [
+                    r"\textbf{Slice 1: } controlled measure $q_{1}$",
+                    r"\Pr(q_{1}=1)=1",
+                ],
+                [],
+            ),
+            (
+                "varied_measure_mismatch.tex",
+                VARIED_ORDER_CONTROLLED_MEASURE_MISMATCH_CIRCUIT,
+                [
+                    r"\textbf{Slice 1: } controlled measure $q_{1}$",
+                    r"\ket{\Psi_{1}} &= \ket{1} \otimes \ket{0} \otimes \ket{0}",
+                ],
+                [r"\Pr(q_{1}=0)"],
+            ),
+        ]
+
+        for file_name, source, expected_present, expected_absent in cases:
+            with self.subTest(file_name=file_name):
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    input_path = pathlib.Path(temp_dir) / file_name
+                    input_path.write_text(source, encoding="utf-8")
+
+                    result = subprocess.run(
+                        [sys.executable, str(SCRIPT_PATH), str(input_path)],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                    )
+
+                output = result.stdout
+                for needle in expected_present:
+                    self.assertIn(needle, output)
+                for needle in expected_absent:
+                    self.assertNotIn(needle, output)
 
 
 if __name__ == "__main__":

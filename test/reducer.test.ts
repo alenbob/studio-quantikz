@@ -895,6 +895,23 @@ describe("editorReducer selection workflows", () => {
     });
   });
 
+  it("adds an open control dot when requested during placement", () => {
+    const next = editorReducer(initialState, {
+      type: "addItem",
+      tool: "controlDot",
+      placement: { kind: "cell", row: 0, col: 1 },
+      controlState: "open"
+    });
+
+    expect(next.items).toContainEqual({
+      id: expect.any(String),
+      type: "controlDot",
+      point: { row: 0, col: 1 },
+      controlState: "open",
+      color: null
+    });
+  });
+
   it("rejects pasting a copied group onto occupied cells", () => {
     const clipboard = buildClipboard([
       {

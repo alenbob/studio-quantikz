@@ -54,7 +54,7 @@ type Action =
   | { type: "setSelectedIds"; itemIds: string[] }
   | { type: "selectOrCreateHorizontalSegment"; row: number; col: number; additive?: boolean }
   | { type: "drawWire"; start: { row: number; col: number }; end: { row: number; col: number } }
-  | { type: "addItem"; tool: ItemType; placement: PlacementTarget }
+  | { type: "addItem"; tool: ItemType; placement: PlacementTarget; controlState?: ControlState }
   | { type: "addGateFromArea"; start: { row: number; col: number }; end: { row: number; col: number } }
   | { type: "addMeterFromArea"; start: { row: number; col: number }; endRow: number }
   | { type: "addAnnotationFromArea"; start: { row: number; col: number }; end: { row: number; col: number } }
@@ -768,7 +768,12 @@ function normalizeVerticalConnectors(items: CircuitItem[]): CircuitItem[] {
   return normalizedItems;
 }
 
-function createItem(tool: ItemType, placement: PlacementTarget, state: EditorState): CircuitItem | null {
+function createItem(
+  tool: ItemType,
+  placement: PlacementTarget,
+  state: EditorState,
+  controlState: ControlState = "filled"
+): CircuitItem | null {
   if (tool === "horizontalSegment") {
     if (placement.kind !== "segment") {
       return null;
@@ -848,7 +853,7 @@ function createItem(tool: ItemType, placement: PlacementTarget, state: EditorSta
         id: createId(tool),
         type: "controlDot",
         point,
-        controlState: "filled",
+        controlState,
         color: null
       };
     case "targetPlus":
@@ -1358,7 +1363,7 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
       }, [...state.items, ...connectors], connectors.map((connector) => connector.id));
     }
     case "addItem": {
-      const newItem = createItem(action.tool, action.placement, state);
+      const newItem = createItem(action.tool, action.placement, state, action.controlState);
       if (!newItem) {
         return state;
       }

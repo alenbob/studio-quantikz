@@ -385,6 +385,24 @@ describe("exportToQuantikz", () => {
     expect(code).toContain("\\ocontrol{}");
   });
 
+  it("exports a middle target with open controls above and below as a general multi-controlled slice", () => {
+    const code = exportToQuantikz(
+      makeState({
+        items: [
+          { id: "dot-top", type: "controlDot", point: { row: 0, col: 1 }, controlState: "open" },
+          { id: "line-top", type: "verticalConnector", point: { row: 0, col: 1 }, length: 1, wireType: "quantum" },
+          { id: "plus-mid", type: "targetPlus", point: { row: 1, col: 1 } },
+          { id: "line-bottom", type: "verticalConnector", point: { row: 1, col: 1 }, length: 1, wireType: "quantum" },
+          { id: "dot-bottom", type: "controlDot", point: { row: 2, col: 1 }, controlState: "open" }
+        ]
+      })
+    );
+
+    expect(code.match(/\\ocontrol\{\}/g)?.length).toBe(2);
+    expect(code).toContain("\\targ{}");
+    expect(code.match(/\\wire\[d\]\[1\]\{q\}/g)?.length).toBeGreaterThanOrEqual(2);
+  });
+
   it("treats a meter as a valid connector target", () => {
     const code = exportToQuantikz(
       makeState({

@@ -408,24 +408,52 @@ def qubit_description(action: str, row_labels: list[str], row: int) -> str:
     return rf"{action} ${row_reference(row_labels, row, 'q')}$"
 
 
-def controls_for_gate_span(column: dict[str, object], gate_row: int, gate_span: int) -> list[tuple[int, int]]:
-    gate_rows = set(range(gate_row, gate_row + gate_span))
-    matched = {
+def controlled_qubit_description(action: str, row_labels: list[str], row: int) -> str:
+    return rf"controlled {action} ${row_reference(row_labels, row, 'q')}$"
+
+
+def controls_for_connected_rows(column: dict[str, object], active_rows: set[int]) -> list[tuple[int, int]]:
+    expected_by_row: dict[int, int] = {}
+    for row, expected in column["controls"]:
+        expected_by_row[row] = expected
+    for row, _target_row, expected in column["control_targets"]:
+        existing = expected_by_row.get(row)
+        if existing is not None and existing != expected:
+            raise ValueError(f"Control row {row} mixes filled and empty expectations in one column")
+        expected_by_row[row] = expected
+
+    adjacency: dict[int, set[int]] = {}
+
+    def connect(left: int, right: int) -> None:
+        adjacency.setdefault(left, set()).add(right)
+        adjacency.setdefault(right, set()).add(left)
+
+    for source_row, endpoints in column["connectors_to_rows"].items():
+        for endpoint in endpoints:
+            connect(source_row, endpoint)
+
+    for row, target_row, _expected in column["control_targets"]:
+        connect(row, target_row)
+
+    reachable_rows = set(active_rows)
+    frontier = list(active_rows)
+    while frontier:
+        row = frontier.pop()
+        for neighbor in adjacency.get(row, set()):
+            if neighbor in reachable_rows:
+                continue
+            reachable_rows.add(neighbor)
+            frontier.append(neighbor)
+
+    return sorted(
         (row, expected)
-        for row, target_row, expected in column["control_targets"]
-        if target_row in gate_rows
-    }
-    standalone_controls = list(column["controls"])
-    connectors = column["connectors_to_rows"]
-    for control_row, expected in standalone_controls:
-        if gate_rows & connectors.get(control_row, set()):
-            matched.add((control_row, expected))
-            continue
-        for source_row, endpoints in connectors.items():
-            if source_row in gate_rows and control_row in endpoints:
-                matched.add((control_row, expected))
-                break
-    return sorted(matched)
+        for row, expected in expected_by_row.items()
+        if row not in active_rows and row in reachable_rows
+    )
+
+
+def controls_for_gate_span(column: dict[str, object], gate_row: int, gate_span: int) -> list[tuple[int, int]]:
+    return controls_for_connected_rows(column, set(range(gate_row, gate_row + gate_span)))
 
 
 def build_logical_slices(row_labels: list[str], grid: list[list[str]]) -> list[LogicalSlice]:
@@ -528,11 +556,7 @@ def build_logical_slices(row_labels: list[str], grid: list[list[str]]) -> list[L
             used_swap_targets.add(swap_endpoint)
             top_row = min(swap_row, swap_endpoint)
             bottom_row = max(swap_row, swap_endpoint)
-            controls = sorted(
-                (row, expected)
-                for row, target_row, expected in current["control_targets"]
-                if top_row <= target_row <= bottom_row
-            )
+            controls = controls_for_connected_rows(current, set(range(top_row, bottom_row + 1)))
             column_slices.append(
                 (
                     top_row,
@@ -577,11 +601,7 @@ def build_logical_slices(row_labels: list[str], grid: list[list[str]]) -> list[L
             )
 
         for target_row in current["targets"]:
-            controls = sorted(
-                (row, expected)
-                for row, target_target_row, expected in current["control_targets"]
-                if target_target_row == target_row
-            )
+            controls = controls_for_connected_rows(current, {target_row})
             if not controls:
                 continue
             column_slices.append(
@@ -602,18 +622,23 @@ def build_logical_slices(row_labels: list[str], grid: list[list[str]]) -> list[L
             )
 
         for measured_row in current["meters"]:
+            controls = controls_for_connected_rows(current, {measured_row})
             column_slices.append(
                 (
                     measured_row,
                     2,
                     LogicalSlice(
                         kind="measure",
-                        controls=[],
+                        controls=controls,
                         target_row=measured_row,
                         secondary_row=None,
                         span=1,
                         label="measure",
-                        description=qubit_description("measure", row_labels, measured_row),
+                        description=(
+                            controlled_qubit_description("measure", row_labels, measured_row)
+                            if controls
+                            else qubit_description("measure", row_labels, measured_row)
+                        ),
                         source_columns=[index],
                     ),
                 )
@@ -710,7 +735,8 @@ def make_initial_terms(
         label = span_entry[0] if span_entry is not None else row_labels[row]
         span = span_entry[1] if span_entry is not None else 1
         if not label.strip():
-            continue
+            label = r"\ket{0}"
+            span = 1
 
         covered_rows = list(range(row, row + span))
         consumed.update(covered_rows)
@@ -2544,11 +2570,12 @@ def render_initial_state_latex(
         label = span_entry[0] if span_entry is not None else row_labels[row]
         span = span_entry[1] if span_entry is not None else 1
         if not label.strip():
-            continue
+            label = r"\ket{0}"
+            span = 1
         consumed.update(range(row, row + span))
         factors.append(label)
     if not factors:
-        raise ValueError("No labeled input rows were found")
+        raise ValueError("No input rows were found")
     return r" \otimes ".join(factors)
 
 
@@ -2613,8 +2640,24 @@ def build_discursive_block(
                 if logical_index != len(logical_slices) - 1:
                     raise ValueError("Measurement is only supported as the final logical slice in symbolic LaTeX output")
                 assert slice_info.target_row is not None
-                active_rows = [row for row in all_rows if any(row in term.basis_bits or row in term.payloads for term in terms)]
-                rendered_state = render_measurement_state_latex(terms, active_rows, slice_info.target_row, row_labels)
+                measured_terms = terms
+                if slice_info.controls:
+                    measured_terms = [
+                        term
+                        for term in terms
+                        if all(term.basis_bits.get(row) == expected for row, expected in slice_info.controls)
+                    ]
+
+                if not measured_terms:
+                    active_rows = [row for row in all_rows if any(row in term.basis_bits or row in term.payloads for term in terms)]
+                    rendered_state = render_state_latex(terms, active_rows, row_labels)
+                else:
+                    active_rows = [
+                        row
+                        for row in all_rows
+                        if any(row in term.basis_bits or row in term.payloads for term in measured_terms)
+                    ]
+                    rendered_state = render_measurement_state_latex(measured_terms, active_rows, slice_info.target_row, row_labels)
             else:
                 terms = evolve_terms(terms, slice_info)
                 active_rows = [row for row in all_rows if any(row in term.basis_bits or row in term.payloads for term in terms)]

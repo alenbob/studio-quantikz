@@ -316,6 +316,18 @@ describe("App smoke tests", () => {
     expect(container.querySelectorAll(".control-dot-open")).toHaveLength(2);
   });
 
+  it("places an open control when Option is held with the control tool", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+
+    await user.click(screen.getByRole("button", { name: /^control dot$/i }));
+    await user.keyboard("[AltLeft>]");
+    await user.click(screen.getByTestId("grid-cell-0-0"));
+    await user.keyboard("[/AltLeft]");
+
+    await waitFor(() => expect(container.querySelectorAll(".control-dot-open")).toHaveLength(1));
+  });
+
   it("keeps the selected control overlay hollow for filled controls", async () => {
     const user = userEvent.setup();
     const { container } = render(<App />);
@@ -610,6 +622,177 @@ describe("App smoke tests", () => {
     }
   });
 
+  it("feeds varied-order multi-control slices from the visual editor into symbolic mode", async () => {
+    const user = userEvent.setup();
+    const seenCodes: string[] = [];
+    const useSymbolicLatexSpy = vi.spyOn(symbolicLatexModule, "useSymbolicLatex").mockImplementation((code) => {
+      seenCodes.push(code);
+
+      return {
+        latex: code.includes("\\targ{}") && code.includes("\\ocontrol{}") && code.includes("\\wire[d][1]{q}")
+          ? String.raw`\begin{equation*}
+\begin{aligned}
+\ket{\Psi_{0}} &= \ket{0} \otimes \ket{0} \otimes \ket{0}
+\end{aligned}
+\end{equation*}
+
+\noindent\textbf{Slice 1: } controlled $X$ on $a_{0}$\par
+
+\begin{equation*}
+\begin{aligned}
+\ket{\Psi_{1}} &= \ket{1} \otimes \ket{0} \otimes \ket{0}
+\end{aligned}
+\end{equation*}`
+          : "",
+        state: code.trim() ? "ready" : "idle",
+        error: null
+      };
+    });
+
+    try {
+      const { container } = render(<App />);
+      const board = container.querySelector(".workspace-board") as HTMLDivElement;
+      mockBoardRect(board);
+
+      await user.click(screen.getByRole("button", { name: /^target plus$/i }));
+      await user.click(screen.getByTestId("grid-cell-0-0"));
+
+      await user.click(screen.getByRole("button", { name: /^control dot$/i }));
+      await user.keyboard("[AltLeft>]");
+      await user.click(screen.getByTestId("grid-cell-1-0"));
+      await user.click(screen.getByTestId("grid-cell-2-0"));
+      await user.keyboard("[/AltLeft]");
+
+      await user.click(screen.getByRole("button", { name: /^wires$/i }));
+      await user.pointer([
+        {
+          target: screen.getByTestId("grid-cell-0-0"),
+          keys: "[MouseLeft>]",
+          coords: {
+            x: getCellCenterX(0, DEFAULT_CIRCUIT_LAYOUT),
+            y: getRowY(0, DEFAULT_CIRCUIT_LAYOUT)
+          }
+        },
+        { keys: "[/MouseLeft]" },
+        {
+          target: screen.getByTestId("grid-cell-2-0"),
+          keys: "[MouseLeft>]",
+          coords: {
+            x: getCellCenterX(0, DEFAULT_CIRCUIT_LAYOUT),
+            y: getRowY(2, DEFAULT_CIRCUIT_LAYOUT)
+          }
+        },
+        { keys: "[/MouseLeft]" }
+      ]);
+
+      await waitFor(() => {
+        expect(container.querySelectorAll(".vertical-connector")).toHaveLength(2);
+        expect(container.querySelectorAll(".control-dot-open")).toHaveLength(2);
+      });
+
+      await user.click(screen.getByRole("button", { name: /convert to quantikz/i }));
+      expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain("\\targ{}");
+
+      await user.click(screen.getByRole("button", { name: /^symbolic$/i }));
+
+      await waitFor(() => {
+        expect(seenCodes.some((code) => code.includes("\\targ{}") && code.includes("\\ocontrol{}") && code.includes("\\wire[d][1]{q}"))).toBe(true);
+      });
+      expect((screen.getByLabelText(/symbolic evolution output/i) as HTMLTextAreaElement).value).toContain(
+        String.raw`\ket{\Psi_{1}} &= \ket{1} \otimes \ket{0} \otimes \ket{0}`
+      );
+    } finally {
+      useSymbolicLatexSpy.mockRestore();
+    }
+  });
+
+  it("feeds the exact c0-c2-target-middle slice from the visual editor into symbolic mode", async () => {
+    const user = userEvent.setup();
+    const seenCodes: string[] = [];
+    const useSymbolicLatexSpy = vi.spyOn(symbolicLatexModule, "useSymbolicLatex").mockImplementation((code) => {
+      seenCodes.push(code);
+
+      return {
+        latex: code.includes("\\ocontrol{}") && code.includes("\\targ{}") && code.includes("\\wire[d][1]{q}")
+          ? String.raw`\begin{equation*}
+\begin{aligned}
+\ket{\Psi_{0}} &= \ket{0} \otimes \ket{0} \otimes \ket{0}
+\end{aligned}
+\end{equation*}
+
+\noindent\textbf{Slice 1: } controlled $X$ on $a_{1}$\par
+
+\begin{equation*}
+\begin{aligned}
+\ket{\Psi_{1}} &= \ket{0} \otimes \ket{1} \otimes \ket{0}
+\end{aligned}
+\end{equation*}`
+          : "",
+        state: code.trim() ? "ready" : "idle",
+        error: null
+      };
+    });
+
+    try {
+      const { container } = render(<App />);
+      const board = container.querySelector(".workspace-board") as HTMLDivElement;
+      mockBoardRect(board);
+
+      await user.click(screen.getByRole("button", { name: /^target plus$/i }));
+      await user.click(screen.getByTestId("grid-cell-1-0"));
+
+      await user.click(screen.getByRole("button", { name: /^control dot$/i }));
+      await user.keyboard("[AltLeft>]");
+      await user.click(screen.getByTestId("grid-cell-0-0"));
+      await user.click(screen.getByTestId("grid-cell-2-0"));
+      await user.keyboard("[/AltLeft]");
+
+      await user.click(screen.getByRole("button", { name: /^wires$/i }));
+      await user.pointer([
+        {
+          target: screen.getByTestId("grid-cell-0-0"),
+          keys: "[MouseLeft>]",
+          coords: {
+            x: getCellCenterX(0, DEFAULT_CIRCUIT_LAYOUT),
+            y: getRowY(0, DEFAULT_CIRCUIT_LAYOUT)
+          }
+        },
+        { keys: "[/MouseLeft]" },
+        {
+          target: screen.getByTestId("grid-cell-2-0"),
+          keys: "[MouseLeft>]",
+          coords: {
+            x: getCellCenterX(0, DEFAULT_CIRCUIT_LAYOUT),
+            y: getRowY(2, DEFAULT_CIRCUIT_LAYOUT)
+          }
+        },
+        { keys: "[/MouseLeft]" }
+      ]);
+
+      await waitFor(() => {
+        expect(container.querySelectorAll(".vertical-connector")).toHaveLength(2);
+        expect(container.querySelectorAll(".control-dot-open")).toHaveLength(2);
+      });
+
+      await user.click(screen.getByRole("button", { name: /convert to quantikz/i }));
+      const quantikz = (screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value;
+      expect(quantikz.match(/\\ocontrol\{\}/g)?.length).toBe(2);
+      expect(quantikz).toContain("\\targ{}");
+      expect(quantikz.match(/\\wire\[d\]\[1\]\{q\}/g)?.length).toBeGreaterThanOrEqual(2);
+
+      await user.click(screen.getByRole("button", { name: /^symbolic$/i }));
+
+      await waitFor(() => {
+        expect(seenCodes.some((code) => code.includes("\\ocontrol{}") && code.includes("\\targ{}") && code.includes("\\wire[d][1]{q}"))).toBe(true);
+      });
+      expect((screen.getByLabelText(/symbolic evolution output/i) as HTMLTextAreaElement).value).toContain(
+        String.raw`\ket{\Psi_{1}} &= \ket{0} \otimes \ket{1} \otimes \ket{0}`
+      );
+    } finally {
+      useSymbolicLatexSpy.mockRestore();
+    }
+  });
+
   it("copies the rendered figure to the clipboard", async () => {
     const user = userEvent.setup();
     const pdfBlob = new Blob(["%PDF-test"], { type: "application/pdf" });
@@ -670,7 +853,7 @@ describe("App smoke tests", () => {
       if (originalClipboardDescriptor) {
         Object.defineProperty(navigator, "clipboard", originalClipboardDescriptor);
       } else {
-        delete (navigator as Navigator & { clipboard?: Navigator["clipboard"] }).clipboard;
+        Reflect.deleteProperty(navigator as { clipboard?: Navigator["clipboard"] }, "clipboard");
       }
 
       if (typeof originalClipboardItem === "undefined") {

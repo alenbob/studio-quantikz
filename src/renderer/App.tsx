@@ -1466,7 +1466,7 @@ export default function App(): JSX.Element {
                       <div key={tool} className="shortcut-row">
                         <span className="shortcut-key">{shortcutKey}</span>
                         <div>
-                          <strong>{label}</strong>
+                          <strong>{tool === "controlDot" ? `${label} (hold Option for empty)` : label}</strong>
                           <p>{description}</p>
                         </div>
                       </div>
@@ -1706,9 +1706,9 @@ export default function App(): JSX.Element {
             setSelectedWireLabel({ row, side });
           }}
           onSelectStructure={handleSelectStructure}
-          onPlaceItem={(tool, placement) => {
+          onPlaceItem={(tool, placement, options) => {
             clearContextSelection();
-            dispatch({ type: "addItem", tool, placement });
+            dispatch({ type: "addItem", tool, placement, controlState: options?.controlState });
             if (state.activeTool !== "select") {
               dispatch({ type: "setSelectedIds", itemIds: [] });
             }

@@ -264,6 +264,22 @@ function appendConnectorWireOption(options: string[], wireType: WireType): void 
   }
 }
 
+function standaloneControlCommand(control: ControlDotItem, connector: VerticalConnectorItem): string {
+  const controlOptions = commandColorOptions(control.color ?? connector.color, {
+    fill: controlStateFor(control) === "open" ? "open" : "solid"
+  });
+  const controlCommand = controlStateFor(control) === "open" ? "\\ocontrol" : "\\control";
+
+  return controlOptions ? `${controlCommand}[${controlOptions}]{} ` : `${controlCommand}{} `;
+}
+
+function explicitVerticalWireCommand(span: number, connector: VerticalConnectorItem): string {
+  const wireOptions = wireStyleOption(connector.color);
+  return wireOptions
+    ? `\\wire[d][${span}][${wireOptions}]{${toQuantikzWireType(connector.wireType)}}`
+    : `\\wire[d][${span}]{${toQuantikzWireType(connector.wireType)}}`;
+}
+
 
 function formatSpacingCm(value: number): string {
   const rounded = Math.round(value * 100) / 100;
@@ -563,6 +579,39 @@ export function exportToQuantikz(state: EditorState): string {
       continue;
     }
 
+    if (connectorControls.length === 1 && targetRows.length === 1) {
+      const control = connectorControls[0];
+      const targetRow = targetRows[0];
+      const controlOptionParts: string[] = [];
+      const controlStyle = commandColorOptions(control.color ?? connector.color, {
+        fill: controlStateFor(control) === "open" ? "open" : "solid",
+        wire: true
+      });
+      if (controlStyle) {
+        controlOptionParts.push(controlStyle);
+      }
+      appendConnectorWireOption(controlOptionParts, connector.wireType);
+      const controlCommand = controlStateFor(control) === "open" ? "\\octrl" : "\\ctrl";
+      cells[control.point.row][column].push(
+        controlOptionParts.length > 0
+          ? `${controlCommand}[${wrapOptionBlock(controlOptionParts)}]{${targetRow - control.point.row}}`
+          : `${controlCommand}{${targetRow - control.point.row}}`
+      );
+      used.add(itemKey(control));
+
+      for (const target of connectorTargets) {
+        const targetOptions = commandColorOptions(target.color ?? connector.color);
+        cells[target.point.row][column].push(
+          targetOptions ? `\\targ[${targetOptions}]{}`
+            : "\\targ{}"
+        );
+        used.add(itemKey(target));
+      }
+
+      connector.members.forEach((member) => used.add(itemKey(member)));
+      continue;
+    }
+
     if (connectorControls.length === 1 && connectorTargets.length > 1) {
       const control = connectorControls[0];
       const sortedTargets = [...connectorTargets].sort((left, right) => left.point.row - right.point.row);
@@ -613,27 +662,13 @@ export function exportToQuantikz(state: EditorState): string {
     }
 
     if (connectorControls.length > 0 && targetRows.length > 0) {
+      const anchorRows = [...new Set([
+        ...connectorControls.map((control) => control.point.row),
+        ...targetRows
+      ])].sort((left, right) => left - right);
+
       for (const control of connectorControls) {
-        const controlOptionParts: string[] = [];
-        const controlStyle = commandColorOptions(control.color ?? connector.color, {
-          fill: controlStateFor(control) === "open" ? "open" : "solid",
-          wire: true
-        });
-        if (controlStyle) {
-          controlOptionParts.push(controlStyle);
-        }
-        appendConnectorWireOption(controlOptionParts, connector.wireType);
-        const controlCommand = controlStateFor(control) === "open" ? "\\octrl" : "\\ctrl";
-        for (const targetRow of targetRows) {
-          if (targetRow === control.point.row) {
-            continue;
-          }
-          cells[control.point.row][column].push(
-            controlOptionParts.length > 0
-              ? `${controlCommand}[${wrapOptionBlock(controlOptionParts)}]{${targetRow - control.point.row}}`
-              : `${controlCommand}{${targetRow - control.point.row}}`
-          );
-        }
+        cells[control.point.row][column].push(standaloneControlCommand(control, connector).trim());
         used.add(itemKey(control));
       }
 
@@ -644,6 +679,12 @@ export function exportToQuantikz(state: EditorState): string {
             : "\\targ{}"
         );
         used.add(itemKey(target));
+      }
+
+      for (let index = 0; index < anchorRows.length - 1; index += 1) {
+        const currentRow = anchorRows[index];
+        const nextRow = anchorRows[index + 1];
+        cells[currentRow][column].push(explicitVerticalWireCommand(nextRow - currentRow, connector));
       }
 
       connector.members.forEach((member) => used.add(itemKey(member)));
