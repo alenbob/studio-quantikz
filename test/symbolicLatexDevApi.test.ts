@@ -19,7 +19,7 @@ describe("symbolic-latex-dev api", () => {
     renderSymbolicLatexMock.mockResolvedValue({
       success: true,
       envIndex: 0,
-      latex: String.raw`\begin{align*}\ket{\Psi_{0}}\end{align*}`
+      latex: String.raw`\begin{equation*}\begin{aligned}\ket{\Psi_{0}}\end{aligned}\end{equation*}`
     });
 
     const request = {
@@ -52,7 +52,7 @@ describe("symbolic-latex-dev api", () => {
     expect(responseState.statusCode).toBe(200);
     expect(responseState.payload).toMatchObject({
       success: true,
-      latex: expect.stringContaining(String.raw`\begin{align*}`)
+      latex: expect.stringContaining(String.raw`\begin{equation*}`)
     });
   });
 });

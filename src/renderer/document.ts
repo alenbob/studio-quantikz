@@ -10,6 +10,15 @@ export const DEFAULT_EXPORT_PREAMBLE = [
 ].join("\n");
 
 export const DEFAULT_SYMBOLIC_PREAMBLE = [
+  "\\documentclass[varwidth=2400pt,border=4pt]{standalone}",
+  "\\usepackage{xcolor}",
+  "\\usepackage{amsmath}",
+  "\\usepackage{amssymb}",
+  "\\usepackage{amsfonts}",
+  "\\usepackage{braket}"
+].join("\n");
+
+const LEGACY_CROPPED_SYMBOLIC_PREAMBLE = [
   "\\documentclass[border=4pt]{standalone}",
   "\\usepackage{xcolor}",
   "\\usepackage{amsmath}",
@@ -45,6 +54,7 @@ export function normalizeSymbolicPreamble(preamble: string): string {
   const trimmed = preamble.trim();
 
   if (
+    trimmed === LEGACY_CROPPED_SYMBOLIC_PREAMBLE ||
     trimmed === LEGACY_FIXED_WIDTH_SYMBOLIC_PREAMBLE ||
     trimmed === LEGACY_LINE_WIDTH_SYMBOLIC_PREAMBLE
   ) {

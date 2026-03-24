@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_EXPORT_PREAMBLE } from "../src/renderer/document";
+import { DEFAULT_EXPORT_PREAMBLE, DEFAULT_SYMBOLIC_PREAMBLE } from "../src/renderer/document";
 
 import { renderQuantikzPdf } from "../src/server/renderQuantikz";
 
@@ -109,5 +109,33 @@ describe("renderQuantikzPdf", () => {
         body: expect.any(FormData)
       })
     );
+  });
+
+  it("preserves the fixed-width symbolic standalone preamble for discursive symbolic output", async () => {
+    const expectedPdf = Buffer.from("%PDF-1.7\n", "utf8");
+    const fetchMock = vi.fn().mockResolvedValue(new Response(expectedPdf, {
+      status: 200,
+      headers: {
+        "Content-Type": "application/pdf"
+      }
+    }));
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    const result = await renderQuantikzPdf(
+      String.raw`\begin{equation*}
+\begin{aligned}
+\ket{\Psi_{0}} &= \ket{0}
+\end{aligned}
+\end{equation*}`,
+      DEFAULT_SYMBOLIC_PREAMBLE
+    );
+
+    expect(result).toEqual({ success: true, pdf: expectedPdf });
+
+    const request = fetchMock.mock.calls[0]?.[1];
+    const payload = JSON.parse(String(request?.body)) as { document: string; format: string };
+    expect(payload.format).toBe("pdf");
+    expect(payload.document).toContain(String.raw`\documentclass[varwidth=2400pt,border=4pt]{standalone}`);
+    expect(payload.document).toContain(String.raw`\begin{equation*}`);
   });
 });

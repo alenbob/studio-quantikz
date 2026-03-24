@@ -497,22 +497,31 @@ describe("App smoke tests", () => {
   it("switches the export panel to generated symbolic latex and preview", async () => {
     const user = userEvent.setup();
     const useRenderedPdfSpy = vi.spyOn(renderedPdfModule, "useRenderedPdf").mockImplementation((code) => ({
-      pdfUrl: code.includes(String.raw`\begin{align*}`) || code.includes(String.raw`\begin{quantikz}`)
+      pdfUrl: code.includes(String.raw`\begin{equation*}`) || code.includes(String.raw`\begin{quantikz}`)
         ? "blob:preview"
         : null,
-      previewImageUrl: code.includes(String.raw`\begin{align*}`)
+      previewImageUrl: code.includes(String.raw`\begin{equation*}`)
         ? "blob:symbolic-preview-image"
         : code.includes(String.raw`\begin{quantikz}`)
           ? "blob:quantikz-preview-image"
           : null,
-      state: code.includes(String.raw`\begin{align*}`) || code.includes(String.raw`\begin{quantikz}`) ? "ready" : "idle",
+      state: code.includes(String.raw`\begin{equation*}`) || code.includes(String.raw`\begin{quantikz}`) ? "ready" : "idle",
       error: null
     }));
     const useSymbolicLatexSpy = vi.spyOn(symbolicLatexModule, "useSymbolicLatex").mockReturnValue({
-      latex: String.raw`\begin{align*}
-\ket{\Psi_{0}} &= \ket{0} \\
+      latex: String.raw`\begin{equation*}
+\begin{aligned}
+\ket{\Psi_{0}} &= \ket{0}
+\end{aligned}
+\end{equation*}
+
+\noindent\textbf{Slice 1: } apply $H$\par
+
+\begin{equation*}
+\begin{aligned}
 \ket{\Psi_{1}} &= H\ket{0}
-\end{align*}`,
+\end{aligned}
+\end{equation*}`,
       state: "ready",
       error: null
     });
@@ -534,14 +543,40 @@ describe("App smoke tests", () => {
         String.raw`\ket{\Psi_{1}} &= H\ket{0}`
       );
       expect(useRenderedPdfSpy).toHaveBeenCalledWith(
-        expect.stringContaining(String.raw`\begin{align*}`),
+        expect.stringContaining(String.raw`\begin{equation*}`),
         expect.stringContaining(String.raw`\usepackage{amsmath}`)
       );
       expect(screen.getByTitle(/rendered symbolic evolution preview/i)).toBeInTheDocument();
 
+      fireEvent.change(screen.getByLabelText(/symbolic evolution output/i), {
+        target: {
+          value: String.raw`\begin{equation*}
+\begin{aligned}
+\ket{\Psi_{0}} &= \ket{0}
+\end{aligned}
+\end{equation*}
+
+\noindent\textbf{Slice 1: } apply $\widetilde{H}$\par
+
+\begin{equation*}
+\begin{aligned}
+\ket{\Psi_{1}} &= \widetilde{H}\ket{0}
+\end{aligned}
+\end{equation*}`
+        }
+      });
+
+      expect((screen.getByLabelText(/symbolic evolution output/i) as HTMLTextAreaElement).value).toContain(
+        String.raw`\widetilde{H}\ket{0}`
+      );
+      await waitFor(() => expect(useRenderedPdfSpy).toHaveBeenCalledWith(
+        expect.stringContaining(String.raw`\widetilde{H}\ket{0}`),
+        expect.stringContaining(String.raw`\usepackage{amsmath}`)
+      ));
+
       await user.click(screen.getByRole("button", { name: /toggle symbolic editor view/i }));
       expect((screen.getByLabelText(/symbolic preamble/i) as HTMLTextAreaElement).value).toContain(
-        String.raw`\documentclass[border=4pt]{standalone}`
+        String.raw`\documentclass[varwidth=2400pt,border=4pt]{standalone}`
       );
       fireEvent.change(screen.getByLabelText(/symbolic preamble/i), {
         target: {
@@ -556,7 +591,7 @@ describe("App smoke tests", () => {
         String.raw`\newcommand{\foo}{bar}`
       );
       expect(useRenderedPdfSpy).toHaveBeenCalledWith(
-        expect.stringContaining(String.raw`\begin{align*}`),
+        expect.stringContaining(String.raw`\begin{equation*}`),
         expect.stringContaining(String.raw`\newcommand{\foo}{bar}`)
       );
     } finally {

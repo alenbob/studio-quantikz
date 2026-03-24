@@ -303,6 +303,7 @@ export default function App(): JSX.Element {
   const [toastAnimationKey, setToastAnimationKey] = useState(0);
   const [selectedWireLabel, setSelectedWireLabel] = useState<{ row: number; side: WireLabelSide } | null>(null);
   const [selectedStructure, setSelectedStructure] = useState<StructureSelection | null>(null);
+  const [symbolicEditorCode, setSymbolicEditorCode] = useState("");
   const [workbenchLayoutMode, setWorkbenchLayoutMode] = useState<WorkbenchLayoutMode>("left-rail-tall");
   const stateRef = useRef(state);
   const clipboardRef = useRef<CircuitClipboard | null>(null);
@@ -310,6 +311,7 @@ export default function App(): JSX.Element {
   const historySheetOpenRef = useRef(isHistorySheetOpen);
   const selectedWireLabelRef = useRef(selectedWireLabel);
   const selectedStructureRef = useRef(selectedStructure);
+  const lastGeneratedSymbolicLatexRef = useRef("");
   const leftPanelRef = useRef<HTMLDivElement | null>(null);
   const workspacePanelRef = useRef<HTMLElement | null>(null);
 
@@ -348,7 +350,7 @@ export default function App(): JSX.Element {
     [state.exportSymbolicPreamble]
   );
   const symbolicPreviewResult = useRenderedPdf(
-    isSymbolicMode ? symbolicLatexResult.latex : "",
+    isSymbolicMode ? symbolicEditorCode : "",
     normalizedSymbolicPreamble
   );
   const visualPreambleDefinitions = useMemo(
@@ -388,6 +390,30 @@ export default function App(): JSX.Element {
       dispatch({ type: "setExportSymbolicPreamble", preamble: normalizedSymbolicPreamble });
     }
   }, [dispatch, normalizedSymbolicPreamble, state.exportSymbolicPreamble]);
+
+  useEffect(() => {
+    if (!resolvedExportSource.code.trim()) {
+      lastGeneratedSymbolicLatexRef.current = "";
+      setSymbolicEditorCode((currentCode) => currentCode ? "" : currentCode);
+      return;
+    }
+
+    if (symbolicLatexResult.state !== "ready") {
+      return;
+    }
+
+    const nextGeneratedLatex = symbolicLatexResult.latex;
+    const previousGeneratedLatex = lastGeneratedSymbolicLatexRef.current;
+    lastGeneratedSymbolicLatexRef.current = nextGeneratedLatex;
+
+    setSymbolicEditorCode((currentCode) => {
+      if (!currentCode.trim() || currentCode === previousGeneratedLatex) {
+        return nextGeneratedLatex;
+      }
+
+      return currentCode;
+    });
+  }, [resolvedExportSource.code, symbolicLatexResult.latex, symbolicLatexResult.state]);
 
   useEffect(() => {
     clipboardRef.current = clipboard;
@@ -527,7 +553,7 @@ export default function App(): JSX.Element {
   function getCurrentExportAssetSource(): ExportAssetSource {
     if (isSymbolicMode) {
       return {
-        code: symbolicLatexResult.latex,
+        code: symbolicEditorCode,
         preamble: normalizedSymbolicPreamble
       };
     }
@@ -772,20 +798,26 @@ export default function App(): JSX.Element {
   async function handleDownload(
     format: DownloadFormat,
     source: ExportAssetSource,
-    baseName = "quantikz-circuit"
+    baseName?: string
   ): Promise<void> {
     if (!source.code.trim()) {
-      dispatch({ type: "setMessage", message: "Add Quantikz code before downloading an export." });
+      dispatch({
+        type: "setMessage",
+        message: isSymbolicMode
+          ? "Add symbolic LaTeX before downloading an export."
+          : "Add Quantikz code before downloading an export."
+      });
       return;
     }
 
     try {
+      const resolvedBaseName = baseName ?? (isSymbolicMode ? "symbolic-evolution" : "quantikz-circuit");
       const blob = await buildDownloadBlob(format, source);
-      downloadBlob(blob, getDownloadFilename(baseName, format));
+      downloadBlob(blob, getDownloadFilename(resolvedBaseName, format));
       setOpenDownloadMenuTarget(null);
       dispatch({
         type: "setMessage",
-        message: `Downloaded ${getDownloadFilename(baseName, format)}.`
+        message: `Downloaded ${getDownloadFilename(resolvedBaseName, format)}.`
       });
     } catch (error) {
       dispatch({
@@ -810,12 +842,18 @@ export default function App(): JSX.Element {
       await copyQuantikzImageToClipboard(source.code, source.preamble);
       dispatch({
         type: "setMessage",
-        message: "Copied the rendered figure as a PNG to the clipboard."
+        message: isSymbolicMode
+          ? "Copied the rendered symbolic preview as a PNG to the clipboard."
+          : "Copied the rendered figure as a PNG to the clipboard."
       });
     } catch (error) {
       dispatch({
         type: "setMessage",
-        message: error instanceof Error ? error.message : "Unable to copy the figure to the clipboard."
+        message: error instanceof Error
+          ? error.message
+          : isSymbolicMode
+            ? "Unable to copy the symbolic preview to the clipboard."
+            : "Unable to copy the figure to the clipboard."
       });
     }
   }
@@ -830,7 +868,10 @@ export default function App(): JSX.Element {
     event.dataTransfer.setData("text/plain", previewImageUrl);
 
     try {
-      event.dataTransfer.setData("DownloadURL", `image/png:quantikz-circuit.png:${previewImageUrl}`);
+      event.dataTransfer.setData(
+        "DownloadURL",
+        `image/png:${isSymbolicMode ? "symbolic-evolution" : "quantikz-circuit"}.png:${previewImageUrl}`
+      );
     } catch {
       // Some browsers ignore custom drag payload types; native image dragging still works.
     }
@@ -1063,20 +1104,23 @@ export default function App(): JSX.Element {
     dispatch({ type: "setTool", tool });
   }
 
+  const symbolicCodeEdited = Boolean(symbolicEditorCode.trim()) && symbolicEditorCode !== symbolicLatexResult.latex;
   const symbolicTextareaPlaceholder = !resolvedExportSource.code.trim()
-    ? "Generate or paste Quantikz code to produce slice-by-slice symbolic evolution."
-    : symbolicLatexResult.state === "loading"
-      ? "Generating slice-by-slice symbolic evolution..."
-      : symbolicLatexResult.state === "error"
+    ? "Generate or paste Quantikz code to populate the symbolic LaTeX editor."
+    : symbolicLatexResult.state === "loading" && !symbolicEditorCode.trim()
+      ? "Generating symbolic LaTeX..."
+      : symbolicLatexResult.state === "error" && !symbolicEditorCode.trim()
         ? symbolicLatexResult.error ?? "Unable to generate symbolic evolution for this circuit."
-        : "Slice-by-slice symbolic evolution will appear here.";
+        : "Symbolic LaTeX appears here. You can edit it before rendering.";
   const symbolicStatusText = !resolvedExportSource.code.trim()
-    ? "Symbolic evolution is generated from the current Quantikz code."
+    ? "Generate or paste Quantikz code, then edit the symbolic LaTeX here if needed."
     : symbolicLatexResult.state === "loading"
       ? "Generating slice-by-slice symbolic evolution..."
-      : symbolicLatexResult.state === "error"
+      : symbolicLatexResult.state === "error" && !symbolicEditorCode.trim()
         ? symbolicLatexResult.error ?? "Unable to generate symbolic evolution for this circuit."
-        : "Auto-generated from the current Quantikz circuit.";
+        : symbolicCodeEdited
+          ? "Editing the symbolic LaTeX locally."
+          : "Auto-generated from the current Quantikz circuit. You can edit it below.";
   const activeEditorView = isSymbolicMode ? symbolicPaneView : quantikzPaneView;
   const symbolicPreamblePlaceholder = "LaTeX preamble for the symbolic evolution preview.";
   const previewHeadingLabel = isSymbolicMode ? "Symbolic preview" : "Figure preview";
@@ -1618,9 +1662,9 @@ export default function App(): JSX.Element {
                       aria-label="Symbolic evolution output"
                       className="code-output preamble-output"
                       spellCheck={false}
-                      value={symbolicLatexResult.latex}
+                      value={symbolicEditorCode}
                       placeholder={symbolicTextareaPlaceholder}
-                      readOnly={true}
+                      onChange={(event) => setSymbolicEditorCode(event.target.value)}
                     />
                   ) : (
                     <textarea
@@ -1682,20 +1726,22 @@ export default function App(): JSX.Element {
                 ) : (
                   <p className="pdf-preview-placeholder">
                     {isSymbolicMode
-                      ? symbolicLatexResult.state === "loading"
+                      ? !resolvedExportSource.code.trim() && !symbolicEditorCode.trim()
+                        ? "Generate or paste Quantikz code to produce symbolic LaTeX."
+                        : symbolicLatexResult.state === "loading" && !symbolicEditorCode.trim()
                         ? "Generating symbolic evolution..."
-                        : symbolicLatexResult.state === "error"
+                        : symbolicLatexResult.state === "error" && !symbolicEditorCode.trim()
                           ? symbolicLatexResult.error ?? "Unable to generate the symbolic evolution."
                           : pdfPreviewState === "loading"
                             ? "Rendering symbolic preview..."
                             : pdfPreviewState === "error"
                               ? pdfPreviewError ?? "Unable to render the symbolic preview."
-                              : "Generate or paste Quantikz code to preview the symbolic evolution."
+                              : "Edit the symbolic LaTeX on the left to render the symbolic preview."
                       : pdfPreviewState === "loading"
                         ? "Rendering figure preview..."
                         : pdfPreviewState === "error"
                           ? pdfPreviewError ?? "Unable to render the figure preview."
-                          : "Generate or paste Quantikz code to preview the rendered figure."}
+                          : "Convert the circuit or paste Quantikz code to render a figure preview."}
                   </p>
                 )}
               </div>

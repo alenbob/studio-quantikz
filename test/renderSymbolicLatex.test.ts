@@ -36,6 +36,15 @@ const UNLABELED_NO_OP_CIRCUIT = String.raw`\begin{quantikz}
  &  &
 \end{quantikz}`;
 
+const NAMED_GATE_CIRCUIT = String.raw`\begin{quantikz}
+\lstick{$\ket{0}$} & \gate{H} & \gate{H}
+\end{quantikz}`;
+
+const SAME_COLUMN_GATES_CIRCUIT = String.raw`\begin{quantikz}
+\lstick{$\ket{0}$} & \gate{H} & \gate{Z} \\
+\lstick{$\ket{1}$} & \gate{X} &
+\end{quantikz}`;
+
 describe("renderSymbolicLatex", () => {
   it("returns generated latex from the Python symbolic engine", async () => {
     const result = await renderSymbolicLatex(AND_CIRCUIT);
@@ -43,14 +52,14 @@ describe("renderSymbolicLatex", () => {
     expect(result).toMatchObject({
       success: true,
       envIndex: 0,
-      latex: expect.stringContaining(String.raw`\begin{align*}`)
+      latex: expect.stringContaining(String.raw`\begin{equation*}`)
     });
     if (!result.success) {
       throw new Error(result.error);
     }
 
-    expect(result.latex).toContain(String.raw`\text{slice 1: }\text{compute AND into ancilla }a_{2}`);
-    expect(result.latex).toContain(String.raw`\text{slice 3: }\text{uncompute AND and remove ancilla }a_{2}`);
+    expect(result.latex).toContain(String.raw`\textbf{Slice 1: } compute AND into ancilla $a_{2}$`);
+    expect(result.latex).toContain(String.raw`\textbf{Slice 3: } uncompute AND and remove ancilla $a_{2}$`);
   });
 
   it("rejects empty quantikz input before invoking the Python bridge", async () => {
@@ -78,7 +87,7 @@ describe("renderSymbolicLatex", () => {
     expect(result).toMatchObject({
       success: true,
       envIndex: 0,
-      latex: expect.stringContaining(String.raw`\text{slice 1: }\text{swap }q_{0}\text{ and }q_{1}`)
+      latex: expect.stringContaining(String.raw`\textbf{Slice 1: } swap $q_{0}$ and $q_{1}$`)
     });
   });
 
@@ -88,15 +97,49 @@ describe("renderSymbolicLatex", () => {
     expect(result).toMatchObject({
       success: true,
       envIndex: 0,
-      latex: expect.stringContaining(String.raw`\text{slice 2: }\text{compute AND into ancilla }a_{4}`)
+      latex: expect.stringContaining(String.raw`\textbf{Slice 2: } compute AND into ancilla $a_{4}$`)
     });
     if (!result.success) {
       throw new Error(result.error);
     }
 
-    expect(result.latex).toContain(String.raw`\text{slice 6: }\text{uncompute AND and remove ancilla }a_{4}`);
-    expect(result.latex).toContain(String.raw`\text{slice 8: }\text{compute AND into ancilla }a_{4}`);
-    expect(result.latex).toContain(String.raw`\text{slice 10: }\text{uncompute AND and remove ancilla }a_{4}`);
+    expect(result.latex).toContain(String.raw`\textbf{Slice 6: } uncompute AND and remove ancilla $a_{4}$`);
+    expect(result.latex).toContain(String.raw`\textbf{Slice 8: } compute AND into ancilla $a_{4}$`);
+    expect(result.latex).toContain(String.raw`\textbf{Slice 10: } uncompute AND and remove ancilla $a_{4}$`);
+  });
+
+  it("applies named single-qubit gates on computational basis states", async () => {
+    const result = await renderSymbolicLatex(NAMED_GATE_CIRCUIT);
+
+    expect(result).toMatchObject({
+      success: true,
+      envIndex: 0,
+      latex: expect.stringContaining(String.raw`\ket{\Psi_{2}} &= \ket{0}`)
+    });
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    expect(result.latex).toContain(String.raw`\ket{\Psi_{1}} &= \frac{1}{\sqrt{2}} (\ket{0} + \ket{1})`);
+  });
+
+  it("expands multiple same-column operations into sequential symbolic steps", async () => {
+    const result = await renderSymbolicLatex(SAME_COLUMN_GATES_CIRCUIT);
+
+    expect(result).toMatchObject({
+      success: true,
+      envIndex: 0
+    });
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    expect(result.latex).toContain(String.raw`\textbf{Slice 1, step 1: } apply $H$`);
+    expect(result.latex).toContain(String.raw`\textbf{Slice 1, step 2: } apply $X$`);
+    expect(result.latex).toContain(String.raw`\textbf{Slice 2: } apply $Z$`);
+    expect(result.latex).toContain(String.raw`\ket{\Psi_{1}} &= \frac{1}{\sqrt{2}} (\ket{01} + \ket{11})`);
+    expect(result.latex).toContain(String.raw`\ket{\Psi_{2}} &= \frac{1}{\sqrt{2}} (\ket{00} + \ket{10})`);
+    expect(result.latex).toContain(String.raw`\ket{\Psi_{3}} &= \frac{1}{\sqrt{2}} \ket{00} - \frac{1}{\sqrt{2}} \ket{10}`);
   });
 
   it("propagates unsupported-circuit errors from the Python engine", async () => {
