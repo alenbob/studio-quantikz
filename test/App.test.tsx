@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import App from "../src/renderer/App";
+import { BUG_REPORT_DESCRIPTION_MAX_LENGTH } from "../src/shared/bugReport";
 import { DEFAULT_CIRCUIT_LAYOUT, getCellCenterX, getGridHeight, getGridWidth, getIncomingSegmentRange, getRowY, getWireStartX } from "../src/renderer/layout";
 import * as renderedPdfModule from "../src/renderer/useRenderedPdf";
 import * as symbolicLatexModule from "../src/renderer/useSymbolicLatex";
@@ -857,7 +858,7 @@ describe("App smoke tests", () => {
       });
 
       await user.click(screen.getByRole("button", { name: /copy image/i }));
-      
+
       const clipboardItems = clipboardWrite.mock.calls[0]?.[0] as MockClipboardItem[];
 
       expect(fetchMock).toHaveBeenCalledWith(
@@ -887,6 +888,65 @@ describe("App smoke tests", () => {
         });
       }
     }
+  });
+
+  it("submits a bug report with the current Quantikz source attached", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        success: true,
+        id: "bug-123",
+        submittedAt: "2026-03-25T12:00:00.000Z"
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      })
+    );
+
+    try {
+      render(<App />);
+
+      fireEvent.change(screen.getByLabelText(/quantikz output/i), {
+        target: {
+          value: String.raw`\begin{quantikz}
+\lstick{$\ket{0}$} & \gate{H}
+\end{quantikz}`
+        }
+      });
+
+      await user.click(screen.getByRole("button", { name: /submit a bug/i }));
+      await user.type(screen.getByLabelText(/bug title/i), "Preview crops bottom wire");
+      await user.type(screen.getByLabelText(/bug description/i), "The preview image cuts off the last row after export.");
+      await user.click(screen.getByRole("button", { name: /^submit bug$/i }));
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith(
+          "/api/bug-report",
+          expect.objectContaining({ method: "POST" })
+        );
+      });
+
+      const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+      const payload = JSON.parse(String(request.body));
+
+      expect(payload.title).toBe("Preview crops bottom wire");
+      expect(payload.description).toBe("The preview image cuts off the last row after export.");
+      expect(payload.code).toContain(String.raw`\begin{quantikz}`);
+      expect(screen.queryByRole("dialog", { name: /submit a bug/i })).not.toBeInTheDocument();
+      expect(screen.getByText(/bug report submitted\./i)).toBeInTheDocument();
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it("shows the bug description counter inside the submit dialog", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: /submit a bug/i }));
+    await user.type(screen.getByLabelText(/bug description/i), "abc");
+
+    expect(screen.getByText(`3/${BUG_REPORT_DESCRIPTION_MAX_LENGTH}`)).toBeInTheDocument();
   });
 
   it("pastes a copied selection back into the circuit", async () => {

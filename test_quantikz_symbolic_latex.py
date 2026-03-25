@@ -233,6 +233,24 @@ POST_MEASUREMENT_REMAINDER_CIRCUIT = textwrap.dedent(
     """
 ).strip()
 
+MULTI_QUBIT_MEASUREMENT_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}
+    \lstick[wires=2]{$\ket{+0}$} & \meter[wires=2]{} \\
+     &
+    \end{quantikz}
+    """
+).strip()
+
+MID_CIRCUIT_MEASUREMENT_BRANCHING_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}
+    \lstick{$\ket{+}$} & \meter{} &  \\
+    \lstick{$\ket{0}$} &  & \gate{H}
+    \end{quantikz}
+    """
+).strip()
+
 Z_PLUS_CIRCUIT = textwrap.dedent(
     r"""
     \begin{quantikz}
@@ -806,6 +824,42 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
         )
         self.assertNotIn(r"\ket{0} \otimes \ket{\psi}", output)
         self.assertNotIn(r"\ket{1} \otimes \ket{\psi}", output)
+
+    def test_supports_multi_qubit_measurement_branches(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = pathlib.Path(temp_dir) / "multi_qubit_measurement.tex"
+            input_path.write_text(MULTI_QUBIT_MEASUREMENT_CIRCUIT, encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH), str(input_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        output = result.stdout
+        self.assertIn(r"\textbf{Slice 1: } measure $q_{0}$, $q_{1}$", output)
+        self.assertIn(r"\Pr(q_{0}=0, q_{1}=0)=\frac{1}{2}", output)
+        self.assertIn(r"\Pr(q_{0}=1, q_{1}=0)=\frac{1}{2}", output)
+
+    def test_keeps_evolving_each_measurement_branch_mid_circuit(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = pathlib.Path(temp_dir) / "mid_circuit_measurement_branching.tex"
+            input_path.write_text(MID_CIRCUIT_MEASUREMENT_BRANCHING_CIRCUIT, encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH), str(input_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        output = result.stdout
+        self.assertIn(r"\textbf{Slice 1: } measure $q_{0}$", output)
+        self.assertIn(r"\textbf{Slice 2: } apply $H$", output)
+        self.assertIn(r"\ket{\Psi_{2}} &= \left\{\begin{array}{ll}", output)
+        self.assertIn(r"\Pr(q_{0}=0)=\frac{1}{2}", output)
+        self.assertIn(r"\Pr(q_{0}=1)=\frac{1}{2}", output)
 
     def test_supports_multiwire_basis_labels_and_controlled_wide_gates(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

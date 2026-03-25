@@ -373,9 +373,29 @@ select,
   overflow: hidden;
 }
 
+.bug-report-launcher {
+  position: fixed;
+  left: 24px;
+  bottom: 24px;
+  z-index: 40;
+  min-height: 44px;
+  padding-inline: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(16, 21, 28, 0.92);
+  color: var(--accent-dark);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(18px);
+}
+
+.bug-report-launcher:hover {
+  background: rgba(79, 140, 255, 0.18);
+}
+
 .corner-profile-link {
-  align-self: flex-end;
-  margin-top: 18px;
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 30;
   color: var(--accent-dark);
   font-size: 0.82rem;
   font-weight: 500;
@@ -405,6 +425,81 @@ select,
   animation-name: toast-timer;
   animation-timing-function: linear;
   animation-fill-mode: forwards;
+}
+
+.bug-report-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(6, 8, 12, 0.62);
+  backdrop-filter: blur(8px);
+}
+
+.bug-report-sheet {
+  width: min(560px, 100%);
+  padding: 24px;
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: linear-gradient(180deg, rgba(22, 28, 35, 0.98), rgba(13, 17, 22, 0.98));
+  box-shadow: var(--shadow);
+}
+
+.bug-report-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.bug-report-caption {
+  margin: 10px 0 18px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.bug-report-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.bug-report-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.bug-report-field input,
+.bug-report-field textarea {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  resize: vertical;
+}
+
+.bug-report-field textarea {
+  min-height: 160px;
+}
+
+.bug-report-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.bug-report-counter {
+  color: var(--muted);
+  font-size: 0.84rem;
 }
 
 @keyframes toast-timer {
@@ -2080,6 +2175,11 @@ select,
     max-width: calc(100vw - 32px);
   }
 
+  .bug-report-launcher {
+    left: 16px;
+    bottom: 16px;
+  }
+
   .corner-profile-link {
     right: 16px;
     bottom: 16px;
@@ -2117,6 +2217,23 @@ select,
 
   .shortcut-sheet-backdrop {
     padding: 18px 16px;
+    align-items: stretch;
+  }
+
+  .bug-report-backdrop {
+    padding: 18px 16px;
+    align-items: end;
+  }
+
+  .bug-report-sheet {
+    padding: 20px;
+    border-radius: 20px;
+  }
+
+  .bug-report-header,
+  .bug-report-actions {
+    display: flex;
+    flex-direction: column;
     align-items: stretch;
   }
 

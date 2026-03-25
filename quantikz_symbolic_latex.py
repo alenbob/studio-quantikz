@@ -176,6 +176,12 @@ class MeasurementSymbolicTerm:
     payloads: dict[int, str] = field(default_factory=dict)
 
 
+@dataclass
+class OutcomeBranch:
+    outcomes: tuple[tuple[int, int], ...] = ()
+    terms: list[SymbolicTerm] = field(default_factory=list)
+
+
 def extract_environment_grid(source_text: str, env_index: int) -> tuple[list[str], dict[int, tuple[str, int]], list[list[str]]]:
     environments = find_quantikz_environments(source_text)
     if not environments:
@@ -216,7 +222,7 @@ def classify_column(row_cells: list[str]) -> dict[str, object]:
     controls: list[tuple[int, int]] = []
     control_targets: list[tuple[int, int, int]] = []
     gates: list[tuple[int, int, str]] = []
-    meters: list[int] = []
+    meters: list[tuple[int, int]] = []
     targets: list[int] = []
     swap_starts: list[tuple[int, int]] = []
     swap_targets: list[int] = []
@@ -248,7 +254,7 @@ def classify_column(row_cells: list[str]) -> dict[str, object]:
                 substantive = True
                 continue
             if command.name == "meter":
-                meters.append(row)
+                meters.append((row, parse_wires_option(command.options)))
                 substantive = True
                 continue
             if command.name == "targ":
@@ -418,6 +424,13 @@ def qubit_description(action: str, row_labels: list[str], row: int) -> str:
 
 def controlled_qubit_description(action: str, row_labels: list[str], row: int) -> str:
     return rf"controlled {action} ${row_reference(row_labels, row, 'q')}$"
+
+
+def measurement_description(row_labels: list[str], rows: list[int], controlled: bool) -> str:
+    references = ", ".join(rf"${row_reference(row_labels, row, 'q')}$" for row in rows)
+    if controlled:
+        return f"controlled measure {references}"
+    return f"measure {references}"
 
 
 def parse_ket_payload(value: str) -> tuple[str, str] | None:
@@ -749,8 +762,9 @@ def build_logical_slices(row_labels: list[str], grid: list[list[str]]) -> list[L
                 )
             )
 
-        for measured_row in current["meters"]:
-            controls = controls_for_connected_rows(current, {measured_row})
+        for measured_row, measure_span in current["meters"]:
+            measured_rows = set(range(measured_row, measured_row + measure_span))
+            controls = controls_for_connected_rows(current, measured_rows)
             column_slices.append(
                 (
                     measured_row,
@@ -760,12 +774,12 @@ def build_logical_slices(row_labels: list[str], grid: list[list[str]]) -> list[L
                         controls=controls,
                         target_row=measured_row,
                         secondary_row=None,
-                        span=1,
+                        span=measure_span,
                         label="measure",
-                        description=(
-                            controlled_qubit_description("measure", row_labels, measured_row)
-                            if controls
-                            else qubit_description("measure", row_labels, measured_row)
+                        description=measurement_description(
+                            row_labels,
+                            list(range(measured_row, measured_row + measure_span)),
+                            bool(controls),
                         ),
                         source_columns=[index],
                     ),
@@ -2058,6 +2072,60 @@ def measurement_symbolic_term_key(term: MeasurementSymbolicTerm) -> tuple[tuple[
     )
 
 
+def group_terms_by_measurement_state(terms: list[SymbolicTerm]) -> list[MeasurementSymbolicTerm]:
+    grouped: dict[
+        tuple[tuple[tuple[int, int], ...], tuple[tuple[int, str], ...]],
+        MeasurementSymbolicTerm,
+    ] = {}
+
+    for term in terms:
+        contribution = MeasurementContribution(
+            amplitude=term.amplitude,
+            scalar=term.scalar,
+        )
+        if contribution.amplitude.to_latex() == "0" or contribution.scalar == "0":
+            continue
+
+        projected = MeasurementSymbolicTerm(
+            contributions=[contribution],
+            basis_bits=dict(term.basis_bits),
+            payloads=dict(term.payloads),
+        )
+        key = measurement_symbolic_term_key(projected)
+        existing = grouped.get(key)
+        if existing is None:
+            grouped[key] = projected
+            continue
+
+        merged = False
+        for existing_contribution in existing.contributions:
+            if existing_contribution.scalar != contribution.scalar:
+                continue
+            existing_contribution.amplitude = existing_contribution.amplitude.add(contribution.amplitude)
+            merged = True
+            break
+        if not merged:
+            existing.contributions.append(contribution)
+
+        existing.contributions = [
+            current
+            for current in existing.contributions
+            if current.amplitude.to_latex() != "0" and current.scalar != "0"
+        ]
+
+    return [
+        grouped_term
+        for _, grouped_term in sorted(
+            grouped.items(),
+            key=lambda item: (
+                item[0][0],
+                item[0][1],
+            ),
+        )
+        if grouped_term.contributions
+    ]
+
+
 def measurement_factor_options(term: SymbolicTerm, row: int) -> list[tuple[int, Amplitude]]:
     if row in term.basis_bits:
         return [(term.basis_bits[row], Amplitude())]
@@ -2108,6 +2176,25 @@ def measurement_factor_options(term: SymbolicTerm, row: int) -> list[tuple[int, 
     raise ValueError(
         f"Measurement on row {row} is only supported for computational-basis states and simple H/S/T/Tdg/X/Y/Z-applied basis states"
     )
+
+
+def measurement_outcome_options(
+    term: SymbolicTerm,
+    measured_rows: list[int],
+) -> list[tuple[tuple[tuple[int, int], ...], Amplitude]]:
+    options: list[tuple[tuple[tuple[int, int], ...], Amplitude]] = [((), Amplitude())]
+    for row in measured_rows:
+        next_options: list[tuple[tuple[tuple[int, int], ...], Amplitude]] = []
+        for existing_outcomes, existing_amplitude in options:
+            for outcome, factor_amplitude in measurement_factor_options(term, row):
+                next_options.append(
+                    (
+                        existing_outcomes + ((row, outcome),),
+                        existing_amplitude.times(factor_amplitude),
+                    )
+                )
+        options = next_options
+    return options
 
 
 def measurement_term_key(term: MeasurementRenderedTerm) -> tuple[tuple[tuple[int, int], ...], tuple[tuple[int, str], ...], str]:
@@ -2210,6 +2297,135 @@ def render_measurement_symbolic_term(term: MeasurementSymbolicTerm, row_order: l
     if len(contribution_texts) > 1:
         coefficient = rf"\left({coefficient}\right)"
     return f"{coefficient} {factor_body}"
+
+
+def render_terms_probability_latex(terms: list[SymbolicTerm]) -> str:
+    if all(term.scalar == "1" for term in terms):
+        probability = sum((term.amplitude.probability() for term in terms), start=Fraction(0, 1))
+        return render_fraction_latex(probability)
+
+    grouped_terms = group_terms_by_measurement_state(terms)
+    probability_pieces: list[str] = []
+
+    for grouped_term in grouped_terms:
+        if len(grouped_term.contributions) == 1:
+            contribution = grouped_term.contributions[0]
+            probability_piece = render_measurement_probability_contribution(contribution.amplitude, contribution.scalar)
+        else:
+            coefficient = " + ".join(
+                render_measurement_coefficient(contribution.amplitude, contribution.scalar)
+                for contribution in grouped_term.contributions
+            ).replace("+ -", "- ")
+            probability_piece = rf"\left|{coefficient}\right|^2"
+        if probability_piece != "0":
+            probability_pieces.append(probability_piece)
+
+    if not probability_pieces:
+        return "0"
+    return " + ".join(probability_pieces).replace("+ -", "- ")
+
+
+def render_branch_terms_latex(terms: list[SymbolicTerm], row_order: list[int]) -> str:
+    if any(term.scalar != "1" for term in terms):
+        grouped_terms = group_terms_by_measurement_state(terms)
+        branch_expr = " + ".join(
+            render_measurement_symbolic_term(grouped_term, row_order)
+            for grouped_term in grouped_terms
+        ).replace("+ -", "- ")
+        if len(grouped_terms) > 1:
+            return rf"\left({branch_expr}\right)"
+        return branch_expr
+
+    rendered_terms = [
+        render_measurement_term(
+            MeasurementRenderedTerm(
+                amplitude=term.amplitude,
+                scalar=term.scalar,
+                basis_bits=dict(term.basis_bits),
+                payloads=dict(term.payloads),
+            ),
+            row_order,
+        )
+        for term in sorted(
+            terms,
+            key=lambda current: (
+                tuple(sorted(current.basis_bits.items())),
+                tuple(sorted(current.payloads.items())),
+                current.scalar,
+            ),
+        )
+    ]
+    branch_expr = " + ".join(rendered_terms).replace("+ -", "- ")
+    if len(rendered_terms) > 1:
+        return rf"\left({branch_expr}\right)"
+    return branch_expr
+
+
+def project_measurement_terms(
+    terms: list[SymbolicTerm],
+    measured_rows: list[int],
+) -> dict[tuple[tuple[int, int], ...], list[SymbolicTerm]]:
+    grouped: dict[tuple[tuple[int, int], ...], list[SymbolicTerm]] = {}
+
+    for term in terms:
+        for outcomes, factor_amplitude in measurement_outcome_options(term, measured_rows):
+            projected = term.clone()
+            projected.amplitude = projected.amplitude.times(factor_amplitude)
+            for row in measured_rows:
+                projected.basis_bits.pop(row, None)
+                projected.payloads.pop(row, None)
+                set_row_local_weight(projected, row, None)
+            if projected.amplitude.to_latex() == "0" or projected.scalar == "0":
+                continue
+            grouped.setdefault(outcomes, []).append(projected)
+
+    projected_branches: dict[tuple[tuple[int, int], ...], list[SymbolicTerm]] = {}
+    for outcomes, branch_terms in grouped.items():
+        merged_terms = merge_symbolic_terms(branch_terms)
+        if merged_terms:
+            projected_branches[outcomes] = merged_terms
+    return projected_branches
+
+
+def outcome_label(outcomes: tuple[tuple[int, int], ...], row_labels: list[str], probability: str) -> str:
+    assignments = ", ".join(
+        f"{row_reference(row_labels, row, 'q')}={outcome}"
+        for row, outcome in outcomes
+    )
+    return rf"\Pr({assignments})={probability}"
+
+
+def render_branches_state_latex(
+    branches: list[OutcomeBranch],
+    row_order: list[int],
+    row_labels: list[str],
+) -> str:
+    if len(branches) == 1 and not branches[0].outcomes:
+        return render_state_latex(branches[0].terms, row_order, row_labels)
+
+    pieces: list[str] = []
+    for branch in sorted(branches, key=lambda current: current.outcomes):
+        branch_expr = render_branch_terms_latex(branch.terms, row_order)
+        if not branch.outcomes:
+            pieces.append(branch_expr)
+            continue
+        label = outcome_label(branch.outcomes, row_labels, render_terms_probability_latex(branch.terms))
+        pieces.append(rf"{branch_expr}, & {label}")
+
+    return r"\left\{\begin{array}{ll}" + r" \\ ".join(pieces) + r"\end{array}\right."
+
+
+def merge_outcome_branches(branches: list[OutcomeBranch]) -> list[OutcomeBranch]:
+    grouped: dict[tuple[tuple[int, int], ...], list[SymbolicTerm]] = {}
+    for branch in branches:
+        grouped.setdefault(branch.outcomes, []).extend(branch.terms)
+
+    merged_branches: list[OutcomeBranch] = []
+    for outcomes, terms in sorted(grouped.items(), key=lambda item: item[0]):
+        merged_terms = merge_symbolic_terms(terms)
+        if merged_terms:
+            merged_branches.append(OutcomeBranch(outcomes=outcomes, terms=merged_terms))
+    return merged_branches
 
 
 def project_measurement_terms_exact(
@@ -2763,6 +2979,7 @@ def build_discursive_block(
 ) -> str:
     temporary_rows = {slice_info.target_row for slice_info in logical_slices if slice_info.kind in {"and_compute", "and_uncompute"} and slice_info.target_row is not None}
     terms = make_initial_terms(row_labels, label_spans, temporary_rows)
+    branches = [OutcomeBranch(terms=terms)]
     initial_rows = {
         row
         for term in terms
@@ -2787,31 +3004,52 @@ def build_discursive_block(
         for run_offset, logical_index in enumerate(range(run_start, run_end), start=1):
             slice_info = logical_slices[logical_index]
             if slice_info.kind == "measure":
-                if logical_index != len(logical_slices) - 1:
-                    raise ValueError("Measurement is only supported as the final logical slice in symbolic LaTeX output")
                 assert slice_info.target_row is not None
-                measured_terms = terms
-                if slice_info.controls:
-                    measured_terms = [
-                        term
-                        for term in terms
-                        if all(term.basis_bits.get(row) == expected for row, expected in slice_info.controls)
-                    ]
+                measured_rows = list(range(slice_info.target_row, slice_info.target_row + slice_info.span))
+                next_branches: list[OutcomeBranch] = []
+                for branch in branches:
+                    measured_terms = branch.terms
+                    if slice_info.controls:
+                        matching_terms = [
+                            term
+                            for term in branch.terms
+                            if all(term.basis_bits.get(row) == expected for row, expected in slice_info.controls)
+                        ]
+                        if matching_terms and len(matching_terms) != len(branch.terms):
+                            raise ValueError(
+                                "Controlled measurement is only supported when each branch has a definite control bitstring"
+                            )
+                        if not matching_terms:
+                            next_branches.append(branch)
+                            continue
+                        measured_terms = matching_terms
 
-                if not measured_terms:
-                    active_rows = [row for row in all_rows if any(row in term.basis_bits or row in term.payloads for term in terms)]
-                    rendered_state = render_state_latex(terms, active_rows, row_labels)
-                else:
-                    active_rows = [
-                        row
-                        for row in all_rows
-                        if any(row in term.basis_bits or row in term.payloads for term in measured_terms)
-                    ]
-                    rendered_state = render_measurement_state_latex(measured_terms, active_rows, slice_info.target_row, row_labels)
+                    projected = project_measurement_terms(measured_terms, measured_rows)
+                    if not projected:
+                        raise ValueError(f"Measurement on rows {measured_rows} produced no valid outcome branches")
+                    for outcomes, projected_terms in projected.items():
+                        next_branches.append(OutcomeBranch(outcomes=branch.outcomes + outcomes, terms=projected_terms))
+                branches = merge_outcome_branches(next_branches)
             else:
-                terms = evolve_terms(terms, slice_info, row_labels)
-                active_rows = [row for row in all_rows if any(row in term.basis_bits or row in term.payloads for term in terms)]
-                rendered_state = render_state_latex(terms, active_rows, row_labels)
+                branches = merge_outcome_branches(
+                    [
+                        OutcomeBranch(
+                            outcomes=branch.outcomes,
+                            terms=evolve_terms(branch.terms, slice_info, row_labels),
+                        )
+                        for branch in branches
+                    ]
+                )
+            active_rows = [
+                row
+                for row in all_rows
+                if any(
+                    row in term.basis_bits or row in term.payloads
+                    for branch in branches
+                    for term in branch.terms
+                )
+            ]
+            rendered_state = render_branches_state_latex(branches, active_rows, row_labels)
             step_number = run_offset if run_length > 1 else None
             blocks.append(rf"\noindent{slice_heading_text(slice_number, step_number)} {slice_info.description}\par")
             blocks.append(render_state_block(state_index, rendered_state))

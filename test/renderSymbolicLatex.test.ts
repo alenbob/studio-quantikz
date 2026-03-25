@@ -95,6 +95,16 @@ const POST_MEASUREMENT_REMAINDER_CIRCUIT = String.raw`\begin{quantikz}
 \lstick{$\ket{\psi}$} &
 \end{quantikz}`;
 
+const MULTI_QUBIT_MEASUREMENT_CIRCUIT = String.raw`\begin{quantikz}
+\lstick[wires=2]{$\ket{+0}$} & \meter[wires=2]{} \\
+ &
+\end{quantikz}`;
+
+const MID_CIRCUIT_MEASUREMENT_BRANCHING_CIRCUIT = String.raw`\begin{quantikz}
+\lstick{$\ket{+}$} & \meter{} &  \\
+\lstick{$\ket{0}$} &  & \gate{H}
+\end{quantikz}`;
+
 const WIDE_CONTROLLED_YY_CIRCUIT = String.raw`\begin{quantikz}[row sep={0.9cm,between origins}, column sep=0.7cm]
 \lstick[wires=2,braces=none]{$\ket{00}$} & \gate[wires=2]{YY} &  & \\
  & \wire[d][1]{q} & \gate{X} & \\
@@ -461,6 +471,40 @@ describe("renderSymbolicLatex", () => {
     );
     expect(result.latex).not.toContain(String.raw`\ket{0} \otimes \ket{\psi}`);
     expect(result.latex).not.toContain(String.raw`\ket{1} \otimes \ket{\psi}`);
+  }, 15000);
+
+  it("supports multi-qubit meters and labels the joint computational-basis outcomes", async () => {
+    const result = await renderSymbolicLatex(MULTI_QUBIT_MEASUREMENT_CIRCUIT);
+
+    expect(result).toMatchObject({
+      success: true,
+      envIndex: 0
+    });
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    expect(result.latex).toContain(String.raw`\textbf{Slice 1: } measure $q_{0}$, $q_{1}$`);
+    expect(result.latex).toContain(String.raw`\Pr(q_{0}=0, q_{1}=0)=\frac{1}{2}`);
+    expect(result.latex).toContain(String.raw`\Pr(q_{0}=1, q_{1}=0)=\frac{1}{2}`);
+  }, 15000);
+
+  it("keeps evolving each post-measurement outcome through later slices", async () => {
+    const result = await renderSymbolicLatex(MID_CIRCUIT_MEASUREMENT_BRANCHING_CIRCUIT);
+
+    expect(result).toMatchObject({
+      success: true,
+      envIndex: 0
+    });
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    expect(result.latex).toContain(String.raw`\textbf{Slice 1: } measure $q_{0}$`);
+    expect(result.latex).toContain(String.raw`\textbf{Slice 2: } apply $H$`);
+    expect(result.latex).toContain(String.raw`\ket{\Psi_{2}} &= \left\{\begin{array}{ll}`);
+    expect(result.latex).toContain(String.raw`\Pr(q_{0}=0)=\frac{1}{2}`);
+    expect(result.latex).toContain(String.raw`\Pr(q_{0}=1)=\frac{1}{2}`);
   }, 15000);
 
   it("expands multiple same-column operations into sequential symbolic steps", async () => {

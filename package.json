@@ -9,12 +9,15 @@
     "build": "vite build",
     "preview": "node scripts/preview-server.mjs",
     "start": "node scripts/preview-server.mjs",
+    "bug-reports": "node scripts/list-bug-reports.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
     "@vercel/analytics": "^2.0.1",
+    "@vercel/blob": "^2.3.1",
     "@vercel/speed-insights": "^2.0.0",
+    "html-to-image": "^1.11.13",
     "katex": "^0.16.38",
     "pdfjs-dist": "^5.5.207",
     "react": "^19.0.0",

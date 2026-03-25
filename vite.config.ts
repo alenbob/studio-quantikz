@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { listBugReports, readBugReportPreviewImage, validateBugReportAdminToken } from "./src/server/bugReports";
 import { renderQuantikzPdf, renderQuantikzSvg } from "./src/server/renderQuantikz";
 import { renderSymbolicLatex } from "./src/server/renderSymbolicLatex";
 
@@ -35,6 +36,29 @@ function sendPdf(response: ServerResponse, pdf: Buffer): void {
   response.setHeader("Content-Type", "application/pdf");
   response.setHeader("Content-Disposition", "attachment; filename=\"quantikz-circuit.pdf\"");
   response.end(pdf);
+}
+
+function parseBugReportLimit(urlValue: string | undefined): number {
+  if (!urlValue) {
+    return 50;
+  }
+
+  const parsed = Number.parseInt(urlValue, 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error("The bug report limit must be a positive integer.");
+  }
+
+  return Math.min(parsed, 200);
+}
+
+function readBugReportAdminToken(headers: IncomingMessage["headers"]): string | null {
+  const authorization = headers.authorization;
+  if (typeof authorization === "string" && authorization.startsWith("Bearer ")) {
+    return authorization.slice("Bearer ".length).trim();
+  }
+
+  const directHeader = headers["x-bug-report-admin-token"];
+  return typeof directHeader === "string" ? directHeader.trim() : null;
 }
 
 export default defineConfig({
@@ -125,6 +149,50 @@ export default defineConfig({
             sendJson(response, 500, {
               success: false,
               error: error instanceof Error ? error.message : "Unable to generate symbolic LaTeX."
+            });
+          }
+        });
+
+        server.middlewares.use("/api/bug-reports", async (request, response, next) => {
+          if (request.method !== "GET") {
+            next();
+            return;
+          }
+
+          try {
+            const requestUrl = new URL(request.url ?? "/api/bug-reports", "http://localhost");
+            validateBugReportAdminToken(readBugReportAdminToken(request.headers));
+            const storageKey = requestUrl.searchParams.get("storageKey") ?? undefined;
+            if (storageKey) {
+              const image = await readBugReportPreviewImage(storageKey);
+              if (!image) {
+                response.statusCode = 404;
+                response.end("Not found.");
+                return;
+              }
+
+              response.statusCode = 200;
+              response.setHeader("Content-Type", image.contentType);
+              response.setHeader("Cache-Control", "private, max-age=60");
+              response.end(image.body);
+              return;
+            }
+
+            const reports = await listBugReports(parseBugReportLimit(requestUrl.searchParams.get("limit") ?? undefined));
+            sendJson(response, 200, {
+              success: true,
+              reports
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Unable to list bug reports.";
+            const statusCode = message === "Invalid bug report admin token."
+              ? 401
+              : /positive integer|required|configured/i.test(message)
+                ? 400
+                : 500;
+            sendJson(response, statusCode, {
+              success: false,
+              error: message
             });
           }
         });

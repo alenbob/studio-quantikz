@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useReducer, useRef, useState, type DragEvent, type FocusEvent, type JSX } from "react";
+import { toPng } from "html-to-image";
 import { buildClipboard, canPasteClipboardAt } from "./clipboard";
 import cmdIcon from "./assets/cmd.svg";
 import automaticIcon from "./assets/automatic.svg";
@@ -30,10 +31,16 @@ import {
 import { isVisibleHorizontalSegment } from "./horizontalWires";
 import { importFromQuantikz } from "./importer";
 import { resolveVisualPreambleDefinitions } from "../shared/tikzPreamble";
+import { submitBugReport } from "./bugReport";
 import { useRenderedPdf } from "./useRenderedPdf";
 import { useSymbolicLatex } from "./useSymbolicLatex";
 import { editorReducer, initialState, type EditorAction } from "./reducer";
 import { getWireLabelGroup, type WireLabelSide } from "./wireLabels";
+import {
+  BUG_REPORT_DESCRIPTION_MAX_LENGTH,
+  BUG_REPORT_EMAIL_MAX_LENGTH,
+  BUG_REPORT_TITLE_MAX_LENGTH
+} from "../shared/bugReport";
 import type {
   CircuitClipboard,
   CircuitItem,
@@ -411,6 +418,11 @@ export default function App(): JSX.Element {
   const [symbolicEditorCode, setSymbolicEditorCode] = useState("");
   const [symbolicRefreshVersion, setSymbolicRefreshVersion] = useState(0);
   const [workbenchLayoutMode, setWorkbenchLayoutMode] = useState<WorkbenchLayoutMode>("left-rail-tall");
+  const [isBugReportOpen, setBugReportOpen] = useState(false);
+  const [bugReportTitle, setBugReportTitle] = useState("");
+  const [bugReportEmail, setBugReportEmail] = useState("");
+  const [bugReportDescription, setBugReportDescription] = useState("");
+  const [isSubmittingBugReport, setSubmittingBugReport] = useState(false);
   const stateRef = useRef(state);
   const clipboardRef = useRef<CircuitClipboard | null>(null);
   const shortcutSheetOpenRef = useRef(isShortcutSheetOpen);
@@ -419,6 +431,7 @@ export default function App(): JSX.Element {
   const selectedStructureRef = useRef(selectedStructure);
   const exportPanelModeRef = useRef<ExportPanelMode>(exportPanelMode);
   const lastGeneratedSymbolicLatexRef = useRef("");
+  const appShellRef = useRef<HTMLDivElement | null>(null);
   const leftPanelRef = useRef<HTMLDivElement | null>(null);
   const workspacePanelRef = useRef<HTMLElement | null>(null);
 
@@ -657,6 +670,21 @@ export default function App(): JSX.Element {
     return () => window.removeEventListener("pointerdown", handlePointerDown);
   }, [openDownloadMenuTarget]);
 
+  useEffect(() => {
+    if (!isBugReportOpen) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent): void {
+      if (event.key === "Escape" && !isSubmittingBugReport) {
+        setBugReportOpen(false);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isBugReportOpen, isSubmittingBugReport]);
+
   function refreshExportHistory(): void {
     setExportHistoryEntries(loadExportHistory());
   }
@@ -664,6 +692,144 @@ export default function App(): JSX.Element {
   function handleOpenHistory(): void {
     refreshExportHistory();
     setHistorySheetOpen(true);
+  }
+
+  function resetBugReportForm(): void {
+    setBugReportTitle("");
+    setBugReportEmail("");
+    setBugReportDescription("");
+  }
+
+  function handleOpenBugReport(): void {
+    setBugReportOpen(true);
+  }
+
+  function handleCloseBugReport(): void {
+    if (isSubmittingBugReport) {
+      return;
+    }
+
+    setBugReportOpen(false);
+  }
+
+  async function buildBugReportPreviewDataUrl(): Promise<string | undefined> {
+    if (pdfPreviewState !== "ready" || !previewImageUrl) {
+      return undefined;
+    }
+
+    try {
+      return await imageUrlToDataUrl(previewImageUrl, 1600, 1200);
+    } catch {
+      return undefined;
+    }
+  }
+
+  async function buildBugReportInterfaceDataUrl(): Promise<string | undefined> {
+    if (typeof window === "undefined" || !appShellRef.current) {
+      return undefined;
+    }
+
+    try {
+      return await toPng(appShellRef.current, {
+        cacheBust: true,
+        pixelRatio: Math.min(window.devicePixelRatio || 1, 2)
+      });
+    } catch {
+      return undefined;
+    }
+  }
+
+  function buildBugReportSessionSnapshot(): string {
+    return JSON.stringify({
+      capturedAt: new Date().toISOString(),
+      locationHref: typeof window === "undefined" ? null : window.location.href,
+      viewport: typeof window === "undefined"
+        ? null
+        : {
+          width: window.innerWidth,
+          height: window.innerHeight,
+          devicePixelRatio: window.devicePixelRatio || 1
+        },
+      editorState: state,
+      ui: {
+        exportPanelMode,
+        quantikzPaneView,
+        symbolicPaneView,
+        symbolicEditorCode,
+        symbolicRefreshVersion,
+        workbenchLayoutMode,
+        isPasteMode,
+        gridDrafts,
+        isShortcutSheetOpen,
+        helpSheetMode,
+        isHistorySheetOpen,
+        selectedWireLabel,
+        selectedStructure,
+        openDownloadMenuTarget,
+        pendingHistoryCapture,
+        toastAnimationKey
+      },
+      exports: {
+        resolvedExportSource,
+        normalizedSymbolicPreamble,
+        currentExportAssetSource
+      },
+      preview: {
+        isSymbolicMode,
+        state: pdfPreviewState,
+        error: pdfPreviewError,
+        pdfPreviewUrlAvailable: Boolean(pdfPreviewUrl),
+        previewImageAvailable: Boolean(previewImageUrl),
+        figurePreviewState: figurePdfPreviewState,
+        figurePreviewImageAvailable: Boolean(figurePreviewImageUrl),
+        symbolicLatexState: symbolicLatexResult.state,
+        symbolicLatexError: symbolicLatexResult.error
+      }
+    });
+  }
+
+  async function handleSubmitBugReport(): Promise<void> {
+    const title = bugReportTitle.trim();
+    const description = bugReportDescription.trim();
+
+    if (!title || !description) {
+      dispatch({ type: "setMessage", message: "Add a short title and description before submitting." });
+      return;
+    }
+
+    setSubmittingBugReport(true);
+
+    try {
+      const [previewImageDataUrl, interfaceImageDataUrl] = await Promise.all([
+        buildBugReportPreviewDataUrl(),
+        buildBugReportInterfaceDataUrl()
+      ]);
+      const sessionSnapshot = buildBugReportSessionSnapshot();
+
+      await submitBugReport({
+        title,
+        description,
+        email: bugReportEmail.trim(),
+        code: resolvedExportSource.code,
+        preamble: resolvedExportSource.preamble,
+        pageUrl: typeof window === "undefined" ? "" : window.location.href,
+        userAgent: typeof navigator === "undefined" ? "" : navigator.userAgent,
+        previewImageDataUrl,
+        interfaceImageDataUrl,
+        sessionSnapshot
+      });
+
+      setBugReportOpen(false);
+      resetBugReportForm();
+      dispatch({ type: "setMessage", message: "Bug report submitted." });
+    } catch (error) {
+      dispatch({
+        type: "setMessage",
+        message: error instanceof Error ? error.message : "Unable to submit bug report."
+      });
+    } finally {
+      setSubmittingBugReport(false);
+    }
   }
 
   function getCurrentExportAssetSource(): ExportAssetSource {
@@ -1259,7 +1425,7 @@ export default function App(): JSX.Element {
   }
 
   return (
-    <div className="app-shell">
+    <div ref={appShellRef} className="app-shell">
       <header className="top-bar">
         <div className="title-block">
           <p className="eyebrow">Studio Quantikz</p>
@@ -1608,6 +1774,92 @@ export default function App(): JSX.Element {
         </div>
       )}
 
+      {isBugReportOpen && (
+        <div className="bug-report-backdrop" onClick={handleCloseBugReport}>
+          <section
+            className="bug-report-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="bug-report-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="bug-report-header">
+              <div>
+                <p className="eyebrow">Feedback</p>
+                <h2 id="bug-report-title">Submit a bug</h2>
+              </div>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={handleCloseBugReport}
+                disabled={isSubmittingBugReport}
+              >
+                Close
+              </button>
+            </div>
+            <p className="bug-report-caption">
+              The current code, preamble, and rendered preview image are attached automatically when available, without using screen-capture permissions.
+            </p>
+            <form
+              className="bug-report-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void handleSubmitBugReport();
+              }}
+            >
+              <label className="bug-report-field">
+                <span>Title</span>
+                <input
+                  aria-label="Bug title"
+                  type="text"
+                  maxLength={BUG_REPORT_TITLE_MAX_LENGTH}
+                  value={bugReportTitle}
+                  onChange={(event) => setBugReportTitle(event.target.value)}
+                  placeholder="Short summary of the problem"
+                  disabled={isSubmittingBugReport}
+                />
+              </label>
+              <label className="bug-report-field">
+                <span>Email (optional)</span>
+                <input
+                  aria-label="Bug email"
+                  type="email"
+                  maxLength={BUG_REPORT_EMAIL_MAX_LENGTH}
+                  value={bugReportEmail}
+                  onChange={(event) => setBugReportEmail(event.target.value)}
+                  placeholder="name@example.com"
+                  disabled={isSubmittingBugReport}
+                />
+              </label>
+              <label className="bug-report-field">
+                <span>Description</span>
+                <textarea
+                  aria-label="Bug description"
+                  maxLength={BUG_REPORT_DESCRIPTION_MAX_LENGTH}
+                  value={bugReportDescription}
+                  onChange={(event) => setBugReportDescription(event.target.value)}
+                  placeholder="What happened, what you expected, and how to reproduce it"
+                  rows={7}
+                  disabled={isSubmittingBugReport}
+                />
+              </label>
+              <div className="bug-report-actions">
+                <span className="bug-report-counter" aria-live="polite">
+                  {bugReportDescription.length}/{BUG_REPORT_DESCRIPTION_MAX_LENGTH}
+                </span>
+                <button
+                  type="submit"
+                  className="primary-button"
+                  disabled={isSubmittingBugReport}
+                >
+                  {isSubmittingBugReport ? "Submitting..." : "Submit bug"}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+
       <main className={appBodyClassName}>
         <div
           key={hasSelection ? "inspector" : "palette"}
@@ -1942,6 +2194,13 @@ export default function App(): JSX.Element {
           </section>
         </div>
       </main>
+      <button
+        type="button"
+        className="secondary-button bug-report-launcher"
+        onClick={handleOpenBugReport}
+      >
+        Submit a bug
+      </button>
       <a
         className="corner-profile-link"
         href={REPOSITORY_URL}
