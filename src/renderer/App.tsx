@@ -113,8 +113,12 @@ const SYMBOLIC_HELP_SECTIONS: Array<{
         description: "Applied exactly on computational-basis inputs and preserved through supported symbolic evolution."
       },
       {
+        label: String.raw`\textsc{UNIFORM}_M, \textsc{UNIFORM}`,
+        description: "On a zero input, \textsc{UNIFORM}_M expands to a normalized symbolic sum \sum_{m=0}^{M-1}\ket{m}/\sqrt{M}. Bare \textsc{UNIFORM} on a named wire such as \ket{0}_a promotes that row to \ket{a}_a."
+      },
+      {
         label: String.raw`\ctrl{...}, \targ{}, \swap{...}`,
-        description: "Controls and swaps are interpreted exactly while the participating control row is still in the computational basis."
+        description: "Controls and swaps are interpreted exactly while the participating control row is still in the computational basis. A supported bare \textsc{UNIFORM} label can also be copied by a later controlled X from \ket{a}_a \otimes \ket{0}_b to \ket{a}_a \otimes \ket{a}_b."
       },
       {
         label: "Separable slices",
@@ -177,7 +181,7 @@ const SYMBOLIC_HELP_SECTIONS: Array<{
       },
       {
         label: "Controls through symbolism",
-        description: "Supported rotations expand into basis-state branches so later supported controls keep working term by term, but opaque symbolic payloads are not fully analyzed as controls."
+        description: "Supported rotations expand into basis-state branches so later supported controls keep working term by term. Arbitrary opaque symbolic payloads are not fully analyzed as controls, except the named-register form introduced by bare \textsc{UNIFORM} on \ket{0}_{name}."
       }
     ]
   }

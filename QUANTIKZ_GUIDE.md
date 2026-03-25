@@ -104,6 +104,8 @@ Runtime availability:
 - Recognized input product states: `\ket{0}`, `\ket{1}`, `\ket{+}`, `\ket{-}`, `\ket{i}`, and multi-wire products like `\ket{00}`.
 - If an `\lstick` label ends with a top-level subscript such as `\ket{0}_{c_0}` or `\ket{\psi}_{data}`, that trailing subscript is interpreted as the wire name and reused in slice descriptions and measurement labels.
 - Exact single-qubit basis-state rules: `H`, `X`, `Y`, `Z`, `S`, `T`, and `T^\dagger`.
+- `\textsc{UNIFORM}_M` applied to `\ket{0}` is interpreted as the normalized symbolic sum `\frac{1}{\sqrt{M}}\sum_{m=0}^{M-1}\ket{m}`.
+- Bare `\textsc{UNIFORM}` applied to a named zero state such as `\ket{0}_a` is interpreted as a named symbolic register state `\ket{a}_a`.
 - Recognized Pauli-axis rotation labels: `R_X(\theta)`, `R_Y(\theta)`, `R_Z(\theta)`.
 - Accepted rotation aliases: `RX(\theta)`, `RY(\theta)`, `RZ(\theta)`, lower-case axis letters like `R_x(\theta)` or `R_{y}(\theta)`, and labels with spaces inside such as `R_z(2\phi + \pi/3)`.
 - Angle expressions are preserved literally. Examples that are understood as angles include `\theta`, `\pi/7`, `2\phi + \pi/3`, and `\arccos(t)`.
@@ -135,9 +137,14 @@ is rendered symbolically as
 
 On computational-basis inputs, those rotations are expanded into basis-state branches instead of being kept as opaque local payloads. That means supported later controls continue to work term by term through the expanded branches.
 
+For the special named-register convention, the symbolic interpreter also supports a limited copy rule through a later controlled X. For example,
+
+- `\textsc{UNIFORM}(\ket{0}_a) \mapsto \ket{a}_a`
+- `\operatorname{CNOT}(\ket{a}_a \otimes \ket{0}_b) \mapsto \ket{a}_a \otimes \ket{a}_b`
+
 Current limits of the symbolic interpreter:
 
-- Controls are interpreted exactly through supported basis-state expansions, but not through arbitrary opaque symbolic payloads.
+- Controls are interpreted exactly through supported basis-state expansions, but not through arbitrary opaque symbolic payloads. The main exception is the named-register form introduced by bare `\textsc{UNIFORM}` on a named zero state.
 - Measurements are exact for computational-basis states and the explicitly supported `H/S/T/T^\dagger/X/Y/Z` basis-state transforms.
 - Measurement probabilities after `R_X`, `R_Y`, and `R_Z` are also derived symbolically. When multiple rotated branches interfere on the same measurement outcome, the probability is kept as an exact `\left|...\right|^2` expression rather than being over-simplified.
 - After a measurement, each branch displays only the remaining unmeasured subsystem. The measured wire is removed from the branch state shown in the symbolic output.

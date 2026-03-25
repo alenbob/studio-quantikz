@@ -402,6 +402,28 @@ describe("App smoke tests", () => {
     expect(exported).toContain("\\lstick{$\\ket{\\psi}$}");
   });
 
+  it("loads \\textsc gate labels into the visual editor and renders them with KaTeX", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+
+    fireEvent.change(screen.getByLabelText(/quantikz output/i), {
+      target: {
+        value: String.raw`\begin{quantikz}
+\lstick{$\ket{0}$} & \gate{\textsc{UNIFORM}}
+\end{quantikz}`
+      }
+    });
+
+    await user.click(screen.getByRole("button", { name: /convert to visual/i }));
+
+    expect(container.querySelector(".gate-label-math .katex")).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: /convert to quantikz/i }));
+
+    const exported = (screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value;
+    expect(exported).toContain("\\gate{\\textsc{UNIFORM}}");
+  });
+
   it("preserves nested ancilla wire overrides when round-tripping through the visual editor", async () => {
     const user = userEvent.setup();
     render(<App />);
@@ -1332,6 +1354,9 @@ describe("App smoke tests", () => {
     expect(within(dialog).getByText(/recognized states/i)).toBeInTheDocument();
     expect(within(dialog).getByText(String.raw`\ket{0}, \ket{1}, \ket{+}, \ket{-}, \ket{i}`)).toBeInTheDocument();
     expect(within(dialog).getByText(String.raw`\ket{0}_{c_0}, \ket{\psi}_{data}`)).toBeInTheDocument();
+    expect(within(dialog).getByText(String.raw`\textsc{UNIFORM}_M, \textsc{UNIFORM}`)).toBeInTheDocument();
+    expect(within(dialog).getByText(/normalized symbolic sum/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/copied by a later controlled x/i)).toBeInTheDocument();
     expect(within(dialog).getByText(String.raw`R_X(\theta), R_Y(\theta), R_Z(\theta)`)).toBeInTheDocument();
     expect(within(dialog).getByText(/each independent wire stays separated/i)).toBeInTheDocument();
     expect(within(dialog).getByText(/generated on the server/i)).toBeInTheDocument();

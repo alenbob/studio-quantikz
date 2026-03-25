@@ -172,6 +172,42 @@ NAMED_WIRE_MEASUREMENT_CIRCUIT = textwrap.dedent(
     """
 ).strip()
 
+UNIFORM_COUNTED_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}
+    \lstick{$\ket{0}$} & \gate{\textsc{UNIFORM}_L}
+    \end{quantikz}
+    """
+).strip()
+
+UNIFORM_COUNTED_TENSOR_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}
+    \lstick{$\ket{0}$} & \gate{\textsc{UNIFORM}_L} \\
+    \lstick{$\ket{0}$} &
+    \end{quantikz}
+    """
+).strip()
+
+UNIFORM_SYMBOLIC_COPY_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}
+    \lstick{$\ket{0}_a$} & \gate{\textsc{UNIFORM}} & \ctrl{1} \\
+    \lstick{$\ket{0}_b$} &  & \targ{}
+    \end{quantikz}
+    """
+).strip()
+
+UNIFORM_MULTI_CONTROLLED_SYMBOLIC_COPY_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}
+    \lstick{$\ket{1}_r$} &  & \ctrl{2} \\
+    \lstick{$\ket{0}_p$} & \gate{\textsc{UNIFORM}} & \ctrl{1} \\
+    \lstick{$\ket{0}_q$} &  & \targ{}
+    \end{quantikz}
+    """
+).strip()
+
 ROTATED_MEASUREMENT_CIRCUIT = textwrap.dedent(
     r"""
     \begin{quantikz}
@@ -645,6 +681,73 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
         output = result.stdout
         self.assertIn(r"\textbf{Slice 1: } measure $c_0$", output)
         self.assertIn(r"\Pr(c_0=1)=1", output)
+
+    def test_expands_counted_uniform_into_a_normalized_symbolic_sum(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = pathlib.Path(temp_dir) / "uniform_counted.tex"
+            input_path.write_text(UNIFORM_COUNTED_CIRCUIT, encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH), str(input_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        output = result.stdout
+        self.assertIn(r"\ket{\Psi_{1}} &= \frac{1}{\sqrt{L}} \sum_{l=0}^{L-1} \ket{l}", output)
+
+    def test_wraps_counted_uniform_sums_when_used_as_tensor_factors(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = pathlib.Path(temp_dir) / "uniform_counted_tensor.tex"
+            input_path.write_text(UNIFORM_COUNTED_TENSOR_CIRCUIT, encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH), str(input_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        output = result.stdout
+        self.assertIn(
+            r"\ket{\Psi_{1}} &= \left(\frac{1}{\sqrt{L}} \sum_{l=0}^{L-1} \ket{l}\right) \otimes \ket{0}",
+            output,
+        )
+
+    def test_propagates_symbolic_uniform_labels_through_controlled_x(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = pathlib.Path(temp_dir) / "uniform_symbolic_copy.tex"
+            input_path.write_text(UNIFORM_SYMBOLIC_COPY_CIRCUIT, encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH), str(input_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        output = result.stdout
+        self.assertIn(r"\ket{\Psi_{1}} &= \ket{a}_{a} \otimes \ket{0}_{b}", output)
+        self.assertIn(r"\textbf{Slice 2: } controlled $X$ on $b$", output)
+        self.assertIn(r"\ket{\Psi_{2}} &= \ket{a}_{a} \otimes \ket{a}_{b}", output)
+
+    def test_propagates_symbolic_uniform_labels_through_mixed_multi_controlled_x(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = pathlib.Path(temp_dir) / "uniform_multi_controlled_symbolic_copy.tex"
+            input_path.write_text(UNIFORM_MULTI_CONTROLLED_SYMBOLIC_COPY_CIRCUIT, encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH), str(input_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        output = result.stdout
+        self.assertIn(r"\ket{\Psi_{1}} &= \ket{1}_{r} \otimes \ket{p}_{p} \otimes \ket{0}_{q}", output)
+        self.assertIn(r"\textbf{Slice 2: } controlled $X$ on $q$", output)
+        self.assertIn(r"\ket{\Psi_{2}} &= \ket{1}_{r} \otimes \ket{p}_{p} \otimes \ket{p}_{q}", output)
 
     def test_derives_measurement_probabilities_after_rotations(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

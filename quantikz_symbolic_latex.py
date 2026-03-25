@@ -365,6 +365,9 @@ def controlled_gate_description(label: str) -> str:
     return rf"controlled ${label.strip()}$"
 
 
+KET_PAYLOAD_PATTERN = re.compile(r"^\\ket\{([^{}]+)\}(.*)$")
+
+
 def extract_trailing_subscript(label: str) -> str | None:
     stripped = label.strip()
     if not stripped:
@@ -392,11 +395,16 @@ def extract_trailing_subscript(label: str) -> str | None:
     return match.group(1)
 
 
-def row_reference(row_labels: list[str], row: int, fallback_prefix: str) -> str:
+def row_wire_name(row_labels: list[str], row: int) -> str | None:
     if 0 <= row < len(row_labels):
-        named_reference = extract_trailing_subscript(row_labels[row])
-        if named_reference is not None:
-            return named_reference
+        return extract_trailing_subscript(row_labels[row])
+    return None
+
+
+def row_reference(row_labels: list[str], row: int, fallback_prefix: str) -> str:
+    named_reference = row_wire_name(row_labels, row)
+    if named_reference is not None:
+        return named_reference
     return rf"{fallback_prefix}_{{{row}}}"
 
 
@@ -410,6 +418,126 @@ def qubit_description(action: str, row_labels: list[str], row: int) -> str:
 
 def controlled_qubit_description(action: str, row_labels: list[str], row: int) -> str:
     return rf"controlled {action} ${row_reference(row_labels, row, 'q')}$"
+
+
+def parse_ket_payload(value: str) -> tuple[str, str] | None:
+    normalized = " ".join(value.split())
+    match = KET_PAYLOAD_PATTERN.fullmatch(normalized)
+    if match is None:
+        return None
+    return match.group(1).strip(), match.group(2).strip()
+
+
+def parse_uniform_gate_label(label: str) -> tuple[bool, str | None]:
+    normalized = label.strip().replace(" ", "")
+    for prefix in (r"\textsc{UNIFORM}", "UNIFORM"):
+        if normalized == prefix:
+            return True, None
+        if not normalized.startswith(prefix + "_"):
+            continue
+        remainder = normalized[len(prefix) + 1 :]
+        if remainder.startswith("{") and remainder.endswith("}") and len(remainder) >= 2:
+            remainder = remainder[1:-1].strip()
+        return True, remainder or None
+    return False, None
+
+
+def uniform_index_symbol(count_symbol: str) -> str:
+    match = re.search(r"[A-Za-z]", count_symbol)
+    if match is None:
+        return "j"
+    return match.group(0).lower()
+
+
+def symbolic_ket_for_row(body: str, row_labels: list[str], row: int) -> str:
+    suffix = row_wire_suffix(row_labels, row) or ""
+    return rf"\ket{{{body}}}{suffix}"
+
+
+def row_factor_is_zero_state(factor: tuple[str, int | str] | None) -> bool:
+    if factor is None:
+        return False
+    kind, value = factor
+    if kind == "basis":
+        return int(value) == 0
+    parsed = parse_ket_payload(str(value))
+    return parsed is not None and parsed[0] == "0"
+
+
+def symbolic_ket_body(factor: tuple[str, int | str] | None) -> str | None:
+    if factor is None or factor[0] != "payload":
+        return None
+    parsed = parse_ket_payload(str(factor[1]))
+    if parsed is None:
+        return None
+    body, _suffix = parsed
+    if body in {"0", "1", "+", "-", "i", "-i"}:
+        return None
+    return body
+
+
+def apply_uniform_gate_to_term(
+    term: SymbolicTerm,
+    row: int,
+    label: str,
+    row_labels: list[str],
+) -> list[SymbolicTerm] | None:
+    matched, count_symbol = parse_uniform_gate_label(label)
+    if not matched:
+        return None
+
+    current_factor = get_row_factor(term, row)
+    if not row_factor_is_zero_state(current_factor):
+        return None
+
+    updated = term.clone()
+    if count_symbol is None:
+        wire_name = row_wire_name(row_labels, row)
+        if wire_name is None:
+            return None
+        set_row_factor(updated, row, ("payload", symbolic_ket_for_row(wire_name, row_labels, row)))
+        set_row_local_weight(updated, row, LocalWeight())
+        return [updated]
+
+    index_symbol = uniform_index_symbol(count_symbol)
+    expression = rf"\frac{{1}}{{\sqrt{{{count_symbol}}}}} \sum_{{{index_symbol}=0}}^{{{count_symbol}-1}} \ket{{{index_symbol}}}"
+    suffix = row_wire_suffix(row_labels, row)
+    if suffix is not None:
+        expression = rf"\left({expression}\right){suffix}"
+    set_row_factor(updated, row, ("payload", expression))
+    set_row_local_weight(updated, row, LocalWeight())
+    return [updated]
+
+
+def propagate_symbolic_control_to_target(
+    term: SymbolicTerm,
+    controls: list[tuple[int, int]],
+    target_row: int,
+    row_labels: list[str],
+) -> bool:
+    symbolic_control_body: str | None = None
+    for control_row, expected in controls:
+        basis_value = term.basis_bits.get(control_row)
+        if basis_value is not None:
+            if basis_value != expected:
+                return False
+            continue
+
+        control_body = symbolic_ket_body(get_row_factor(term, control_row))
+        if control_body is None or expected != 1:
+            return False
+        if symbolic_control_body is not None:
+            return False
+        symbolic_control_body = control_body
+
+    if symbolic_control_body is None:
+        return False
+    if not row_factor_is_zero_state(get_row_factor(term, target_row)):
+        return False
+
+    set_row_factor(term, target_row, ("payload", symbolic_ket_for_row(symbolic_control_body, row_labels, target_row)))
+    set_row_local_weight(term, target_row, LocalWeight())
+    return True
 
 
 def controls_for_connected_rows(column: dict[str, object], active_rows: set[int]) -> list[tuple[int, int]]:
@@ -1692,7 +1820,13 @@ def apply_named_gate_to_basis_term(term: SymbolicTerm, row: int, label: str) -> 
     return [updated]
 
 
-def apply_gate_to_term(term: SymbolicTerm, target_row: int, span: int, label: str) -> list[SymbolicTerm]:
+def apply_gate_to_term(
+    term: SymbolicTerm,
+    target_row: int,
+    span: int,
+    label: str,
+    row_labels: list[str],
+) -> list[SymbolicTerm]:
     components = decompose_tensor_product_gate_label(label, span)
     if components is not None:
         evolved_terms = [term.clone()]
@@ -1701,6 +1835,10 @@ def apply_gate_to_term(term: SymbolicTerm, target_row: int, span: int, label: st
             for evolved_term in evolved_terms:
                 if component == "I":
                     next_terms.append(evolved_term)
+                    continue
+                uniform_terms = apply_uniform_gate_to_term(evolved_term, row, component, row_labels)
+                if uniform_terms is not None:
+                    next_terms.extend(uniform_terms)
                     continue
                 if is_named_single_qubit_gate(component):
                     named_terms = apply_named_gate_to_basis_term(evolved_term, row, component)
@@ -1715,6 +1853,11 @@ def apply_gate_to_term(term: SymbolicTerm, target_row: int, span: int, label: st
                 next_terms.append(evolved_term)
             evolved_terms = next_terms
         return evolved_terms
+
+    if span == 1:
+        uniform_terms = apply_uniform_gate_to_term(term, target_row, label, row_labels)
+        if uniform_terms is not None:
+            return uniform_terms
 
     updated = term.clone()
     factors: list[str] = []
@@ -1739,7 +1882,7 @@ def apply_gate_to_term(term: SymbolicTerm, target_row: int, span: int, label: st
     return [updated]
 
 
-def evolve_terms(terms: list[SymbolicTerm], slice_info: LogicalSlice) -> list[SymbolicTerm]:
+def evolve_terms(terms: list[SymbolicTerm], slice_info: LogicalSlice, row_labels: list[str]) -> list[SymbolicTerm]:
     next_terms: list[SymbolicTerm] = []
     for term in terms:
         updated = term.clone()
@@ -1766,6 +1909,9 @@ def evolve_terms(terms: list[SymbolicTerm], slice_info: LogicalSlice) -> list[Sy
                     if current is None:
                         raise ValueError(f"Controlled X target row {slice_info.target_row} has no symbolic factor to act on")
                     updated.payloads[slice_info.target_row] = apply_operator("X", current)
+            elif not propagate_symbolic_control_to_target(updated, slice_info.controls, slice_info.target_row, row_labels):
+                next_terms.append(updated)
+                continue
         elif slice_info.kind == "swap":
             assert slice_info.target_row is not None
             assert slice_info.secondary_row is not None
@@ -1780,12 +1926,12 @@ def evolve_terms(terms: list[SymbolicTerm], slice_info: LogicalSlice) -> list[Sy
                 set_row_local_weight(updated, slice_info.secondary_row, left_weight)
         elif slice_info.kind == "gate":
             assert slice_info.target_row is not None
-            next_terms.extend(apply_gate_to_term(updated, slice_info.target_row, slice_info.span, slice_info.label))
+            next_terms.extend(apply_gate_to_term(updated, slice_info.target_row, slice_info.span, slice_info.label, row_labels))
             continue
         elif slice_info.kind == "controlled_gate":
             assert slice_info.target_row is not None
             if all(updated.basis_bits.get(row) == expected for row, expected in slice_info.controls):
-                next_terms.extend(apply_gate_to_term(updated, slice_info.target_row, slice_info.span, slice_info.label))
+                next_terms.extend(apply_gate_to_term(updated, slice_info.target_row, slice_info.span, slice_info.label, row_labels))
                 continue
         elif slice_info.kind == "measure":
             next_terms.append(updated)
@@ -1994,9 +2140,13 @@ def render_scalar_weighted_expression(amplitude: Amplitude, scalar: str, express
     return f"{amplitude_text} {scalar_text} {expression}"
 
 
-def wrap_tensor_factor(factor: str) -> str:
+def wrap_tensor_factor(factor: str, *, wrap_sums: bool = False) -> str:
     stripped = factor.strip()
+    if re.fullmatch(r"\\left\(.*\\right\)(?:_\{[^{}]+\}|_[A-Za-z0-9\\]+)?", stripped):
+        return stripped
     if " + " in stripped or " - " in stripped[1:]:
+        return rf"\left({stripped}\right)"
+    if wrap_sums and r"\sum" in stripped:
         return rf"\left({stripped}\right)"
     return stripped
 
@@ -2015,7 +2165,7 @@ def render_measurement_term(term: MeasurementRenderedTerm, row_order: list[int])
                 index += 1
             factors.append(rf"\ket{{{''.join(bits)}}}")
             continue
-        factors.append(wrap_tensor_factor(term.payloads[row]))
+        factors.append(wrap_tensor_factor(term.payloads[row], wrap_sums=True))
         index += 1
 
     factor_body = r" \otimes ".join(factors)
@@ -2038,7 +2188,7 @@ def render_measurement_symbolic_term(term: MeasurementSymbolicTerm, row_order: l
                 index += 1
             factors.append(rf"\ket{{{''.join(bits)}}}")
             continue
-        factors.append(wrap_tensor_factor(term.payloads[row]))
+        factors.append(wrap_tensor_factor(term.payloads[row], wrap_sums=True))
         index += 1
 
     factor_body = r" \otimes ".join(factors)
@@ -2280,10 +2430,9 @@ def make_local_signature(term: SymbolicTerm, row: int) -> LocalSignature | None:
 
 
 def row_wire_suffix(row_labels: list[str], row: int) -> str | None:
-    if 0 <= row < len(row_labels):
-        name = extract_trailing_subscript(row_labels[row])
-        if name is not None:
-            return rf"_{{{name}}}"
+    name = row_wire_name(row_labels, row)
+    if name is not None:
+        return rf"_{{{name}}}"
     return None
 
 
@@ -2406,6 +2555,7 @@ def render_factorized_product_state(
             local_expression = render_row_product_expression(list(local_signatures), row, row_labels)
             if not remaining_rows:
                 return local_expression
+            local_tensor_expression = wrap_tensor_factor(local_expression, wrap_sums=True)
 
             reduced_terms = [
                 build_term_from_local_signatures(remaining_rows, residual_signature)
@@ -2413,8 +2563,8 @@ def render_factorized_product_state(
             ]
             remainder = render_state_latex(reduced_terms, remaining_rows, row_labels)
             if row == active_rows[0]:
-                return rf"{local_expression} \otimes {remainder}"
-            return rf"{remainder} \otimes {local_expression}"
+                return rf"{local_tensor_expression} \otimes {remainder}"
+            return rf"{remainder} \otimes {local_tensor_expression}"
 
     return None
 
@@ -2433,7 +2583,7 @@ def render_term(term: SymbolicTerm, row_order: list[int]) -> str:
                 index += 1
             factors.append(rf"\ket{{{''.join(bits)}}}")
             continue
-        factors.append(wrap_tensor_factor(term.payloads[row]))
+        factors.append(wrap_tensor_factor(term.payloads[row], wrap_sums=True))
         index += 1
 
     factor_body = r" \otimes ".join(factors)
@@ -2453,7 +2603,7 @@ def render_grouped_terms(
     else:
         basis_expr = ""
 
-    payload_expr = r" \otimes ".join(wrap_tensor_factor(factor) for factor in payload_factors)
+    payload_expr = r" \otimes ".join(wrap_tensor_factor(factor, wrap_sums=True) for factor in payload_factors)
     if basis_expr and payload_expr:
         return f"{basis_expr} \\otimes {payload_expr}"
     if payload_expr:
@@ -2659,7 +2809,7 @@ def build_discursive_block(
                     ]
                     rendered_state = render_measurement_state_latex(measured_terms, active_rows, slice_info.target_row, row_labels)
             else:
-                terms = evolve_terms(terms, slice_info)
+                terms = evolve_terms(terms, slice_info, row_labels)
                 active_rows = [row for row in all_rows if any(row in term.basis_bits or row in term.payloads for term in terms)]
                 rendered_state = render_state_latex(terms, active_rows, row_labels)
             step_number = run_offset if run_length > 1 else None

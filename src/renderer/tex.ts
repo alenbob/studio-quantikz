@@ -3,7 +3,8 @@ import katex from "katex";
 const KATEX_MACROS = {
   "\\ket": "\\left|#1\\right\\rangle",
   "\\bra": "\\left\\langle#1\\right|",
-  "\\proj": "\\left|#1\\right\\rangle\\left\\langle#1\\right|"
+  "\\proj": "\\left|#1\\right\\rangle\\left\\langle#1\\right|",
+  "\\textsc": "\\mathrm{#1}"
 };
 
 export type KatexMacroMap = Record<string, string>;
