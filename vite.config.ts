@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import { listBugReports, readBugReportPreviewImage, validateBugReportAdminToken } from "./src/server/bugReports";
+import { archiveBugReport, listBugReports, readBugReportImage, validateBugReportAdminToken } from "./src/server/bugReports";
 import { renderQuantikzPdf, renderQuantikzSvg } from "./src/server/renderQuantikz";
 import { renderSymbolicLatex } from "./src/server/renderSymbolicLatex";
 
@@ -49,6 +49,10 @@ function parseBugReportLimit(urlValue: string | undefined): number {
   }
 
   return Math.min(parsed, 200);
+}
+
+function parseBugReportStatus(urlValue: string | undefined): "active" | "archived" {
+  return urlValue === "archived" ? "archived" : "active";
 }
 
 function readBugReportAdminToken(headers: IncomingMessage["headers"]): string | null {
@@ -154,17 +158,32 @@ export default defineConfig({
         });
 
         server.middlewares.use("/api/bug-reports", async (request, response, next) => {
-          if (request.method !== "GET") {
+          if (request.method !== "GET" && request.method !== "POST") {
             next();
             return;
           }
 
           try {
+            if (request.method === "POST") {
+              validateBugReportAdminToken(readBugReportAdminToken(request.headers));
+              const body = await readJsonBody(request) as { action?: string; storageKey?: string };
+              if (body.action !== "archive" || typeof body.storageKey !== "string") {
+                throw new Error("Archive requests require action=archive and a storageKey.");
+              }
+
+              const report = await archiveBugReport(body.storageKey);
+              sendJson(response, 200, {
+                success: true,
+                report
+              });
+              return;
+            }
+
             const requestUrl = new URL(request.url ?? "/api/bug-reports", "http://localhost");
             validateBugReportAdminToken(readBugReportAdminToken(request.headers));
             const storageKey = requestUrl.searchParams.get("storageKey") ?? undefined;
             if (storageKey) {
-              const image = await readBugReportPreviewImage(storageKey);
+              const image = await readBugReportImage(storageKey);
               if (!image) {
                 response.statusCode = 404;
                 response.end("Not found.");
@@ -178,7 +197,10 @@ export default defineConfig({
               return;
             }
 
-            const reports = await listBugReports(parseBugReportLimit(requestUrl.searchParams.get("limit") ?? undefined));
+            const reports = await listBugReports(
+              parseBugReportLimit(requestUrl.searchParams.get("limit") ?? undefined),
+              parseBugReportStatus(requestUrl.searchParams.get("status") ?? undefined)
+            );
             sendJson(response, 200, {
               success: true,
               reports
@@ -187,8 +209,10 @@ export default defineConfig({
             const message = error instanceof Error ? error.message : "Unable to list bug reports.";
             const statusCode = message === "Invalid bug report admin token."
               ? 401
-              : /positive integer|required|configured/i.test(message)
+              : /positive integer|required|configured|action=archive/i.test(message)
                 ? 400
+                : /not found/i.test(message)
+                  ? 404
                 : 500;
             sendJson(response, statusCode, {
               success: false,

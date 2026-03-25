@@ -5,6 +5,7 @@ import {
   BUG_REPORT_DESCRIPTION_MAX_LENGTH,
   BUG_REPORT_EMAIL_MAX_LENGTH,
   BUG_REPORT_TITLE_MAX_LENGTH,
+  type BugReportStatus,
   type BugReportPayload,
   type StoredBugReport
 } from "../shared/bugReport.js";
@@ -44,6 +45,8 @@ function buildStoredBugReport(payload: BugReportPayload, storage: StoredBugRepor
   return {
     id: crypto.randomUUID(),
     submittedAt,
+    status: "active",
+    archivedAt: null,
     title: normalizeRequiredField("Title", payload.title, BUG_REPORT_TITLE_MAX_LENGTH),
     description: normalizeRequiredField("Description", payload.description, BUG_REPORT_DESCRIPTION_MAX_LENGTH),
     email: normalizeOptionalField(payload.email, BUG_REPORT_EMAIL_MAX_LENGTH),
@@ -122,6 +125,8 @@ async function storeBugReportInBlob(payload: BugReportPayload): Promise<StoredBu
   const report = {
     id: reportId,
     submittedAt,
+    status: "active" as const,
+    archivedAt: null,
     title: normalizeRequiredField("Title", payload.title, BUG_REPORT_TITLE_MAX_LENGTH),
     description: normalizeRequiredField("Description", payload.description, BUG_REPORT_DESCRIPTION_MAX_LENGTH),
     email: normalizeOptionalField(payload.email, BUG_REPORT_EMAIL_MAX_LENGTH),
@@ -197,6 +202,7 @@ function parseStoredBugReport(raw: unknown): StoredBugReport {
   if (
     typeof candidate.id !== "string"
     || typeof candidate.submittedAt !== "string"
+    || (candidate.status !== undefined && candidate.status !== "active" && candidate.status !== "archived")
     || typeof candidate.title !== "string"
     || typeof candidate.description !== "string"
     || typeof candidate.code !== "string"
@@ -210,6 +216,8 @@ function parseStoredBugReport(raw: unknown): StoredBugReport {
   return {
     id: candidate.id,
     submittedAt: candidate.submittedAt,
+    status: candidate.status === "archived" ? "archived" : "active",
+    archivedAt: typeof candidate.archivedAt === "string" ? candidate.archivedAt : null,
     title: candidate.title,
     description: candidate.description,
     email: typeof candidate.email === "string" ? candidate.email : null,
@@ -298,20 +306,102 @@ async function listBugReportsFromFile(limit: number): Promise<StoredBugReport[]>
     .reverse();
 }
 
-export async function listBugReports(limit = 50): Promise<StoredBugReport[]> {
+export async function listBugReports(limit = 50, status: BugReportStatus = "active"): Promise<StoredBugReport[]> {
   if (!Number.isInteger(limit) || limit <= 0) {
     throw new Error("Bug report limit must be a positive integer.");
   }
 
+  if (status !== "active" && status !== "archived") {
+    throw new Error("Bug report status must be active or archived.");
+  }
+
+  const reports = process.env.BLOB_READ_WRITE_TOKEN?.trim()
+    ? await listBugReportsFromBlob(Math.max(limit * 3, limit))
+    : process.env.VERCEL === "1"
+      ? (() => {
+        throw new Error("Bug report storage is not configured. Set BLOB_READ_WRITE_TOKEN on Vercel.");
+      })()
+      : await listBugReportsFromFile(Math.max(limit * 3, limit));
+
+  return reports.filter((report) => report.status === status).slice(0, limit);
+}
+
+async function readBugReportRecord(storageKey: string): Promise<StoredBugReport | null> {
+  const normalizedStorageKey = storageKey.trim();
+  if (!normalizedStorageKey) {
+    throw new Error("Bug report storage key is required.");
+  }
+
   if (process.env.BLOB_READ_WRITE_TOKEN?.trim()) {
-    return listBugReportsFromBlob(limit);
+    if (!normalizedStorageKey.startsWith("bug-reports/")) {
+      throw new Error("Invalid bug report storage key.");
+    }
+
+    const result = await get(normalizedStorageKey, { access: "private" });
+    if (!result || result.statusCode === 404) {
+      return null;
+    }
+    if (result.statusCode !== 200) {
+      throw new Error(`Unable to read bug report ${normalizedStorageKey}.`);
+    }
+
+    const body = await new Response(result.stream).text();
+    return parseStoredBugReport(JSON.parse(body));
   }
 
   if (process.env.VERCEL === "1") {
     throw new Error("Bug report storage is not configured. Set BLOB_READ_WRITE_TOKEN on Vercel.");
   }
 
-  return listBugReportsFromFile(limit);
+  const reports = await listBugReportsFromFile(Number.MAX_SAFE_INTEGER);
+  return reports.find((report) => report.storageKey === normalizedStorageKey) ?? null;
+}
+
+async function writeBugReportRecord(report: StoredBugReport): Promise<void> {
+  if (process.env.BLOB_READ_WRITE_TOKEN?.trim()) {
+    await put(report.storageKey, JSON.stringify(report, null, 2), {
+      access: "private",
+      addRandomSuffix: false,
+      allowOverwrite: true,
+      contentType: "application/json"
+    });
+    return;
+  }
+
+  if (process.env.VERCEL === "1") {
+    throw new Error("Bug report storage is not configured. Set BLOB_READ_WRITE_TOKEN on Vercel.");
+  }
+
+  const raw = await readFile(LOCAL_STORAGE_PATH, "utf8");
+  const nextLines = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => parseStoredBugReport(JSON.parse(line)))
+    .map((entry) => entry.storageKey === report.storageKey ? report : entry)
+    .map((entry) => JSON.stringify(entry));
+
+  await writeFile(LOCAL_STORAGE_PATH, `${nextLines.join("\n")}\n`, "utf8");
+}
+
+export async function archiveBugReport(storageKey: string): Promise<StoredBugReport> {
+  const report = await readBugReportRecord(storageKey);
+  if (!report) {
+    throw new Error("Bug report not found.");
+  }
+
+  if (report.status === "archived") {
+    return report;
+  }
+
+  const archivedReport: StoredBugReport = {
+    ...report,
+    status: "archived",
+    archivedAt: new Date().toISOString()
+  };
+
+  await writeBugReportRecord(archivedReport);
+  return archivedReport;
 }
 
 export function validateBugReportAdminToken(providedToken: string | null | undefined): void {

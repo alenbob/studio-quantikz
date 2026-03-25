@@ -1,5 +1,26 @@
-import { listBugReports, readBugReportImage, validateBugReportAdminToken } from "../src/server/bugReports.js";
-import type { BugReportListResponse } from "../src/shared/bugReport.js";
+import { archiveBugReport, listBugReports, readBugReportImage, validateBugReportAdminToken } from "../src/server/bugReports.js";
+import type { BugReportArchiveResponse, BugReportListResponse, BugReportStatus } from "../src/shared/bugReport.js";
+
+async function readRequestBody(request: { body?: unknown; on: (event: string, cb: (chunk: Buffer | string) => void) => void }): Promise<string> {
+  if (typeof request.body === "string") {
+    return request.body;
+  }
+
+  if (request.body && typeof request.body === "object") {
+    return JSON.stringify(request.body);
+  }
+
+  return new Promise((resolve, reject) => {
+    let data = "";
+
+    request.on("data", (chunk) => {
+      data += chunk.toString();
+    });
+
+    request.on("end", () => resolve(data));
+    request.on("error", reject);
+  });
+}
 
 function parseLimit(value: unknown): number {
   if (typeof value !== "string" || !value.trim()) {
@@ -14,6 +35,10 @@ function parseLimit(value: unknown): number {
   return Math.min(parsed, 200);
 }
 
+function parseStatus(value: unknown): BugReportStatus {
+  return value === "archived" ? "archived" : "active";
+}
+
 function readAdminToken(request: any): string | null {
   const authorization = request.headers?.authorization;
   if (typeof authorization === "string" && authorization.startsWith("Bearer ")) {
@@ -25,13 +50,25 @@ function readAdminToken(request: any): string | null {
 }
 
 export default async function handler(request: any, response: any): Promise<void> {
-  if (request.method !== "GET") {
+  if (request.method !== "GET" && request.method !== "POST") {
     response.status(405).json({ success: false, error: "Method not allowed." } satisfies BugReportListResponse);
     return;
   }
 
   try {
     validateBugReportAdminToken(readAdminToken(request));
+    if (request.method === "POST") {
+      const rawBody = await readRequestBody(request);
+      const payload = rawBody ? JSON.parse(rawBody) : {};
+      if (payload?.action !== "archive" || typeof payload.storageKey !== "string") {
+        throw new Error("Archive requests require action=archive and a storageKey.");
+      }
+
+      const report = await archiveBugReport(payload.storageKey);
+      response.status(200).json({ success: true, report } satisfies BugReportArchiveResponse);
+      return;
+    }
+
     if (request.query?.storageKey) {
       const image = await readBugReportImage(String(request.query.storageKey));
       if (!image) {
@@ -47,14 +84,16 @@ export default async function handler(request: any, response: any): Promise<void
     }
 
     const limit = parseLimit(request.query?.limit);
-    const reports = await listBugReports(limit);
+    const reports = await listBugReports(limit, parseStatus(request.query?.status));
     response.status(200).json({ success: true, reports } satisfies BugReportListResponse);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to list bug reports.";
     const statusCode = message === "Invalid bug report admin token."
       ? 401
-      : /positive integer|required|configured/i.test(message)
+      : /positive integer|required|configured|action=archive/i.test(message)
         ? 400
+        : /not found/i.test(message)
+          ? 404
         : 500;
 
     response.status(statusCode).json({ success: false, error: message } satisfies BugReportListResponse);

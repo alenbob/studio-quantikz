@@ -134,6 +134,28 @@
         gap: 10px;
       }
 
+      .view-toggle {
+        display: inline-flex;
+        gap: 8px;
+        padding: 4px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(255, 255, 255, 0.04);
+      }
+
+      .view-toggle button {
+        min-height: 38px;
+        padding: 0 14px;
+        border-radius: 999px;
+        background: transparent;
+        color: var(--muted);
+      }
+
+      .view-toggle button.is-active {
+        background: rgba(105, 179, 255, 0.16);
+        color: var(--text);
+      }
+
       .status-bar {
         display: flex;
         justify-content: space-between;
@@ -267,6 +289,61 @@
         font-size: 0.84rem;
       }
 
+      .field-list {
+        display: grid;
+        gap: 8px;
+      }
+
+      .field-row {
+        display: flex;
+        gap: 10px;
+        align-items: start;
+        line-height: 1.5;
+      }
+
+      .field-row strong {
+        min-width: 120px;
+        color: var(--muted);
+        font-size: 0.8rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .field-row span,
+      .field-row a {
+        flex: 1;
+        min-width: 0;
+        word-break: break-word;
+      }
+
+      .snapshot-grid {
+        display: grid;
+        gap: 12px;
+        padding: 0 16px 16px;
+      }
+
+      .snapshot-card {
+        padding: 14px;
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+      }
+
+      .snapshot-card h4 {
+        margin: 0 0 10px;
+        font-size: 0.92rem;
+      }
+
+      .report-actions {
+        display: flex;
+        justify-content: flex-end;
+        margin-top: 14px;
+      }
+
+      .report-actions button {
+        min-height: 40px;
+      }
+
       details {
         border-radius: 18px;
         overflow: hidden;
@@ -349,6 +426,13 @@
           Limit
           <input id="limit" type="number" min="1" max="200" value="50" />
         </label>
+        <label>
+          View
+          <div class="view-toggle" role="tablist" aria-label="Bug report view">
+            <button id="view-active" type="button" class="is-active" aria-pressed="true">Active</button>
+            <button id="view-archived" type="button" aria-pressed="false">Archived</button>
+          </div>
+        </label>
         <div class="actions">
           <button id="load" type="button">Load reports</button>
           <button id="clear" class="secondary" type="button">Clear token</button>
@@ -367,6 +451,8 @@
       const tokenInput = document.getElementById("token");
       const searchInput = document.getElementById("search");
       const limitInput = document.getElementById("limit");
+      const viewActiveButton = document.getElementById("view-active");
+      const viewArchivedButton = document.getElementById("view-archived");
       const loadButton = document.getElementById("load");
       const clearButton = document.getElementById("clear");
       const statusNode = document.getElementById("status");
@@ -374,6 +460,7 @@
       const reportsNode = document.getElementById("reports");
 
       const SESSION_KEY = "quantikzz_bug_report_admin_token";
+      let currentView = "active";
       let reports = [];
 
       function getReportComment(report) {
@@ -411,15 +498,142 @@
         return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
       }
 
+      function renderStoredValue(value) {
+        if (value === null || value === undefined || value === "") {
+          return "Not provided";
+        }
+
+        if (typeof value === "string") {
+          return escapeHtml(value);
+        }
+
+        return escapeHtml(JSON.stringify(value));
+      }
+
+      function renderFieldRow(label, value, options = {}) {
+        const renderedValue = value && options.href
+          ? `<a href="${escapeHtml(options.href)}" target="_blank" rel="noreferrer">${renderStoredValue(value)}</a>`
+          : `<span>${renderStoredValue(value)}</span>`;
+
+        return `
+          <div class="field-row">
+            <strong>${escapeHtml(label)}</strong>
+            ${renderedValue}
+          </div>
+        `;
+      }
+
+      function renderScreenshotFigure(storageKey, caption) {
+        if (!storageKey) {
+          return "";
+        }
+
+        return `
+          <figure class="screenshot-frame">
+            <img
+              alt="${escapeHtml(caption)}"
+              data-bug-image-storage-key="${escapeHtml(storageKey)}"
+            />
+            <p class="screenshot-caption">${escapeHtml(caption)}</p>
+          </figure>
+        `;
+      }
+
+      function safeParseJson(value) {
+        if (typeof value !== "string" || !value.trim()) {
+          return null;
+        }
+
+        try {
+          return JSON.parse(value);
+        } catch {
+          return null;
+        }
+      }
+
+      function renderSnapshotSection(title, fields) {
+        const rows = fields.filter(([, value]) => value !== null && value !== undefined && value !== "");
+        if (rows.length === 0) {
+          return "";
+        }
+
+        return `
+          <section class="snapshot-card">
+            <h4>${escapeHtml(title)}</h4>
+            <div class="field-list">
+              ${rows.map(([label, value]) => renderFieldRow(label, typeof value === "object" ? JSON.stringify(value) : value)).join("")}
+            </div>
+          </section>
+        `;
+      }
+
+      function renderFormattedSnapshot(report) {
+        const snapshot = safeParseJson(report.sessionSnapshot);
+        if (!snapshot) {
+          return report.sessionSnapshot
+            ? `<details><summary>Session snapshot</summary><pre>${escapeHtml(report.sessionSnapshot)}</pre></details>`
+            : "";
+        }
+
+        return `
+          <details>
+            <summary>Session snapshot</summary>
+            <div class="snapshot-grid">
+              ${renderSnapshotSection("Capture", [
+                ["Captured At", snapshot.capturedAt],
+                ["Location", snapshot.locationHref],
+                ["Viewport", snapshot.viewport]
+              ])}
+              ${renderSnapshotSection("UI", [
+                ["Export Panel", snapshot.ui?.exportPanelMode],
+                ["Quantikz View", snapshot.ui?.quantikzPaneView],
+                ["Symbolic View", snapshot.ui?.symbolicPaneView],
+                ["Layout", snapshot.ui?.workbenchLayoutMode],
+                ["Paste Mode", snapshot.ui?.isPasteMode],
+                ["Selected Structure", snapshot.ui?.selectedStructure],
+                ["Selected Wire Label", snapshot.ui?.selectedWireLabel]
+              ])}
+              ${renderSnapshotSection("Preview", [
+                ["Mode", snapshot.preview?.isSymbolicMode ? "symbolic" : "quantikz"],
+                ["Preview State", snapshot.preview?.state],
+                ["Preview Error", snapshot.preview?.error],
+                ["Figure State", snapshot.preview?.figurePreviewState],
+                ["Symbolic State", snapshot.preview?.symbolicLatexState],
+                ["Symbolic Error", snapshot.preview?.symbolicLatexError]
+              ])}
+              ${renderSnapshotSection("Editor", [
+                ["Qubits", snapshot.editorState?.qubits],
+                ["Steps", snapshot.editorState?.steps],
+                ["Tool", snapshot.editorState?.activeTool],
+                ["Selected IDs", snapshot.editorState?.selectedItemIds],
+                ["Layout", snapshot.editorState?.layout],
+                ["Wire Types", snapshot.editorState?.wireTypes],
+                ["Wire Labels", snapshot.editorState?.wireLabels]
+              ])}
+            </div>
+          </details>
+        `;
+      }
+
+      function updateViewButtons() {
+        viewActiveButton.classList.toggle("is-active", currentView === "active");
+        viewArchivedButton.classList.toggle("is-active", currentView === "archived");
+        viewActiveButton.setAttribute("aria-pressed", String(currentView === "active"));
+        viewArchivedButton.setAttribute("aria-pressed", String(currentView === "archived"));
+      }
+
       function renderReport(report) {
         const comment = getReportComment(report);
         const meta = [
           report.email ? `<span class="chip">${escapeHtml(report.email)}</span>` : "",
           `<span class="chip">${escapeHtml(report.storage)}</span>`,
+          report.status ? `<span class="chip">${escapeHtml(report.status)}</span>` : "",
           report.pageUrl ? `<span class="chip">page captured</span>` : "",
           report.code ? `<span class="chip">code attached</span>` : "",
           report.preamble ? `<span class="chip">preamble attached</span>` : "",
-          report.previewImageStorageKey ? `<span class="chip">preview image attached</span>` : ""
+          report.previewImageStorageKey ? `<span class="chip">preview image attached</span>` : "",
+          report.interfaceImageStorageKey ? `<span class="chip">interface screenshot attached</span>` : "",
+          report.sessionSnapshot ? `<span class="chip">session snapshot attached</span>` : ""
         ].filter(Boolean).join("");
 
         return `
@@ -429,18 +643,14 @@
                 <h2 class="report-title">${escapeHtml(report.title)}</h2>
                 <div class="report-meta">${meta}</div>
               </div>
-              <div class="report-date">${escapeHtml(formatDate(report.submittedAt))}</div>
+              <div class="report-date">
+                ${escapeHtml(formatDate(report.submittedAt))}
+                ${report.archivedAt ? `<br />Archived ${escapeHtml(formatDate(report.archivedAt))}` : ""}
+              </div>
             </div>
             <p class="description">${comment ? escapeHtml(comment) : "No user comment provided."}</p>
-            ${report.previewImageStorageKey ? `
-              <figure class="screenshot-frame">
-                <img
-                  alt="Attached preview image"
-                  data-preview-storage-key="${escapeHtml(report.previewImageStorageKey)}"
-                />
-                <p class="screenshot-caption">Rendered preview image attached at submission time.</p>
-              </figure>
-            ` : ""}
+            ${renderScreenshotFigure(report.previewImageStorageKey, "Rendered preview image attached at submission time.")}
+            ${renderScreenshotFigure(report.interfaceImageStorageKey, "Visible interface screenshot attached at submission time.")}
             <div class="detail-grid">
               <div class="detail">
                 <strong>ID</strong>
@@ -459,8 +669,34 @@
                 <div>${report.userAgent ? escapeHtml(report.userAgent) : "Not provided"}</div>
               </div>
             </div>
+            <details>
+              <summary>Stored fields</summary>
+              <div class="field-list">
+                ${renderFieldRow("Status", report.status)}
+                ${renderFieldRow("Archived At", report.archivedAt)}
+                ${renderFieldRow("Submitted At", report.submittedAt)}
+                ${renderFieldRow("Title", report.title)}
+                ${renderFieldRow("Comment", comment)}
+                ${renderFieldRow("Email", report.email)}
+                ${renderFieldRow("Page URL", report.pageUrl, { href: report.pageUrl })}
+                ${renderFieldRow("User Agent", report.userAgent)}
+                ${renderFieldRow("Storage", report.storage)}
+                ${renderFieldRow("Storage Key", report.storageKey)}
+                ${renderFieldRow("Preview Image Key", report.previewImageStorageKey)}
+                ${renderFieldRow("Preview Image Type", report.previewImageContentType)}
+                ${renderFieldRow("Interface Image Key", report.interfaceImageStorageKey)}
+                ${renderFieldRow("Interface Image Type", report.interfaceImageContentType)}
+              </div>
+            </details>
             ${report.code ? `<details><summary>Quantikz code</summary><pre>${escapeHtml(report.code)}</pre></details>` : ""}
             ${report.preamble ? `<details><summary>Preamble</summary><pre>${escapeHtml(report.preamble)}</pre></details>` : ""}
+            ${renderFormattedSnapshot(report)}
+            <details><summary>Raw report JSON</summary><pre>${escapeHtml(JSON.stringify(report, null, 2))}</pre></details>
+            ${currentView === "active" ? `
+              <div class="report-actions">
+                <button type="button" class="secondary" data-archive-storage-key="${escapeHtml(report.storageKey)}">Dismiss to archived</button>
+              </div>
+            ` : ""}
           </article>
         `;
       }
@@ -480,6 +716,15 @@
             report.userAgent,
             report.code,
             report.preamble,
+            report.sessionSnapshot,
+            report.status,
+            report.archivedAt,
+            report.storage,
+            report.storageKey,
+            report.previewImageStorageKey,
+            report.previewImageContentType,
+            report.interfaceImageStorageKey,
+            report.interfaceImageContentType,
             report.id
           ].some((value) => typeof value === "string" && value.toLowerCase().includes(query));
         });
@@ -495,18 +740,18 @@
         }
 
         reportsNode.innerHTML = visibleReports.map(renderReport).join("");
-        void loadPreviewImages();
+        void loadStoredImages();
       }
 
-      async function loadPreviewImages() {
+      async function loadStoredImages() {
         const token = tokenInput.value.trim();
         if (!token) {
           return;
         }
 
-        const imageNodes = reportsNode.querySelectorAll("img[data-preview-storage-key]");
+        const imageNodes = reportsNode.querySelectorAll("img[data-bug-image-storage-key]");
         await Promise.all(Array.from(imageNodes).map(async (node) => {
-          const storageKey = node.getAttribute("data-preview-storage-key");
+          const storageKey = node.getAttribute("data-bug-image-storage-key");
           if (!storageKey) {
             return;
           }
@@ -543,7 +788,7 @@
 
         try {
           const limit = Math.max(1, Math.min(200, Number.parseInt(limitInput.value || "50", 10) || 50));
-          const response = await fetch(`/api/bug-reports?limit=${limit}`, {
+          const response = await fetch(`/api/bug-reports?limit=${limit}&status=${encodeURIComponent(currentView)}`, {
             headers: {
               Authorization: `Bearer ${token}`
             }
@@ -556,7 +801,7 @@
 
           reports = payload.reports;
           renderReports();
-          setStatus(`Loaded ${reports.length} report${reports.length === 1 ? "" : "s"}.`, "success");
+          setStatus(`Loaded ${reports.length} ${currentView} report${reports.length === 1 ? "" : "s"}.`, "success");
         } catch (error) {
           reports = [];
           renderReports();
@@ -564,7 +809,49 @@
         }
       }
 
+      async function archiveReport(storageKey) {
+        const token = tokenInput.value.trim();
+        if (!token) {
+          setStatus("Enter the admin token first.", "error");
+          return;
+        }
+
+        setStatus("Archiving report...");
+
+        try {
+          const response = await fetch("/api/bug-reports", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`
+            },
+            body: JSON.stringify({ action: "archive", storageKey })
+          });
+          const payload = await response.json();
+
+          if (!response.ok || !payload.success) {
+            throw new Error(payload.error || "Unable to archive bug report.");
+          }
+
+          reports = reports.filter((report) => report.storageKey !== storageKey);
+          renderReports();
+          setStatus("Bug report archived.", "success");
+        } catch (error) {
+          setStatus(error instanceof Error ? error.message : "Unable to archive bug report.", "error");
+        }
+      }
+
       loadButton.addEventListener("click", loadReports);
+      viewActiveButton.addEventListener("click", () => {
+        currentView = "active";
+        updateViewButtons();
+        void loadReports();
+      });
+      viewArchivedButton.addEventListener("click", () => {
+        currentView = "archived";
+        updateViewButtons();
+        void loadReports();
+      });
       clearButton.addEventListener("click", () => {
         sessionStorage.removeItem(SESSION_KEY);
         tokenInput.value = "";
@@ -573,12 +860,26 @@
         setStatus("Admin token cleared.");
       });
       searchInput.addEventListener("input", renderReports);
+      reportsNode.addEventListener("click", (event) => {
+        const button = event.target.closest("button[data-archive-storage-key]");
+        if (!(button instanceof HTMLButtonElement)) {
+          return;
+        }
+
+        const storageKey = button.getAttribute("data-archive-storage-key");
+        if (!storageKey) {
+          return;
+        }
+
+        void archiveReport(storageKey);
+      });
 
       const storedToken = sessionStorage.getItem(SESSION_KEY);
       if (storedToken) {
         tokenInput.value = storedToken;
       }
 
+      updateViewButtons();
       renderReports();
     </script>
   </body>
