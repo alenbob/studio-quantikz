@@ -460,6 +460,8 @@
       const reportsNode = document.getElementById("reports");
 
       const SESSION_KEY = "quantikzz_bug_report_admin_token";
+      const RESTORE_SEARCH_PARAM = "bugReportRestore";
+      const RESTORE_STORAGE_PREFIX = "quantikzz_bug_report_restore_";
       let currentView = "active";
       let reports = [];
 
@@ -551,6 +553,59 @@
         }
       }
 
+      function buildRestoreStorageKey(restoreId) {
+        return `${RESTORE_STORAGE_PREFIX}${restoreId}`;
+      }
+
+      function buildRestorePayload(report) {
+        const visualSnapshot = safeParseJson(report.visualCircuitSnapshot);
+        const sessionSnapshot = safeParseJson(report.sessionSnapshot);
+
+        return {
+          editorState: visualSnapshot?.editorState ?? null,
+          code: report.code || "",
+          preamble: report.preamble || "",
+          exportPanelMode: sessionSnapshot?.ui?.exportPanelMode === "symbolic" ? "symbolic" : "quantikz",
+          quantikzPaneView: sessionSnapshot?.ui?.quantikzPaneView === "preamble" ? "preamble" : "content",
+          symbolicPaneView: sessionSnapshot?.ui?.symbolicPaneView === "preamble" ? "preamble" : "content",
+          symbolicEditorCode: typeof sessionSnapshot?.ui?.symbolicEditorCode === "string"
+            ? sessionSnapshot.ui.symbolicEditorCode
+            : ""
+        };
+      }
+
+      function buildRestoreTargetUrl(report, restoreId) {
+        let targetUrl;
+
+        try {
+          targetUrl = new URL(report.pageUrl || "/", window.location.origin);
+        } catch {
+          targetUrl = new URL("/", window.location.origin);
+        }
+
+        if (targetUrl.origin !== window.location.origin) {
+          targetUrl = new URL("/", window.location.origin);
+        }
+
+        targetUrl.searchParams.set(RESTORE_SEARCH_PARAM, restoreId);
+        return targetUrl.toString();
+      }
+
+      function openReportInEditor(report) {
+        if (!report.visualCircuitSnapshot && !report.code) {
+          setStatus("This report does not include restorable circuit data.", "error");
+          return;
+        }
+
+        const restorePayload = buildRestorePayload(report);
+        const restoreId = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+        localStorage.setItem(buildRestoreStorageKey(restoreId), JSON.stringify(restorePayload));
+        window.open(buildRestoreTargetUrl(report, restoreId), "_blank", "noopener");
+      }
+
       function renderSnapshotSection(title, fields) {
         const rows = fields.filter(([, value]) => value !== null && value !== undefined && value !== "");
         if (rows.length === 0) {
@@ -602,8 +657,11 @@
                 ["Symbolic Error", snapshot.preview?.symbolicLatexError]
               ])}
               ${renderSnapshotSection("Editor", [
-                ["Qubits", snapshot.editorState?.qubits],
-                ["Steps", snapshot.editorState?.steps],
+                ["Qubits", snapshot.visualCircuitSummary?.qubits ?? snapshot.editorState?.qubits],
+                ["Steps", snapshot.visualCircuitSummary?.steps ?? snapshot.editorState?.steps],
+                ["Items", snapshot.visualCircuitSummary?.itemCount],
+                ["Selected Items", snapshot.visualCircuitSummary?.selectedItemCount],
+                ["Export Issues", snapshot.visualCircuitSummary?.exportIssueCount],
                 ["Tool", snapshot.editorState?.activeTool],
                 ["Selected IDs", snapshot.editorState?.selectedItemIds],
                 ["Layout", snapshot.editorState?.layout],
@@ -611,6 +669,41 @@
                 ["Wire Labels", snapshot.editorState?.wireLabels]
               ])}
             </div>
+          </details>
+        `;
+      }
+
+      function renderVisualCircuitSnapshot(report) {
+        const snapshot = safeParseJson(report.visualCircuitSnapshot);
+        if (!snapshot) {
+          return report.visualCircuitSnapshot
+            ? `<details><summary>Visual circuit snapshot</summary><pre>${escapeHtml(report.visualCircuitSnapshot)}</pre></details>`
+            : "";
+        }
+
+        const editorState = snapshot.editorState || {};
+        const summary = snapshot.summary || {};
+        const itemCounts = summary.itemCounts || {};
+
+        return `
+          <details>
+            <summary>Visual circuit snapshot</summary>
+            <div class="snapshot-grid">
+              ${renderSnapshotSection("Visual circuit", [
+                ["Captured At", snapshot.capturedAt],
+                ["Qubits", summary.qubits ?? editorState.qubits],
+                ["Steps", summary.steps ?? editorState.steps],
+                ["Items", summary.itemCount ?? editorState.items?.length],
+                ["Selected Items", summary.selectedItemCount ?? editorState.selectedItemIds?.length],
+                ["Tool", editorState.activeTool],
+                ["Layout", editorState.layout],
+                ["Wire Types", editorState.wireTypes],
+                ["Wire Labels", editorState.wireLabels],
+                ["Item Counts", itemCounts],
+                ["Export Issues", editorState.exportIssues]
+              ])}
+            </div>
+            <details><summary>Visual circuit JSON</summary><pre>${escapeHtml(JSON.stringify(snapshot, null, 2))}</pre></details>
           </details>
         `;
       }
@@ -633,6 +726,7 @@
           report.preamble ? `<span class="chip">preamble attached</span>` : "",
           report.previewImageStorageKey ? `<span class="chip">preview image attached</span>` : "",
           report.interfaceImageStorageKey ? `<span class="chip">interface screenshot attached</span>` : "",
+          report.visualCircuitSnapshot ? `<span class="chip">visual circuit attached</span>` : "",
           report.sessionSnapshot ? `<span class="chip">session snapshot attached</span>` : ""
         ].filter(Boolean).join("");
 
@@ -690,11 +784,17 @@
             </details>
             ${report.code ? `<details><summary>Quantikz code</summary><pre>${escapeHtml(report.code)}</pre></details>` : ""}
             ${report.preamble ? `<details><summary>Preamble</summary><pre>${escapeHtml(report.preamble)}</pre></details>` : ""}
+            ${renderVisualCircuitSnapshot(report)}
             ${renderFormattedSnapshot(report)}
             <details><summary>Raw report JSON</summary><pre>${escapeHtml(JSON.stringify(report, null, 2))}</pre></details>
-            ${currentView === "active" ? `
+            ${(report.visualCircuitSnapshot || report.code || currentView === "active") ? `
               <div class="report-actions">
-                <button type="button" class="secondary" data-archive-storage-key="${escapeHtml(report.storageKey)}">Dismiss to archived</button>
+                ${report.visualCircuitSnapshot || report.code
+                  ? `<button type="button" class="secondary" data-open-report-id="${escapeHtml(report.id)}">Open in editor</button>`
+                  : ""}
+                ${currentView === "active"
+                  ? `<button type="button" class="secondary" data-archive-storage-key="${escapeHtml(report.storageKey)}">Dismiss to archived</button>`
+                  : ""}
               </div>
             ` : ""}
           </article>
@@ -716,6 +816,7 @@
             report.userAgent,
             report.code,
             report.preamble,
+            report.visualCircuitSnapshot,
             report.sessionSnapshot,
             report.status,
             report.archivedAt,
@@ -861,6 +962,20 @@
       });
       searchInput.addEventListener("input", renderReports);
       reportsNode.addEventListener("click", (event) => {
+        const openButton = event.target.closest("button[data-open-report-id]");
+        if (openButton instanceof HTMLButtonElement) {
+          const reportId = openButton.getAttribute("data-open-report-id");
+          const report = reportId ? reports.find((candidate) => candidate.id === reportId) : null;
+
+          if (!report) {
+            setStatus("Unable to find the selected report.", "error");
+            return;
+          }
+
+          openReportInEditor(report);
+          return;
+        }
+
         const button = event.target.closest("button[data-archive-storage-key]");
         if (!(button instanceof HTMLButtonElement)) {
           return;

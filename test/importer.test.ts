@@ -248,6 +248,26 @@ describe("importFromQuantikz", () => {
     expect(connector && connector.type === "verticalConnector" ? connector.wireType : "").toBe("classical");
   });
 
+  it("imports a post-measurement classical control path", () => {
+    const code = String.raw`\begin{quantikz}
+\lstick{$\ket{+}_c$} & \meter{} & \wireoverride{c} \ctrl[vertical wire=c]{1} \\
+\lstick{$\ket{0}_t$} &  & \gate{A}
+\end{quantikz}`;
+
+    const imported = importFromQuantikz(code);
+    const classicalHorizontal = imported.items.find(
+      (item) => item.type === "horizontalSegment" && item.point.row === 0 && item.point.col === 1
+    );
+    const connector = imported.items.find(
+      (item) => item.type === "verticalConnector" && item.point.row === 0 && item.point.col === 1
+    );
+
+    expect(imported.items.some((item) => item.type === "meter" && item.point.row === 0 && item.point.col === 0)).toBe(true);
+    expect(imported.items.some((item) => item.type === "controlDot" && item.point.row === 0 && item.point.col === 1)).toBe(true);
+    expect(classicalHorizontal && classicalHorizontal.type === "horizontalSegment" ? classicalHorizontal.wireType : "").toBe("classical");
+    expect(connector && connector.type === "verticalConnector" ? connector.wireType : "").toBe("classical");
+  });
+
   it("imports xcolor-prefixed named colors for swaps and vertical wires", () => {
     const code = String.raw`\begin{quantikz}
 & \color{blue}\swap[style={draw=blue},wire style={draw=blue}]{1} \\

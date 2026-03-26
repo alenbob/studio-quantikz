@@ -419,6 +419,25 @@ describe("exportToQuantikz", () => {
     expect(code).not.toContain("\\wire[d][1]{q}");
   });
 
+  it("exports a post-measurement control path as classical wiring", () => {
+    const code = exportToQuantikz(
+      makeState({
+        items: [
+          { id: "meter-1", type: "meter", point: { row: 0, col: 0 }, span: { rows: 1, cols: 1 } },
+          { id: "segment-1", type: "horizontalSegment", point: { row: 0, col: 1 }, mode: "present", wireType: "classical" },
+          { id: "dot-1", type: "controlDot", point: { row: 0, col: 1 } },
+          { id: "line-1", type: "verticalConnector", point: { row: 0, col: 1 }, length: 1, wireType: "classical" },
+          { id: "gate-1", type: "gate", point: { row: 1, col: 1 }, span: { rows: 1, cols: 1 }, label: "A", width: 40 }
+        ]
+      })
+    );
+
+    expect(code).toContain("\\meter{}");
+    expect(code).toContain("\\ctrl[vertical wire=c]{1}");
+    expect(code).toContain("\\setwiretype{n}");
+    expect(code).toContain("\\gate{A}");
+  });
+
   it("exports a swap from paired X markers", () => {
     const code = exportToQuantikz(
       makeState({

@@ -48,6 +48,22 @@ SPECIAL_STATE_CIRCUITS = {
 """,
         "1/sqrt(2)|0> - i/sqrt(2)|1>",
     ),
+    "-i": (
+        r"""
+\begin{quantikz}
+\lstick{$\ket{-i}$} & \gate{Z}
+\end{quantikz}
+""",
+        "1/sqrt(2)|0> + i/sqrt(2)|1>",
+    ),
+    "T": (
+        r"""
+\begin{quantikz}
+\lstick{$\ket{T}$} & \gate{Z}
+\end{quantikz}
+""",
+        "1/sqrt(2)|0> - ((1 + i)/2)|1>",
+    ),
 }
 
 
@@ -140,7 +156,7 @@ class QuantikzStatevectorEvolutionTests(unittest.TestCase):
         self.assertEqual(evolution_result.slices[0].expanded_state, "-|111>")
         self.assertEqual(evolution_result.slices[1].expanded_state, "-|101>")
 
-    def test_expands_plus_minus_and_i_initial_states(self) -> None:
+    def test_expands_plus_minus_i_minus_i_and_t_initial_states(self) -> None:
         for name, (source, expected_state) in SPECIAL_STATE_CIRCUITS.items():
             with self.subTest(name=name):
                 evolution_result = evolution.symbolic_evolution_for_source(source)[0]

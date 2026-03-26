@@ -20,6 +20,7 @@
 - When editing reducer behavior, keep changes consistent with the existing pure-function pattern and update the matching tests in `test/reducer.test.ts` or the nearest focused test file.
 - When editing Quantikz parsing or export, verify both directions: importer behavior in `test/importer.test.ts` and exporter behavior in `test/exporter.test.ts`.
 - Multi-column gates are represented visually in editor state and exported as a real `\gate{...}` plus contiguous `\ghost{...}` cells. Preserve that mapping.
+- When changing user-visible symbolic interpretation or website-visible guidance, update both `QUANTIKZ_GUIDE.md` and the in-app symbolic help in `src/renderer/App.tsx` in the same change.
 
 ## Rendering Constraints
 

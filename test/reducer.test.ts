@@ -497,12 +497,14 @@ describe("editorReducer selection workflows", () => {
       expect(firstRowSegment).toMatchObject({
         type: "horizontalSegment",
         point: { row: 0, col },
-        mode: "present"
+        mode: "present",
+        wireType: expectedSuppressed ? "classical" : "quantum"
       });
       expect(secondRowSegment).toMatchObject({
         type: "horizontalSegment",
         point: { row: 1, col },
-        mode: "present"
+        mode: "present",
+        wireType: expectedSuppressed ? "classical" : "quantum"
       });
       expect(firstRowSegment && "autoSuppressed" in firstRowSegment ? firstRowSegment.autoSuppressed : undefined).toBe(
         expectedSuppressed ? true : undefined
@@ -537,9 +539,35 @@ describe("editorReducer selection workflows", () => {
     ).toMatchObject({
       type: "horizontalSegment",
       point: { row: 0, col: 2 },
-      mode: "present"
+      mode: "present",
+      wireType: "classical"
     });
     expect(restored.wireMask["0:2"]).toBe("present");
+  });
+
+  it("draws a classical vertical wire when a measured row controls a later column", () => {
+    const withMeter = editorReducer(initialState, {
+      type: "addMeterFromArea",
+      start: { row: 0, col: 0 },
+      endRow: 0
+    });
+
+    const next = editorReducer(withMeter, {
+      type: "drawWire",
+      start: { row: 0, col: 1 },
+      end: { row: 1, col: 1 }
+    });
+
+    expect(
+      next.items.find(
+        (item) => item.type === "verticalConnector" && item.point.row === 0 && item.point.col === 1
+      )
+    ).toMatchObject({
+      type: "verticalConnector",
+      point: { row: 0, col: 1 },
+      length: 1,
+      wireType: "classical"
+    });
   });
 
   it("draws a vertical wire between two snapped grid points", () => {
@@ -615,6 +643,42 @@ describe("editorReducer selection workflows", () => {
         color: null
       }
     ]);
+  });
+
+  it("loads a stored editor snapshot and re-normalizes derived state", () => {
+    const next = editorReducer(initialState, {
+      type: "loadEditorSnapshot",
+      snapshot: {
+        ...initialState,
+        qubits: 4,
+        steps: 6,
+        items: [{
+          id: "gate-restore-1",
+          type: "gate",
+          point: { row: 1, col: 2 },
+          span: { rows: 1, cols: 1 },
+          label: "R",
+          width: 40,
+          color: null
+        }],
+        wireMask: {},
+        wireTypes: ["classical"],
+        wireLabels: initialState.wireLabels,
+        selectedItemIds: ["gate-restore-1"],
+        exportCode: "\\begin{quantikz}\\n& \\gate{R}\\n\\end{quantikz}",
+        uiMessage: "restore me"
+      }
+    });
+
+    expect(next.qubits).toBe(4);
+    expect(next.steps).toBe(6);
+    expect(next.wireTypes).toHaveLength(4);
+    expect(next.wireTypes[0]).toBe("classical");
+    expect(next.wireLabels).toHaveLength(4);
+    expect(next.selectedItemIds).toEqual(["gate-restore-1"]);
+    expect(next.items.some((item) => item.type === "gate" && item.id === "gate-restore-1")).toBe(true);
+    expect(next.items.some((item) => item.type === "horizontalSegment" && item.point.row === 3 && item.point.col === 6)).toBe(true);
+    expect(next.wireMask["3:6"]).toBe("present");
   });
 
   it("creates a frame from a dragged annotation area and a slice from a click", () => {

@@ -26,7 +26,8 @@ describe("bug-report api", () => {
       body: JSON.stringify({
         title: "Preview clipped",
         description: "The preview pane clips long circuits.",
-        previewImageDataUrl: "data:image/png;base64,QUJD"
+        previewImageDataUrl: "data:image/png;base64,QUJD",
+        visualCircuitSnapshot: JSON.stringify({ summary: { qubits: 3, steps: 4 } })
       }),
       on: () => request
     };
@@ -48,7 +49,8 @@ describe("bug-report api", () => {
     expect(storeBugReportMock).toHaveBeenCalledWith(expect.objectContaining({
       title: "Preview clipped",
       description: "The preview pane clips long circuits.",
-      previewImageDataUrl: "data:image/png;base64,QUJD"
+      previewImageDataUrl: "data:image/png;base64,QUJD",
+      visualCircuitSnapshot: JSON.stringify({ summary: { qubits: 3, steps: 4 } })
     }));
     expect(responseState.statusCode).toBe(200);
     expect(responseState.payload).toEqual({

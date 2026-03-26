@@ -32,6 +32,11 @@ import { isVisibleHorizontalSegment } from "./horizontalWires";
 import { importFromQuantikz } from "./importer";
 import { resolveVisualPreambleDefinitions } from "../shared/tikzPreamble";
 import { submitBugReport } from "./bugReport";
+import {
+  BUG_REPORT_RESTORE_SEARCH_PARAM,
+  consumeBugReportRestorePayload,
+  type BugReportRestorePayload
+} from "./bugReportRestore";
 import { useRenderedPdf } from "./useRenderedPdf";
 import { useSymbolicLatex } from "./useSymbolicLatex";
 import { editorReducer, initialState, type EditorAction } from "./reducer";
@@ -99,7 +104,7 @@ const SYMBOLIC_HELP_SECTIONS: Array<{
     title: "Recognized states",
     items: [
       {
-        label: String.raw`\ket{0}, \ket{1}, \ket{+}, \ket{-}, \ket{i}`,
+        label: String.raw`\ket{0}, \ket{1}, \ket{+}, \ket{-}, \ket{i}, \ket{-i}, \ket{T}`,
         description: "Accepted as exact single-wire input product states."
       },
       {
@@ -327,6 +332,7 @@ function isUndoableAction(action: EditorAction): boolean {
     "setExportCode",
     "setExportPreamble",
     "setExportSymbolicPreamble",
+    "loadEditorSnapshot",
     "clearMessage",
     "setMessage",
     "setAutoWireNewGrid"
@@ -491,6 +497,29 @@ export default function App(): JSX.Element {
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const hasRestoreParam = new URLSearchParams(window.location.search).has(BUG_REPORT_RESTORE_SEARCH_PARAM);
+    if (!hasRestoreParam) {
+      return;
+    }
+
+    const restorePayload = consumeBugReportRestorePayload(window.location.search, window.localStorage);
+    const nextUrl = new URL(window.location.href);
+    nextUrl.searchParams.delete(BUG_REPORT_RESTORE_SEARCH_PARAM);
+    window.history.replaceState(null, "", nextUrl.toString());
+
+    if (!restorePayload) {
+      dispatch({ type: "setMessage", message: "Unable to restore the selected bug report." });
+      return;
+    }
+
+    applyBugReportRestore(restorePayload);
+  }, []);
 
   useEffect(() => {
     const previousMode = exportPanelModeRef.current;
@@ -739,6 +768,25 @@ export default function App(): JSX.Element {
     }
   }
 
+  function buildBugReportVisualCircuitSnapshot(): string {
+    const itemCounts = state.items.reduce<Record<string, number>>((counts, item) => {
+      counts[item.type] = (counts[item.type] ?? 0) + 1;
+      return counts;
+    }, {});
+
+    return JSON.stringify({
+      capturedAt: new Date().toISOString(),
+      summary: {
+        qubits: state.qubits,
+        steps: state.steps,
+        itemCount: state.items.length,
+        selectedItemCount: state.selectedItemIds.length,
+        itemCounts
+      },
+      editorState: state
+    });
+  }
+
   function buildBugReportSessionSnapshot(): string {
     return JSON.stringify({
       capturedAt: new Date().toISOString(),
@@ -750,7 +798,13 @@ export default function App(): JSX.Element {
           height: window.innerHeight,
           devicePixelRatio: window.devicePixelRatio || 1
         },
-      editorState: state,
+      visualCircuitSummary: {
+        qubits: state.qubits,
+        steps: state.steps,
+        itemCount: state.items.length,
+        selectedItemCount: state.selectedItemIds.length,
+        exportIssueCount: state.exportIssues.length
+      },
       ui: {
         exportPanelMode,
         quantikzPaneView,
@@ -804,6 +858,7 @@ export default function App(): JSX.Element {
         buildBugReportPreviewDataUrl(),
         buildBugReportInterfaceDataUrl()
       ]);
+      const visualCircuitSnapshot = buildBugReportVisualCircuitSnapshot();
       const sessionSnapshot = buildBugReportSessionSnapshot();
 
       await submitBugReport({
@@ -816,6 +871,7 @@ export default function App(): JSX.Element {
         userAgent: typeof navigator === "undefined" ? "" : navigator.userAgent,
         previewImageDataUrl,
         interfaceImageDataUrl,
+        visualCircuitSnapshot,
         sessionSnapshot
       });
 
@@ -1197,6 +1253,38 @@ export default function App(): JSX.Element {
         type: "setMessage",
         message: error instanceof Error ? error.message : "Unable to load the selected history circuit."
       });
+    }
+  }
+
+  function applyBugReportRestore(restorePayload: BugReportRestorePayload): void {
+    setExportPanelMode(restorePayload.exportPanelMode);
+    setQuantikzPaneView(restorePayload.quantikzPaneView);
+    setSymbolicPaneView(restorePayload.symbolicPaneView);
+    setSymbolicEditorCode(restorePayload.symbolicEditorCode);
+
+    if (restorePayload.editorState) {
+      dispatch({
+        type: "loadEditorSnapshot",
+        snapshot: {
+          ...restorePayload.editorState,
+          exportCode: restorePayload.code || restorePayload.editorState.exportCode,
+          exportPreamble: restorePayload.preamble || restorePayload.editorState.exportPreamble,
+          uiMessage: "Circuit restored from bug report."
+        }
+      });
+      return;
+    }
+
+    try {
+      const imported = importFromQuantikz(restorePayload.code, { preamble: restorePayload.preamble });
+      dispatch({
+        type: "loadQuantikz",
+        imported,
+        code: restorePayload.code,
+        preamble: restorePayload.preamble
+      });
+    } catch {
+      dispatch({ type: "setMessage", message: "Unable to restore the selected bug report." });
     }
   }
 

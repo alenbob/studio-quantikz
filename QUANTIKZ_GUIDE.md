@@ -101,7 +101,8 @@ Runtime availability:
 - In local development and the local preview server, the symbolic endpoint shells out to the local Python interpreter. If Python is unavailable there, symbolic generation fails.
 - A fully static browser-only build does not currently run the symbolic interpreter. The symbolic pipeline is implemented in Python rather than in-browser JavaScript or WASM.
 
-- Recognized input product states: `\ket{0}`, `\ket{1}`, `\ket{+}`, `\ket{-}`, `\ket{i}`, and multi-wire products like `\ket{00}`.
+- Recognized input product states: `\ket{0}`, `\ket{1}`, `\ket{+}`, `\ket{-}`, `\ket{i}`, `\ket{-i}`, `\ket{T}`, and multi-wire products like `\ket{00}`.
+- The exact single-wire symbolic presets include the phase states `\ket{i} = \frac{1}{\sqrt{2}}\ket{0} + \frac{i}{\sqrt{2}}\ket{1}` and `\ket{-i} = \frac{1}{\sqrt{2}}\ket{0} - \frac{i}{\sqrt{2}}\ket{1}`, together with the magic state `\ket{T} = \frac{1}{\sqrt{2}}\ket{0} + \frac{1+i}{2}\ket{1}`.
 - If an `\lstick` label ends with a top-level subscript such as `\ket{0}_{c_0}` or `\ket{\psi}_{data}`, that trailing subscript is interpreted as the wire name and reused in slice descriptions and measurement labels.
 - Exact single-qubit basis-state rules: `H`, `X`, `Y`, `Z`, `S`, `T`, and `T^\dagger`.
 - `\textsc{UNIFORM}_M` applied to `\ket{0}` is interpreted as the normalized symbolic sum `\frac{1}{\sqrt{M}}\sum_{m=0}^{M-1}\ket{m}`.

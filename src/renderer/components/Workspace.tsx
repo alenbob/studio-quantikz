@@ -1866,41 +1866,49 @@ export function Workspace({
 
     if (state.activeTool === "pencil") {
       const anchor = resolveWireAnchor(clientX, clientY);
-      const currentWireDraft = wireDraftRef.current;
-
-      if (!currentWireDraft) {
-        if (!anchor) {
-          return;
-        }
-
-        const pointer = getContentPoint(clientX, clientY);
-        if (!pointer) {
-          return;
-        }
-
-        wireDraftRef.current = { start: anchor, pointer };
-        setWireDraft(wireDraftRef.current);
-        setHoverPlacement({ kind: "cell", row: anchor.row, col: anchor.col });
-        return;
-      }
-
-      if (!anchor) {
-        wireDraftRef.current = null;
-        setWireDraft(null);
-        setHoverPlacement(null);
-        return;
-      }
-
-      onDrawWire(currentWireDraft.start, anchor);
-      wireDraftRef.current = null;
-      setWireDraft(null);
-      setHoverPlacement(null);
+      handleWireAnchorPointerDown(anchor, clientX, clientY);
       return;
     }
 
     if (placement.kind === "cell" && canPlaceCellToolAtRow(state.activeTool, placement.row, state.qubits)) {
       placeWithTool(state.activeTool, placement, controlState);
     }
+  }
+
+  function handleWireAnchorPointerDown(
+    anchor: { row: number; col: number } | null,
+    clientX: number,
+    clientY: number
+  ): void {
+    const currentWireDraft = wireDraftRef.current;
+
+    if (!currentWireDraft) {
+      if (!anchor) {
+        return;
+      }
+
+      const pointer = getContentPoint(clientX, clientY) ?? {
+        x: getWireAnchorX(anchor.col, state.steps, layout, columnMetrics),
+        y: getRowY(anchor.row, layout)
+      };
+
+      wireDraftRef.current = { start: anchor, pointer };
+      setWireDraft(wireDraftRef.current);
+      setHoverPlacement({ kind: "cell", row: anchor.row, col: anchor.col });
+      return;
+    }
+
+    if (!anchor) {
+      wireDraftRef.current = null;
+      setWireDraft(null);
+      setHoverPlacement(null);
+      return;
+    }
+
+    onDrawWire(currentWireDraft.start, anchor);
+    wireDraftRef.current = null;
+    setWireDraft(null);
+    setHoverPlacement(null);
   }
 
   function startMarqueeFromPointer(clientX: number, clientY: number): boolean {
@@ -2803,6 +2811,14 @@ export function Workspace({
                     event.preventDefault();
                     event.stopPropagation();
                     onPasteAt({ kind: "segment", row, col });
+                    return;
+                  }
+
+                  if (state.activeTool === "pencil") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setControlPlacementState(event.altKey ? "open" : "filled");
+                    handleWireAnchorPointerDown({ row, col }, event.clientX, event.clientY);
                     return;
                   }
 

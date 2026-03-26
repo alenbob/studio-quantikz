@@ -20,6 +20,16 @@ export function getMeterSuppressedHorizontalKeys(items: CircuitItem[], steps: nu
     }
   }
 
+  for (const item of items) {
+    if (item.type !== "horizontalSegment") {
+      continue;
+    }
+
+    if (item.mode === "present" && item.autoSuppressed === false) {
+      suppressed.delete(wireKey(item.point.row, item.point.col));
+    }
+  }
+
   return suppressed;
 }
 

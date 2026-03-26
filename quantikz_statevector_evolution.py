@@ -141,7 +141,7 @@ KNOWN_NOOPS = {
     "wireoverride",
 }
 KET_LABEL_PATTERN = re.compile(r"^\\ket\{([^{}]+)\}(.*)$")
-SUPPORTED_PRODUCT_STATE_SYMBOLS = {"0", "1", "+", "-", "i"}
+SUPPORTED_PRODUCT_STATE_SYMBOLS = {"0", "1", "+", "-", "i", "-i", "T"}
 SUPPORTED_TENSOR_PRODUCT_GATES = {"H", "I", "S", "T", "X", "Y", "Z"}
 
 
@@ -387,7 +387,10 @@ def parse_product_state_symbols(label: str, span: int) -> list[str] | None:
     match = KET_LABEL_PATTERN.match(normalized)
     if match is None:
         return None
-    symbols = list(match.group(1))
+    body = match.group(1)
+    if span == 1 and body in SUPPORTED_PRODUCT_STATE_SYMBOLS:
+        return [body]
+    symbols = list(body)
     if len(symbols) != span or any(symbol not in SUPPORTED_PRODUCT_STATE_SYMBOLS for symbol in symbols):
         return None
     return symbols
@@ -404,6 +407,10 @@ def single_qubit_product_state(symbol: str) -> list[tuple[int, str]] | None:
         return [(0, "1/sqrt(2)"), (1, "-1/sqrt(2)")]
     if symbol == "i":
         return [(0, "1/sqrt(2)"), (1, "i/sqrt(2)")]
+    if symbol == "-i":
+        return [(0, "1/sqrt(2)"), (1, "-i/sqrt(2)")]
+    if symbol == "T":
+        return [(0, "1/sqrt(2)"), (1, "(1 + i)/2")]
     return None
 
 

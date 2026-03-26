@@ -2,8 +2,10 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import App from "../src/renderer/App";
+import { BUG_REPORT_RESTORE_SEARCH_PARAM, buildBugReportRestoreStorageKey } from "../src/renderer/bugReportRestore";
 import { BUG_REPORT_DESCRIPTION_MAX_LENGTH } from "../src/shared/bugReport";
 import { DEFAULT_CIRCUIT_LAYOUT, getCellCenterX, getGridHeight, getGridWidth, getIncomingSegmentRange, getRowY, getWireStartX } from "../src/renderer/layout";
+import { initialState } from "../src/renderer/reducer";
 import * as renderedPdfModule from "../src/renderer/useRenderedPdf";
 import * as symbolicLatexModule from "../src/renderer/useSymbolicLatex";
 
@@ -932,10 +934,83 @@ describe("App smoke tests", () => {
       expect(payload.title).toBe("Preview crops bottom wire");
       expect(payload.description).toBe("The preview image cuts off the last row after export.");
       expect(payload.code).toContain(String.raw`\begin{quantikz}`);
+      expect(typeof payload.visualCircuitSnapshot).toBe("string");
+      expect(JSON.parse(payload.visualCircuitSnapshot)).toEqual(expect.objectContaining({
+        summary: expect.objectContaining({
+          qubits: 3,
+          steps: 5
+        }),
+        editorState: expect.objectContaining({
+          qubits: 3,
+          steps: 5
+        })
+      }));
       expect(screen.queryByRole("dialog", { name: /submit a bug/i })).not.toBeInTheDocument();
       expect(screen.getByText(/bug report submitted\./i)).toBeInTheDocument();
     } finally {
       fetchMock.mockRestore();
+    }
+  });
+
+  it("restores a reported circuit from a bug-report restore token", async () => {
+    const restoreId = "restore-test";
+    const restoreStorageKey = buildBugReportRestoreStorageKey(restoreId);
+    const previousPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+
+    window.localStorage.setItem(restoreStorageKey, JSON.stringify({
+      editorState: {
+        ...initialState,
+        qubits: 4,
+        steps: 6,
+        items: [{
+          id: "gate-restore-1",
+          type: "gate",
+          point: { row: 1, col: 2 },
+          span: { rows: 1, cols: 1 },
+          label: "R",
+          width: 40,
+          color: null
+        }],
+        wireMask: {},
+        wireTypes: ["quantum", "classical", "quantum", "quantum"],
+        wireLabels: [
+          { left: "a", right: "" },
+          { left: "", right: "" },
+          { left: "", right: "" },
+          { left: "", right: "out" }
+        ],
+        selectedItemIds: [],
+        exportCode: String.raw`\begin{quantikz}
+& & \gate{R}
+\end{quantikz}`,
+        exportPreamble: initialState.exportPreamble,
+        exportSymbolicPreamble: initialState.exportSymbolicPreamble,
+        exportIssues: [],
+        uiMessage: null
+      },
+      code: String.raw`\begin{quantikz}
+& & \gate{R}
+\end{quantikz}`,
+      preamble: initialState.exportPreamble,
+      exportPanelMode: "quantikz",
+      quantikzPaneView: "content",
+      symbolicPaneView: "content",
+      symbolicEditorCode: ""
+    }));
+    window.history.replaceState({}, "", `/?${BUG_REPORT_RESTORE_SEARCH_PARAM}=${restoreId}`);
+
+    try {
+      render(<App />);
+
+      await waitFor(() => expect(screen.getByLabelText(/^qubits$/i)).toHaveValue("4"));
+      await waitFor(() => expect(screen.getByLabelText(/^steps$/i)).toHaveValue("6"));
+      expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain("\\gate{R}");
+      expect(screen.getByText(/circuit restored from bug report\./i)).toBeInTheDocument();
+      expect(window.location.search).toBe("");
+      expect(window.localStorage.getItem(restoreStorageKey)).toBeNull();
+    } finally {
+      window.localStorage.removeItem(restoreStorageKey);
+      window.history.replaceState({}, "", previousPath || "/");
     }
   });
 
@@ -1230,22 +1305,36 @@ describe("App smoke tests", () => {
     await user.click(screen.getByTestId("grid-cell-0-0"));
 
     await user.click(screen.getByRole("button", { name: /^wires$/i }));
-    fireEvent.pointerDown(board, {
-      button: 0,
-      clientX: getCellCenterX(0, DEFAULT_CIRCUIT_LAYOUT),
-      clientY: getRowY(0, DEFAULT_CIRCUIT_LAYOUT)
-    });
-    fireEvent.pointerDown(board, {
-      button: 0,
-      clientX: getCellCenterX(1, DEFAULT_CIRCUIT_LAYOUT),
-      clientY: getRowY(0, DEFAULT_CIRCUIT_LAYOUT)
-    });
+
+    await user.pointer([
+      {
+        target: screen.getByTestId("segment-slot-0-1"),
+        keys: "[MouseLeft>]",
+        coords: {
+          x: getCellCenterX(1, DEFAULT_CIRCUIT_LAYOUT),
+          y: getRowY(0, DEFAULT_CIRCUIT_LAYOUT)
+        }
+      },
+      { keys: "[/MouseLeft]" },
+      {
+        target: screen.getByTestId("segment-slot-0-2"),
+        keys: "[MouseLeft>]",
+        coords: {
+          x: getCellCenterX(2, DEFAULT_CIRCUIT_LAYOUT),
+          y: getRowY(0, DEFAULT_CIRCUIT_LAYOUT)
+        }
+      },
+      { keys: "[/MouseLeft]" }
+    ]);
+
     await user.click(screen.getByRole("button", { name: /convert to quantikz/i }));
 
-    const output = (screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value;
+    await waitFor(() => {
+      const output = (screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value;
 
-    expect(output).toContain("\\meter{}");
-    expect(output).not.toContain("\\wireoverride{q}");
+      expect(output).toContain("\\meter{}");
+      expect(output).toContain("\\wireoverride{c}");
+    });
   });
 
   it("shows boundary guide points in wire mode and redraws a left half wire from the circuit edge", async () => {
@@ -1412,7 +1501,7 @@ describe("App smoke tests", () => {
 
     expect(dialog).toBeInTheDocument();
     expect(within(dialog).getByText(/recognized states/i)).toBeInTheDocument();
-    expect(within(dialog).getByText(String.raw`\ket{0}, \ket{1}, \ket{+}, \ket{-}, \ket{i}`)).toBeInTheDocument();
+    expect(within(dialog).getByText(String.raw`\ket{0}, \ket{1}, \ket{+}, \ket{-}, \ket{i}, \ket{-i}, \ket{T}`)).toBeInTheDocument();
     expect(within(dialog).getByText(String.raw`\ket{0}_{c_0}, \ket{\psi}_{data}`)).toBeInTheDocument();
     expect(within(dialog).getByText(String.raw`\textsc{UNIFORM}_M, \textsc{UNIFORM}`)).toBeInTheDocument();
     expect(within(dialog).getByText(/normalized symbolic sum/i)).toBeInTheDocument();

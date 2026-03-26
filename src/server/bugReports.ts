@@ -15,6 +15,7 @@ const LOCAL_PREVIEW_IMAGE_DIR = path.join(path.dirname(LOCAL_STORAGE_PATH), "bug
 const LOCAL_INTERFACE_IMAGE_DIR = path.join(path.dirname(LOCAL_STORAGE_PATH), "bug-report-interface-images");
 const BUG_REPORT_PREVIEW_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 const BUG_REPORT_INTERFACE_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
+const BUG_REPORT_VISUAL_CIRCUIT_MAX_LENGTH = 1_000_000;
 const BUG_REPORT_SESSION_SNAPSHOT_MAX_LENGTH = 1_000_000;
 const BLOB_PREVIEW_IMAGE_PREFIX = "bug-report-images/";
 const BLOB_INTERFACE_IMAGE_PREFIX = "bug-report-interface-images/";
@@ -54,6 +55,7 @@ function buildStoredBugReport(payload: BugReportPayload, storage: StoredBugRepor
     preamble: normalizeField(payload.preamble),
     pageUrl: normalizeOptionalField(payload.pageUrl, 2048),
     userAgent: normalizeOptionalField(payload.userAgent, 1024),
+    visualCircuitSnapshot: normalizeField(payload.visualCircuitSnapshot).slice(0, BUG_REPORT_VISUAL_CIRCUIT_MAX_LENGTH),
     sessionSnapshot: normalizeField(payload.sessionSnapshot).slice(0, BUG_REPORT_SESSION_SNAPSHOT_MAX_LENGTH),
     previewImageStorageKey: null,
     previewImageContentType: null,
@@ -134,6 +136,7 @@ async function storeBugReportInBlob(payload: BugReportPayload): Promise<StoredBu
     preamble: normalizeField(payload.preamble),
     pageUrl: normalizeOptionalField(payload.pageUrl, 2048),
     userAgent: normalizeOptionalField(payload.userAgent, 1024),
+    visualCircuitSnapshot: normalizeField(payload.visualCircuitSnapshot).slice(0, BUG_REPORT_VISUAL_CIRCUIT_MAX_LENGTH),
     sessionSnapshot: normalizeField(payload.sessionSnapshot).slice(0, BUG_REPORT_SESSION_SNAPSHOT_MAX_LENGTH),
     previewImageStorageKey,
     previewImageContentType: previewImage?.contentType ?? null,
@@ -225,6 +228,7 @@ function parseStoredBugReport(raw: unknown): StoredBugReport {
     preamble: candidate.preamble,
     pageUrl: typeof candidate.pageUrl === "string" ? candidate.pageUrl : null,
     userAgent: typeof candidate.userAgent === "string" ? candidate.userAgent : null,
+    visualCircuitSnapshot: typeof candidate.visualCircuitSnapshot === "string" ? candidate.visualCircuitSnapshot : "",
     sessionSnapshot: typeof candidate.sessionSnapshot === "string" ? candidate.sessionSnapshot : "",
     previewImageStorageKey: typeof candidate.previewImageStorageKey === "string" ? candidate.previewImageStorageKey : null,
     previewImageContentType: typeof candidate.previewImageContentType === "string" ? candidate.previewImageContentType : null,

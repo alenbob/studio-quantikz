@@ -553,6 +553,27 @@ def propagate_symbolic_control_to_target(
     return True
 
 
+def resolve_control_bit(
+    term: SymbolicTerm,
+    row: int,
+    classical_controls: dict[int, int] | None = None,
+) -> int | None:
+    basis_value = term.basis_bits.get(row)
+    if basis_value is not None:
+        return basis_value
+    if classical_controls is None:
+        return None
+    return classical_controls.get(row)
+
+
+def controls_match(
+    term: SymbolicTerm,
+    controls: list[tuple[int, int]],
+    classical_controls: dict[int, int] | None = None,
+) -> bool:
+    return all(resolve_control_bit(term, row, classical_controls) == expected for row, expected in controls)
+
+
 def controls_for_connected_rows(column: dict[str, object], active_rows: set[int]) -> list[tuple[int, int]]:
     expected_by_row: dict[int, int] = {}
     for row, expected in column["controls"]:
@@ -842,6 +863,21 @@ def apply_initial_state_symbol(term: SymbolicTerm, row: int, symbol: str) -> lis
             one_term,
             row,
             LocalWeight(amplitude=Amplitude(real=0, imag=1, sqrt2_power=1)),
+        )
+        return [zero_term, one_term]
+    if symbol == "T":
+        zero_term = term.clone()
+        zero_term.amplitude = zero_term.amplitude.multiply(sqrt2_power=1)
+        zero_term.basis_bits[row] = 0
+        set_row_local_weight(zero_term, row, LocalWeight(amplitude=Amplitude(sqrt2_power=1)))
+
+        one_term = term.clone()
+        one_term.amplitude = one_term.amplitude.times(Amplitude(real=1, imag=1, sqrt2_power=2))
+        one_term.basis_bits[row] = 1
+        set_row_local_weight(
+            one_term,
+            row,
+            LocalWeight(amplitude=Amplitude(real=1, imag=1, sqrt2_power=2)),
         )
         return [zero_term, one_term]
     if symbol == "-i":
@@ -1896,16 +1932,24 @@ def apply_gate_to_term(
     return [updated]
 
 
-def evolve_terms(terms: list[SymbolicTerm], slice_info: LogicalSlice, row_labels: list[str]) -> list[SymbolicTerm]:
+def evolve_terms(
+    terms: list[SymbolicTerm],
+    slice_info: LogicalSlice,
+    row_labels: list[str],
+    classical_controls: dict[int, int] | None = None,
+) -> list[SymbolicTerm]:
     next_terms: list[SymbolicTerm] = []
     for term in terms:
         updated = term.clone()
         if slice_info.kind == "and_compute":
             assert slice_info.target_row is not None
-            try:
-                control_value = int(all(updated.basis_bits[row] == expected for row, expected in slice_info.controls))
-            except KeyError as exc:
-                raise ValueError(f"AND control row {exc.args[0]} is not in the computational basis") from exc
+            resolved_controls: list[bool] = []
+            for row, expected in slice_info.controls:
+                control_value = resolve_control_bit(updated, row, classical_controls)
+                if control_value is None:
+                    raise ValueError(f"AND control row {row} is not in the computational basis")
+                resolved_controls.append(control_value == expected)
+            control_value = int(all(resolved_controls))
             updated.basis_bits[slice_info.target_row] = control_value
             set_row_local_weight(updated, slice_info.target_row, LocalWeight())
         elif slice_info.kind == "and_uncompute":
@@ -1914,7 +1958,7 @@ def evolve_terms(terms: list[SymbolicTerm], slice_info: LogicalSlice, row_labels
             set_row_local_weight(updated, slice_info.target_row, None)
         elif slice_info.kind == "controlled_x":
             assert slice_info.target_row is not None
-            if all(updated.basis_bits.get(row) == expected for row, expected in slice_info.controls):
+            if controls_match(updated, slice_info.controls, classical_controls):
                 current_value = updated.basis_bits.get(slice_info.target_row)
                 if current_value is not None:
                     updated.basis_bits[slice_info.target_row] = 1 - current_value
@@ -1929,7 +1973,7 @@ def evolve_terms(terms: list[SymbolicTerm], slice_info: LogicalSlice, row_labels
         elif slice_info.kind == "swap":
             assert slice_info.target_row is not None
             assert slice_info.secondary_row is not None
-            if all(updated.basis_bits.get(row) == expected for row, expected in slice_info.controls):
+            if controls_match(updated, slice_info.controls, classical_controls):
                 left_factor = get_row_factor(updated, slice_info.target_row)
                 right_factor = get_row_factor(updated, slice_info.secondary_row)
                 left_weight = get_row_local_weight(updated, slice_info.target_row)
@@ -1944,7 +1988,7 @@ def evolve_terms(terms: list[SymbolicTerm], slice_info: LogicalSlice, row_labels
             continue
         elif slice_info.kind == "controlled_gate":
             assert slice_info.target_row is not None
-            if all(updated.basis_bits.get(row) == expected for row, expected in slice_info.controls):
+            if controls_match(updated, slice_info.controls, classical_controls):
                 next_terms.extend(apply_gate_to_term(updated, slice_info.target_row, slice_info.span, slice_info.label, row_labels))
                 continue
         elif slice_info.kind == "measure":
@@ -3009,11 +3053,12 @@ def build_discursive_block(
                 next_branches: list[OutcomeBranch] = []
                 for branch in branches:
                     measured_terms = branch.terms
+                    classical_controls = dict(branch.outcomes)
                     if slice_info.controls:
                         matching_terms = [
                             term
                             for term in branch.terms
-                            if all(term.basis_bits.get(row) == expected for row, expected in slice_info.controls)
+                            if controls_match(term, slice_info.controls, classical_controls)
                         ]
                         if matching_terms and len(matching_terms) != len(branch.terms):
                             raise ValueError(
@@ -3035,7 +3080,7 @@ def build_discursive_block(
                     [
                         OutcomeBranch(
                             outcomes=branch.outcomes,
-                            terms=evolve_terms(branch.terms, slice_info, row_labels),
+                            terms=evolve_terms(branch.terms, slice_info, row_labels, dict(branch.outcomes)),
                         )
                         for branch in branches
                     ]

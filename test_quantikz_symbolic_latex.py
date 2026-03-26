@@ -251,6 +251,15 @@ MID_CIRCUIT_MEASUREMENT_BRANCHING_CIRCUIT = textwrap.dedent(
     """
 ).strip()
 
+POST_MEASUREMENT_CLASSICAL_CONTROLLED_GATE_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}
+    \lstick{$\ket{+}_c$} & \meter{} & \wireoverride{c} \ctrl[vertical wire=c]{1} \\
+    \lstick{$\ket{0}_t$} &  & \gate{A}
+    \end{quantikz}
+    """
+).strip()
+
 Z_PLUS_CIRCUIT = textwrap.dedent(
     r"""
     \begin{quantikz}
@@ -273,6 +282,22 @@ I_STATE_CIRCUIT = textwrap.dedent(
     r"""
     \begin{quantikz}
     \lstick{$\ket{i}$} & \gate{Z}
+    \end{quantikz}
+    """
+).strip()
+
+MINUS_I_STATE_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}
+    \lstick{$\ket{-i}$} & \gate{Z}
+    \end{quantikz}
+    """
+).strip()
+
+T_STATE_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}
+    \lstick{$\ket{T}$} & \meter{}
     \end{quantikz}
     """
 ).strip()
@@ -861,6 +886,27 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
         self.assertIn(r"\Pr(q_{0}=0)=\frac{1}{2}", output)
         self.assertIn(r"\Pr(q_{0}=1)=\frac{1}{2}", output)
 
+    def test_applies_classically_controlled_gates_after_measurement(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = pathlib.Path(temp_dir) / "post_measurement_classical_controlled_gate.tex"
+            input_path.write_text(POST_MEASUREMENT_CLASSICAL_CONTROLLED_GATE_CIRCUIT, encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH), str(input_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        output = result.stdout
+        self.assertIn(r"\textbf{Slice 1: } measure $c$", output)
+        self.assertIn(r"\textbf{Slice 2: } controlled $A$", output)
+        self.assertIn(r"\Pr(c=0)=\frac{1}{2}", output)
+        self.assertIn(r"\Pr(c=1)=\frac{1}{2}", output)
+        self.assertIn(r"\ket{\Psi_{2}} &= \left\{\begin{array}{ll}", output)
+        self.assertIn(r"\frac{1}{\sqrt{2}} \ket{0}, & \Pr(c=0)=\frac{1}{2}", output)
+        self.assertIn(r"\frac{1}{\sqrt{2}} A\ket{0}, & \Pr(c=1)=\frac{1}{2}", output)
+
     def test_supports_multiwire_basis_labels_and_controlled_wide_gates(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             input_path = pathlib.Path(temp_dir) / "wide_controlled_yy.tex"
@@ -893,6 +939,40 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
 
         output = result.stdout
         self.assertIn(r"\ket{\Psi_{1}} &= \left(\frac{1}{\sqrt{2}} \ket{0} - \frac{i}{\sqrt{2}} \ket{1}\right)", output)
+
+    def test_supports_minus_i_basis_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = pathlib.Path(temp_dir) / "minus_i_state.tex"
+            input_path.write_text(MINUS_I_STATE_CIRCUIT, encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH), str(input_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        output = result.stdout
+        self.assertIn(r"\ket{\Psi_{1}} &= \left(\frac{1}{\sqrt{2}} \ket{0} + \frac{i}{\sqrt{2}} \ket{1}\right)", output)
+
+    def test_supports_t_magic_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = pathlib.Path(temp_dir) / "t_state.tex"
+            input_path.write_text(T_STATE_CIRCUIT, encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH), str(input_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        output = result.stdout
+        self.assertIn(r"\ket{\Psi_{0}} &= \ket{T}", output)
+        self.assertIn(r"\frac{1}{\sqrt{2}}, & \Pr(q_{0}=0)=\frac{1}{2}", output)
+        self.assertIn(r"\frac{1 + i}{2}, & \Pr(q_{0}=1)=\frac{1}{2}", output)
+        self.assertIn(r"\Pr(q_{0}=0)=\frac{1}{2}", output)
+        self.assertIn(r"\Pr(q_{0}=1)=\frac{1}{2}", output)
 
     def test_interprets_wide_h_as_hadamard_on_each_qubit(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -14,6 +14,7 @@ export interface BugReportPayload {
   userAgent?: string;
   previewImageDataUrl?: string;
   interfaceImageDataUrl?: string;
+  visualCircuitSnapshot?: string;
   sessionSnapshot?: string;
 }
 
@@ -29,6 +30,7 @@ export interface StoredBugReport {
   preamble: string;
   pageUrl: string | null;
   userAgent: string | null;
+  visualCircuitSnapshot: string;
   sessionSnapshot: string;
   previewImageStorageKey: string | null;
   previewImageContentType: string | null;

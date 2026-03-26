@@ -94,6 +94,7 @@ type Action =
   | { type: "setExportCode"; code: string }
   | { type: "setExportPreamble"; preamble: string }
   | { type: "setExportSymbolicPreamble"; preamble: string }
+  | { type: "loadEditorSnapshot"; snapshot: EditorState }
   | { type: "loadQuantikz"; imported: ImportedCircuit; code: string; preamble: string }
   | { type: "clearMessage" }
   | { type: "setMessage"; message: string | null };
@@ -191,6 +192,40 @@ function buildVerticalConnector(
     wireType,
     color
   };
+}
+
+function getImplicitHorizontalWireType(
+  items: CircuitItem[],
+  steps: number,
+  row: number,
+  col: number,
+  rowDefaultWireType: WireType
+): WireType {
+  return getMeterSuppressedHorizontalKeys(items, steps).has(wireKey(row, col))
+    ? "classical"
+    : rowDefaultWireType;
+}
+
+function getVerticalConnectorWireType(
+  items: CircuitItem[],
+  steps: number,
+  wireTypes: WireType[],
+  col: number,
+  topRow: number,
+  bottomRow: number
+): WireType {
+  const endpointRows = [topRow, bottomRow];
+
+  return endpointRows.some((row) => {
+    const existingSegment = getHorizontalSegmentAt(items, row, col);
+    if (existingSegment) {
+      return existingSegment.wireType === "classical";
+    }
+
+    return getImplicitHorizontalWireType(items, steps, row, col, wireTypes[row] ?? "quantum") === "classical";
+  })
+    ? "classical"
+    : "quantum";
 }
 
 interface WireLabelGroupDescriptor {
@@ -710,7 +745,12 @@ function normalizeHorizontalSegments(
       if (!horizontals.has(key)) {
         horizontals.set(
           key,
-          buildHorizontalSegment(row, col, "present", wireTypes[row] ?? "quantum")
+          buildHorizontalSegment(
+            row,
+            col,
+            "present",
+            getImplicitHorizontalWireType(items, steps, row, col, wireTypes[row] ?? "quantum")
+          )
         );
       }
     }
@@ -718,12 +758,16 @@ function normalizeHorizontalSegments(
 
   for (const [key, segment] of horizontals.entries()) {
     if (meterSuppressedKeys.has(key)) {
+      const nextSegment: HorizontalSegmentItem = {
+        ...segment,
+        wireType: "classical"
+      };
+
       if (segment.autoSuppressed !== true && segment.autoSuppressed !== false) {
-        horizontals.set(key, {
-          ...segment,
-          autoSuppressed: true
-        });
+        nextSegment.autoSuppressed = true;
       }
+
+      horizontals.set(key, nextSegment);
       continue;
     }
 
@@ -780,7 +824,18 @@ function createItem(
     }
 
     return {
-      ...buildHorizontalSegment(placement.row, placement.col),
+      ...buildHorizontalSegment(
+        placement.row,
+        placement.col,
+        "present",
+        getImplicitHorizontalWireType(
+          state.items,
+          state.steps,
+          placement.row,
+          placement.col,
+          state.wireTypes[placement.row] ?? "quantum"
+        )
+      ),
       id: createId(tool),
       type: "horizontalSegment"
     };
@@ -1269,7 +1324,18 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
       }
 
       const newItem: HorizontalSegmentItem = {
-        ...buildHorizontalSegment(action.row, action.col, "present", state.wireTypes[action.row] ?? "quantum"),
+        ...buildHorizontalSegment(
+          action.row,
+          action.col,
+          "present",
+          getImplicitHorizontalWireType(
+            state.items,
+            state.steps,
+            action.row,
+            action.col,
+            state.wireTypes[action.row] ?? "quantum"
+          )
+        ),
         id: createId("horizontalSegment"),
         type: "horizontalSegment"
       };
@@ -1312,18 +1378,25 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
         for (let col = startCol; col <= endCol; col += 1) {
           const key = wireKey(row, col);
           const existing = segments.get(key);
+          const wireType = getImplicitHorizontalWireType(
+            state.items,
+            state.steps,
+            row,
+            col,
+            state.wireTypes[row] ?? "quantum"
+          );
 
           if (existing) {
             segments.set(key, {
               ...existing,
               mode: "present",
-              wireType: existing.wireType,
+              wireType: wireType === "classical" ? "classical" : existing.wireType,
               autoSuppressed: false
             });
             continue;
           }
 
-          segments.set(key, buildHorizontalSegment(row, col, "present", state.wireTypes[row] ?? "quantum"));
+          segments.set(key, buildHorizontalSegment(row, col, "present", wireType));
         }
 
         const horizontalIds = new Set(
@@ -1348,9 +1421,17 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
 
       const topRow = Math.min(action.start.row, action.end.row);
       const bottomRow = Math.max(action.start.row, action.end.row);
+      const connectorWireType = getVerticalConnectorWireType(
+        state.items,
+        state.steps,
+        state.wireTypes,
+        action.start.col,
+        topRow,
+        bottomRow
+      );
       const connectors = Array.from(
         { length: bottomRow - topRow },
-        (_, index) => buildVerticalConnector(topRow + index, action.start.col)
+        (_, index) => buildVerticalConnector(topRow + index, action.start.col, connectorWireType)
       );
 
       if (!canPlaceItemsWithoutOverlap(state.items, connectors)) {
@@ -1377,6 +1458,14 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
         );
 
         if (existing) {
+          const wireType = getImplicitHorizontalWireType(
+            state.items,
+            state.steps,
+            newItem.point.row,
+            newItem.point.col,
+            state.wireTypes[newItem.point.row] ?? "quantum"
+          );
+
           if (existing.mode === "present" && existing.autoSuppressed !== true) {
             return {
               ...state,
@@ -1395,6 +1484,7 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
                 ? {
                     ...item,
                     mode: "present",
+                    wireType,
                     autoSuppressed: false
                   }
                 : item
@@ -2146,6 +2236,8 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
         exportIssues: [],
         uiMessage: null
       };
+    case "loadEditorSnapshot":
+      return withItems(action.snapshot, action.snapshot.items, action.snapshot.selectedItemIds);
     case "loadQuantikz":
       return withItems(
         {
