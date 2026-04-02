@@ -31,6 +31,12 @@ function mockBoardRect(board: HTMLDivElement, steps = 5, qubits = 3): void {
 }
 
 describe("App smoke tests", () => {
+  it("shows local SVG status in figure preview header", () => {
+    render(<App />);
+
+    expect(screen.getByText(/SVG not enabled \(using PDF preview\)\./i)).toBeInTheDocument();
+  });
+
   it("places a gate onto the snapped grid and exports it", async () => {
     const user = userEvent.setup();
     const { container } = render(<App />);
@@ -501,9 +507,12 @@ describe("App smoke tests", () => {
       pdfUrl: code.includes(String.raw`\begin{quantikz}`)
         ? "blob:quantikz-preview"
         : null,
+      svgUrl: null,
+      svgMarkup: null,
       previewImageUrl: code.includes(String.raw`\begin{quantikz}`)
         ? "blob:quantikz-preview-image"
         : null,
+      format: code.includes(String.raw`\begin{quantikz}`) ? "pdf" : null,
       state: code.includes(String.raw`\begin{quantikz}`) ? "ready" : "idle",
       error: null
     }));
@@ -538,11 +547,14 @@ describe("App smoke tests", () => {
       pdfUrl: code.includes(String.raw`\begin{equation*}`) || code.includes(String.raw`\begin{quantikz}`)
         ? "blob:preview"
         : null,
+      svgUrl: null,
+      svgMarkup: null,
       previewImageUrl: code.includes(String.raw`\begin{equation*}`)
         ? "blob:symbolic-preview-image"
         : code.includes(String.raw`\begin{quantikz}`)
           ? "blob:quantikz-preview-image"
           : null,
+      format: (code.includes(String.raw`\begin{equation*}`) || code.includes(String.raw`\begin{quantikz}`)) ? "pdf" : null,
       state: code.includes(String.raw`\begin{equation*}`) || code.includes(String.raw`\begin{quantikz}`) ? "ready" : "idle",
       error: null
     }));

@@ -689,7 +689,7 @@ function mergedConnectors(connectors: ConnectorRef[]): ConnectorRef[] {
       }
 
       const activeEnd = active.row + active.length;
-      if (connector.row <= activeEnd) {
+      if (connector.row <= activeEnd && connector.wireType === active.wireType) {
         active = {
           row: active.row,
           col,
@@ -1015,6 +1015,7 @@ export function importFromQuantikz(code: string, importOptions: { preamble?: str
               wireType: wireOverrideType !== "none" ? wireOverrideType.wireType : "quantum",
               sourceCommand: "wireoverride",
               bundled: wireOverrideType !== "none" ? wireOverrideType.bundled : false,
+              autoSuppressed: wireOverrideType === "none" ? undefined : false,
               color: null
             });
             createdHorizontalSegment = true;
@@ -1036,6 +1037,7 @@ export function importFromQuantikz(code: string, importOptions: { preamble?: str
               wireType: effectiveWire.wireType,
               bundled: true,
               bundleLabel: decodeLabel(command.args[0] ?? ""),
+              autoSuppressed: false,
               color
             });
             createdHorizontalSegment = true;
@@ -1058,6 +1060,7 @@ export function importFromQuantikz(code: string, importOptions: { preamble?: str
                 point: { row: rowIndex, col: colIndex },
                 mode: "present",
                 wireType,
+                autoSuppressed: false,
                 color: wireColor
               };
               items.push(horizontal);
@@ -1106,6 +1109,7 @@ export function importFromQuantikz(code: string, importOptions: { preamble?: str
           wireType: setWireType !== "none" ? setWireType.wireType : "quantum",
           sourceCommand: "setwiretype",
           bundled: setWireType !== "none" ? setWireType.bundled : false,
+          autoSuppressed: setWireType === "none" ? undefined : false,
           color: null
         });
         createdHorizontalSegment = true;
@@ -1214,7 +1218,7 @@ export function importFromQuantikz(code: string, importOptions: { preamble?: str
 
     for (let index = 1; index < sortedEdges.length; index += 1) {
       const edge = sortedEdges[index];
-      if (edge.start <= active.end) {
+      if (edge.start <= active.end && edge.wireType === active.wireType) {
         active = {
           start: active.start,
           end: Math.max(active.end, edge.end),

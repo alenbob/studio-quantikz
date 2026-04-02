@@ -1,6 +1,13 @@
+import { spawn } from "node:child_process";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 const REMOTE_RENDERER_URL_ENV = "FULL_TEX_RENDERER_URL";
 const REMOTE_RENDERER_SVG_URL_ENV = "FULL_TEX_RENDERER_SVG_URL";
 const REMOTE_RENDERER_PDF_URL_ENV = "FULL_TEX_RENDERER_PDF_URL";
+const LOCAL_SVG_MODE_ENV = "LOCAL_SVG_RENDERER_MODE";
 const TEXLIVE_PDF_ENDPOINT = "https://texlive.net/cgi-bin/latexcgi";
 
 interface RenderQuantikzSvgResult {
@@ -8,6 +15,7 @@ interface RenderQuantikzSvgResult {
   svg?: string;
   error?: string;
   statusCode?: number;
+  source?: "local-python" | "remote-renderer";
 }
 
 interface RenderQuantikzPdfResult {
@@ -40,6 +48,16 @@ interface TexliveRendererErrorResult {
   error: string;
   statusCode: number;
 }
+
+interface LocalSvgRuntimeStatus {
+  enabled: boolean;
+  message: string;
+  pythonCommand?: string;
+  scriptPath?: string;
+}
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const PDF2SVG_SCRIPT_PATH = path.join(REPO_ROOT, "pdf2svg.py");
 
 function buildStandaloneDocument(code: string, preamble: string): string {
   const trimmedCode = code.trim();
@@ -348,6 +366,196 @@ function hasGraphicPrimitives(svgMarkup: string): boolean {
   return /<(path|line|rect|circle|ellipse|polygon|polyline|text)\b/.test(body);
 }
 
+function executeProcess(command: string, args: string[]): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: REPO_ROOT,
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (chunk: Buffer | string) => {
+      stdout += chunk.toString();
+    });
+
+    child.stderr.on("data", (chunk: Buffer | string) => {
+      stderr += chunk.toString();
+    });
+
+    child.on("error", reject);
+    child.on("close", (exitCode) => {
+      resolve({ stdout, stderr, exitCode });
+    });
+  });
+}
+
+async function commandExists(command: string, args: string[]): Promise<boolean> {
+  try {
+    const result = await executeProcess(command, args);
+    return result.exitCode !== null;
+  } catch {
+    return false;
+  }
+}
+
+async function resolvePythonCommand(): Promise<string | null> {
+  for (const candidate of ["python3", "python"]) {
+    if (await commandExists(candidate, ["--version"])) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+export async function getLocalSvgRuntimeStatus(): Promise<LocalSvgRuntimeStatus> {
+  if ((process.env[LOCAL_SVG_MODE_ENV] ?? "").trim().toLowerCase() === "off") {
+    return {
+      enabled: false,
+      message: "SVG disabled: local converter disabled by environment."
+    };
+  }
+
+  const pythonCommand = await resolvePythonCommand();
+  if (!pythonCommand) {
+    return {
+      enabled: false,
+      message: "SVG disabled: Python runtime not found."
+    };
+  }
+
+  const pdftocairoAvailable = await commandExists("pdftocairo", ["-v"]);
+  if (!pdftocairoAvailable) {
+    return {
+      enabled: false,
+      message: "SVG disabled: pdftocairo is missing (install Poppler).",
+      pythonCommand
+    };
+  }
+
+  if (!(await commandExists(pythonCommand, [PDF2SVG_SCRIPT_PATH, "--help"]))) {
+    return {
+      enabled: false,
+      message: "SVG disabled: pdf2svg.py is not runnable.",
+      pythonCommand,
+      scriptPath: PDF2SVG_SCRIPT_PATH
+    };
+  }
+
+  return {
+    enabled: true,
+    message: "SVG enabled: local Python converter detected.",
+    pythonCommand,
+    scriptPath: PDF2SVG_SCRIPT_PATH
+  };
+}
+
+async function renderQuantikzSvgLocal(
+  code: string,
+  preamble: string,
+  runtimeStatus: LocalSvgRuntimeStatus
+): Promise<RenderQuantikzSvgResult> {
+  if (!runtimeStatus.enabled || !runtimeStatus.pythonCommand) {
+    return {
+      success: false,
+      error: runtimeStatus.message,
+      statusCode: 501
+    };
+  }
+
+  const renderedPdf = await renderQuantikzPdf(code, preamble);
+  if (!renderedPdf.success || !renderedPdf.pdf) {
+    return {
+      success: false,
+      error: renderedPdf.error ?? "Unable to render PDF before SVG conversion.",
+      statusCode: renderedPdf.statusCode
+    };
+  }
+
+  const tempDir = await mkdtemp(path.join(tmpdir(), "quantikzz-svg-"));
+  const inputPdfPath = path.join(tempDir, "circuit.pdf");
+  const outputDirPath = path.join(tempDir, "svg");
+
+  try {
+    await writeFile(inputPdfPath, renderedPdf.pdf);
+
+    const conversion = await executeProcess(runtimeStatus.pythonCommand, [
+      PDF2SVG_SCRIPT_PATH,
+      inputPdfPath,
+      "--output-dir",
+      outputDirPath
+    ]);
+
+    if (conversion.exitCode !== 0) {
+      const processError = [conversion.stderr.trim(), conversion.stdout.trim()]
+        .filter(Boolean)
+        .join("\n") || "Local SVG conversion failed.";
+
+      return {
+        success: false,
+        error: processError,
+        statusCode: 500
+      };
+    }
+
+    const outputFiles = (await readdir(outputDirPath)).sort((a, b) => a.localeCompare(b));
+    const svgCandidates = [
+      ...outputFiles.filter((entry) => entry.toLowerCase().endsWith(".svg")),
+      ...outputFiles.filter((entry) => !entry.toLowerCase().endsWith(".svg"))
+    ];
+
+    let svgMarkup: string | null = null;
+
+    for (const candidate of svgCandidates) {
+      try {
+        const candidateMarkup = await readFile(path.join(outputDirPath, candidate), "utf-8");
+        if (candidateMarkup.includes("<svg")) {
+          svgMarkup = candidateMarkup;
+          break;
+        }
+      } catch {
+        // Ignore unreadable candidates and continue scanning remaining files.
+      }
+    }
+
+    if (!svgMarkup) {
+      const conversionNotes = [conversion.stderr.trim(), conversion.stdout.trim()]
+        .filter(Boolean)
+        .join("\n");
+      const fileListing = outputFiles.length > 0 ? outputFiles.join(", ") : "(none)";
+
+      return {
+        success: false,
+        error: [
+          "Local SVG conversion did not produce readable SVG markup.",
+          `Output files: ${fileListing}`,
+          conversionNotes ? `Converter output:\n${conversionNotes}` : undefined
+        ]
+          .filter(Boolean)
+          .join("\n"),
+        statusCode: 500
+      };
+    }
+
+    return {
+      success: true,
+      svg: validateSvgMarkup(svgMarkup),
+      source: "local-python"
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unable to run local SVG conversion.",
+      statusCode: 500
+    };
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+}
+
 function validateSvgMarkup(svgMarkup: string): string {
   if (!svgMarkup.includes("<svg")) {
     throw new Error("Renderer did not return SVG markup.");
@@ -413,15 +621,28 @@ export async function renderQuantikzSvg(
   code: string,
   preamble: string
 ): Promise<RenderQuantikzSvgResult> {
+  const localRuntime = await getLocalSvgRuntimeStatus();
+  if (localRuntime.enabled) {
+    return renderQuantikzSvgLocal(code, preamble, localRuntime);
+  }
+
   if (!resolveRemoteRendererEndpoint("svg")) {
     return {
       success: false,
-      error: "SVG rendering is currently unavailable. Use the PDF preview instead.",
+      error: `${localRuntime.message} Falling back to PDF preview.`,
       statusCode: 501
     };
   }
 
-  return renderQuantikzSvgFullLatex(code, preamble);
+  const remoteResult = await renderQuantikzSvgFullLatex(code, preamble);
+  if (!remoteResult.success) {
+    return remoteResult;
+  }
+
+  return {
+    ...remoteResult,
+    source: "remote-renderer"
+  };
 }
 
 export async function renderQuantikzPdf(

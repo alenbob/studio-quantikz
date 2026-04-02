@@ -268,6 +268,29 @@ describe("importFromQuantikz", () => {
     expect(connector && connector.type === "verticalConnector" ? connector.wireType : "").toBe("classical");
   });
 
+  it("round-trips local post-measurement overrides without changing unrelated vertical wire types", () => {
+    const code = String.raw`\begin{quantikz}[row sep={0.9cm,between origins}, column sep=0.7cm]
+\lstick{$\ket{0}$} &  &  &  &  & \targ{} \wire[d][1]{q} & \targ{} & \gate{S} & \targ{} & \gate{H} & \meter{} & \control{} \wireoverride{c} \wire[d][1]{c} \\
+\lstick{$\ket{T}$} &  &  &  & \targ{} & \control{} \wire[d][2]{q} &  &  &  &  &  & \gate{Z} \wire[d][2]{q} &  & \targ{} &  &  &  &  &  \\
+ & \gate{H} & \gate{S} & \gate{H} & \octrl{-1} &  & \ctrl{-2} &  & \ctrl{-2} &  &  &  & \targ{} & \ctrl{-1} & \gate{H} & \gate{S^\dagger} & \gate{H} &  & \setwiretype{n} \\
+ &  &  &  &  & \ocontrol{} &  &  &  &  &  & \ocontrol{} & \ctrl{-1} &  &  &  &  &  & \setwiretype{n}
+\end{quantikz}`;
+
+    const imported = importFromQuantikz(code);
+    const loaded = editorReducer(initialState, {
+      type: "loadQuantikz",
+      imported,
+      code,
+      preamble: ""
+    });
+    const exported = exportToQuantikz(loaded);
+
+    expect(exported).toContain("\\control{} \\wireoverride{c} \\wire[d][1]{c}");
+    expect(exported).toContain("\\gate{Z} \\wire[d][2]{q}");
+    expect(exported).not.toContain("\\control{} \\setwiretype{n} \\wire[d][1]{c}");
+    expect(exported).not.toContain("\\gate{Z} \\wire[d][2]{c}");
+  });
+
   it("imports xcolor-prefixed named colors for swaps and vertical wires", () => {
     const code = String.raw`\begin{quantikz}
 & \color{blue}\swap[style={draw=blue},wire style={draw=blue}]{1} \\

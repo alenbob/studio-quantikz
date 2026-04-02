@@ -941,7 +941,7 @@ def make_initial_terms(
 
 def is_named_single_qubit_gate(label: str) -> bool:
     normalized = canonical_gate_label(label)
-    return normalized in {"H", "S", "T", "Tdg", "X", "Y", "Z"} or parse_pauli_rotation_label(normalized) is not None
+    return normalized in {"H", "S", "Sdg", "T", "Tdg", "X", "Y", "Z"} or parse_pauli_rotation_label(normalized) is not None
 
 
 def parse_pauli_rotation_label(label: str) -> tuple[str, str] | None:
@@ -1846,6 +1846,11 @@ def apply_named_gate_to_basis_term(term: SymbolicTerm, row: int, label: str) -> 
             updated.amplitude = updated.amplitude.multiply(i_power=1)
             if row_weight is not None:
                 set_row_local_weight(updated, row, multiply_local_weight(row_weight, Amplitude(real=0, imag=1)))
+    elif normalized_label == "Sdg":
+        if bit == 1:
+            updated.amplitude = updated.amplitude.multiply(i_power=-1)
+            if row_weight is not None:
+                set_row_local_weight(updated, row, multiply_local_weight(row_weight, Amplitude(real=0, imag=-1)))
     elif normalized_label == "T":
         if bit == 1:
             updated.amplitude = updated.amplitude.times(Amplitude(real=1, imag=1, sqrt2_power=1))
@@ -2251,24 +2256,20 @@ def measurement_term_key(term: MeasurementRenderedTerm) -> tuple[tuple[tuple[int
 
 def render_scalar_weighted_expression(amplitude: Amplitude, scalar: str, expression: str) -> str:
     scalar_text = normalize_scalar_latex(scalar)
-    effective_amplitude = amplitude
-    if scalar_text.startswith("-"):
-        scalar_text = scalar_text[1:].strip()
-        effective_amplitude = effective_amplitude.multiply(sign=-1)
-
-    amplitude_text = effective_amplitude.to_latex()
-    if scalar_text == "1":
-        if amplitude_text == "1":
-            return expression
-        if amplitude_text == "-1":
-            return f"-{expression}"
-        return f"{amplitude_text} {expression}"
-
-    if amplitude_text == "1":
-        return f"{scalar_text} {expression}"
-    if amplitude_text == "-1":
-        return f"-{scalar_text} {expression}"
-    return f"{amplitude_text} {scalar_text} {expression}"
+    coefficient = multiply_scalar_factors(amplitude.to_latex(), scalar_text)
+    # Remove redundant '1' in coefficients like '1 i', '-1 i', '1/2', etc.
+    if coefficient == "1":
+        return expression
+    if coefficient == "-1":
+        return f"-{expression}"
+    # Remove '1 ' prefix
+    if coefficient.startswith("1 "):
+        coefficient = coefficient[2:]
+    if coefficient.startswith("-1 "):
+        coefficient = "-" + coefficient[3:]
+    # Remove '+1 ' and '-1 ' in sums (e.g., '+1 i', '-1 i')
+    coefficient = re.sub(r'([+-])1 ', r'\1', coefficient)
+    return f"{coefficient} {expression}"
 
 
 def wrap_tensor_factor(factor: str, *, wrap_sums: bool = False) -> str:
@@ -2439,24 +2440,64 @@ def outcome_label(outcomes: tuple[tuple[int, int], ...], row_labels: list[str], 
     return rf"\Pr({assignments})={probability}"
 
 
+def wrap_additive_expression(expression: str) -> str:
+    stripped = expression.strip()
+    if stripped.startswith(r"\left(") and stripped.endswith(r"\right)"):
+        return stripped
+    if " + " in stripped or " - " in stripped[1:]:
+        return rf"\Bigl({stripped}\Bigr)"
+    return stripped
+
+
+def render_normalized_branch_state(terms: list[SymbolicTerm], row_order: list[int], row_labels: list[str]) -> str:
+    branch_expr = render_branch_terms_latex(terms, row_order)
+    probability = render_terms_probability_latex(terms)
+    if probability == "1":
+        return branch_expr
+    return rf"\frac{{1}}{{\sqrt{{{probability}}}}} {wrap_additive_expression(branch_expr)}"
+
+
+def branch_terms_signature(terms: list[SymbolicTerm]) -> tuple[tuple[object, ...], ...]:
+    return tuple(
+        sorted(
+            (
+                tuple(sorted(term.basis_bits.items())),
+                tuple(sorted(term.payloads.items())),
+                term.scalar,
+                term.amplitude.real,
+                term.amplitude.imag,
+                term.amplitude.sqrt2_power,
+            )
+            for term in terms
+        )
+    )
+
+
 def render_branches_state_latex(
     branches: list[OutcomeBranch],
     row_order: list[int],
     row_labels: list[str],
+    *,
+    collapse_identical_branches: bool = True,
 ) -> str:
     if len(branches) == 1 and not branches[0].outcomes:
         return render_state_latex(branches[0].terms, row_order, row_labels)
 
+    # If classically controlled corrections make all branch states equal, collapse to one expression.
+    signatures = {branch_terms_signature(branch.terms) for branch in branches}
+    if collapse_identical_branches and len(signatures) == 1 and branches:
+        return render_state_latex(branches[0].terms, row_order, row_labels)
+
     pieces: list[str] = []
     for branch in sorted(branches, key=lambda current: current.outcomes):
-        branch_expr = render_branch_terms_latex(branch.terms, row_order)
+        branch_expr = render_normalized_branch_state(branch.terms, row_order, row_labels)
         if not branch.outcomes:
             pieces.append(branch_expr)
             continue
         label = outcome_label(branch.outcomes, row_labels, render_terms_probability_latex(branch.terms))
         pieces.append(rf"{branch_expr}, & {label}")
 
-    return r"\left\{\begin{array}{ll}" + r" \\ ".join(pieces) + r"\end{array}\right."
+    return r"\begin{cases}" + r" \\ ".join(pieces) + r"\end{cases}"
 
 
 def merge_outcome_branches(branches: list[OutcomeBranch]) -> list[OutcomeBranch]:
@@ -2992,19 +3033,31 @@ def render_initial_state_latex(
 def render_state_block(index: int, rendered_state: str) -> str:
     return "\n".join(
         [
-            r"\begin{equation*}",
-            r"\begin{aligned}",
-            rf"\ket{{\Psi_{{{index}}}}} &= {rendered_state}",
-            r"\end{aligned}",
-            r"\end{equation*}",
+            r"\[",
+            rf"\ket{{\Psi_{{{index}}}}} = {rendered_state}",
+            r"\]",
         ]
     )
 
 
 def slice_heading_text(slice_number: int, step_number: int | None) -> str:
     if step_number is None:
-        return rf"\textbf{{Slice {slice_number}: }}"
-    return rf"\textbf{{Slice {slice_number}, step {step_number}: }}"
+        return rf"\paragraph{{Slice {slice_number}: }} "
+    return rf"\paragraph{{Slice {slice_number}, step {step_number}: }} "
+
+
+def validate_exact_measurement_probabilities_sum_to_one(projected: dict[tuple[tuple[int, int], ...], list[SymbolicTerm]]) -> None:
+    if not projected:
+        return
+    if any(term.scalar != "1" for terms in projected.values() for term in terms):
+        return
+    total_probability = Fraction(0, 1)
+    for terms in projected.values():
+        total_probability += sum((term.amplitude.probability() for term in terms), start=Fraction(0, 1))
+    if total_probability != Fraction(1, 1):
+        raise ValueError(
+            rf"Measurement probabilities do not sum to 1 exactly: {render_fraction_latex(total_probability)}"
+        )
 
 
 def slice_rows(slice_info: LogicalSlice) -> set[int]:
@@ -3072,6 +3125,7 @@ def build_discursive_block(
                     projected = project_measurement_terms(measured_terms, measured_rows)
                     if not projected:
                         raise ValueError(f"Measurement on rows {measured_rows} produced no valid outcome branches")
+                    validate_exact_measurement_probabilities_sum_to_one(projected)
                     for outcomes, projected_terms in projected.items():
                         next_branches.append(OutcomeBranch(outcomes=branch.outcomes + outcomes, terms=projected_terms))
                 branches = merge_outcome_branches(next_branches)
@@ -3094,9 +3148,14 @@ def build_discursive_block(
                     for term in branch.terms
                 )
             ]
-            rendered_state = render_branches_state_latex(branches, active_rows, row_labels)
+            rendered_state = render_branches_state_latex(
+                branches,
+                active_rows,
+                row_labels,
+                collapse_identical_branches=slice_info.kind != "measure",
+            )
             step_number = run_offset if run_length > 1 else None
-            blocks.append(rf"\noindent{slice_heading_text(slice_number, step_number)} {slice_info.description}\par")
+            blocks.append(f"{slice_heading_text(slice_number, step_number)}{slice_info.description}")
             blocks.append(render_state_block(state_index, rendered_state))
             state_index += 1
     return "\n\n".join(blocks) + "\n"

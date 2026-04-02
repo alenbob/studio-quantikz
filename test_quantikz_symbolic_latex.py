@@ -104,6 +104,14 @@ S_CIRCUIT = textwrap.dedent(
     """
 ).strip()
 
+SDG_CIRCUIT = textwrap.dedent(
+    r"""
+    \begin{quantikz}
+    \lstick{$\ket{1}$} & \gate{S^\dagger}
+    \end{quantikz}
+    """
+).strip()
+
 Y_CIRCUIT = textwrap.dedent(
     r"""
     \begin{quantikz}
@@ -445,13 +453,13 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
             )
 
         output = result.stdout
-        self.assertIn(r"\begin{equation*}", output)
-        self.assertIn(r"\ket{\Psi_{0}} &= \ket{+}_{c_0} \otimes \ket{+}_{c_1} \otimes \ket{\psi}", output)
-        self.assertIn(r"\ket{\Psi_{1}} &= \frac{1}{2} (\ket{000} + \ket{010} + \ket{100} + \ket{111}) \otimes \ket{\psi}", output)
+        self.assertIn(r"\\[", output)
+        self.assertIn(r"\ket{\Psi_{0}} = \ket{+}_{c_0} \otimes \ket{+}_{c_1} \otimes \ket{\psi}", output)
+        self.assertIn(r"\ket{\Psi_{1}} = \frac{1}{2} (\ket{000} + \ket{010} + \ket{100} + \ket{111}) \otimes \ket{\psi}", output)
         self.assertIn(r"(\ket{000} + \ket{010} + \ket{100}) \otimes \ket{\psi} + \ket{111} \otimes A\ket{\psi}", output)
         self.assertIn(r"(\ket{00} + \ket{01} + \ket{10}) \otimes \ket{\psi} + \ket{11} \otimes A\ket{\psi}", output)
-        self.assertIn(r"\textbf{Slice 1: } compute AND into ancilla $a_{2}$", output)
-        self.assertIn(r"\textbf{Slice 3: } uncompute AND and remove ancilla $a_{2}$", output)
+        self.assertIn(r"\paragraph{Slice 1: } compute AND into ancilla $a_{2}$", output)
+        self.assertIn(r"\paragraph{Slice 3: } uncompute AND and remove ancilla $a_{2}$", output)
 
     def test_handles_open_control_and_intermediate_controlled_x(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -466,11 +474,11 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
             )
 
         output = result.stdout
-        self.assertIn(r"\ket{\Psi_{1}} &= \frac{1}{2} (\ket{000} + \ket{010} + \ket{101} + \ket{110}) \otimes \ket{\psi}", output)
+        self.assertIn(r"\ket{\Psi_{1}} = \frac{1}{2} (\ket{000} + \ket{010} + \ket{101} + \ket{110}) \otimes \ket{\psi}", output)
         self.assertIn(r"\ket{101} \otimes A\ket{\psi}", output)
-        self.assertIn(r"\textbf{Slice 3: } controlled $X$ on $a_{2}$", output)
+        self.assertIn(r"\paragraph{Slice 3: } controlled $X$ on $a_{2}$", output)
         self.assertIn(r"\ket{111} \otimes B\ket{\psi}", output)
-        self.assertIn(r"\ket{\Psi_{5}} &= \frac{1}{2} ((\ket{00} + \ket{01}) \otimes \ket{\psi} + \ket{10} \otimes A\ket{\psi} + \ket{11} \otimes B\ket{\psi})", output)
+        self.assertIn(r"\ket{\Psi_{5}} = \frac{1}{2} ((\ket{00} + \ket{01}) \otimes \ket{\psi} + \ket{10} \otimes A\ket{\psi} + \ket{11} \otimes B\ket{\psi})", output)
 
     def test_returns_initial_state_for_label_only_circuit(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -485,9 +493,9 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
             )
 
         output = result.stdout
-        self.assertIn(r"\begin{equation*}", output)
-        self.assertIn(r"\ket{\Psi_{0}} &= \ket{a} \otimes \ket{b} \otimes \ket{c}", output)
-        self.assertNotIn(r"\textbf{Slice 1: }", output)
+        self.assertIn(r"\\[", output)
+        self.assertIn(r"\ket{\Psi_{0}} = \ket{a} \otimes \ket{b} \otimes \ket{c}", output)
+        self.assertNotIn(r"\paragraph{Slice 1: }", output)
 
     def test_supports_swap_slice(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -502,12 +510,12 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
             )
 
         output = result.stdout
-        self.assertIn(r"\ket{\Psi_{0}} &= \ket{+}_{c_0} \otimes \ket{+}_{c_1}", output)
+        self.assertIn(r"\ket{\Psi_{0}} = \ket{+}_{c_0} \otimes \ket{+}_{c_1}", output)
         self.assertIn(
-            r"\ket{\Psi_{1}} &= \left(\frac{1}{\sqrt{2}} \ket{0} + \frac{1}{\sqrt{2}} \ket{1}\right)_{c_0} \otimes \left(\frac{1}{\sqrt{2}} \ket{0} + \frac{1}{\sqrt{2}} \ket{1}\right)_{c_1}",
+            r"\ket{\Psi_{1}} = \left(\frac{1}{\sqrt{2}} \ket{0} + \frac{1}{\sqrt{2}} \ket{1}\right)_{c_0} \otimes \left(\frac{1}{\sqrt{2}} \ket{0} + \frac{1}{\sqrt{2}} \ket{1}\right)_{c_1}",
             output,
         )
-        self.assertIn(r"\textbf{Slice 1: } swap $c_0$ and $c_1$", output)
+        self.assertIn(r"\paragraph{Slice 1: } swap $c_0$ and $c_1$", output)
 
     def test_supports_nested_blank_ancilla_rows(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -522,11 +530,11 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
             )
 
         output = result.stdout
-        self.assertIn(r"\textbf{Slice 2: } compute AND into ancilla $a_{4}$", output)
-        self.assertIn(r"\textbf{Slice 6: } uncompute AND and remove ancilla $a_{4}$", output)
-        self.assertIn(r"\textbf{Slice 7: } uncompute AND and remove ancilla $a_{2}$", output)
-        self.assertIn(r"\textbf{Slice 8: } compute AND into ancilla $a_{4}$", output)
-        self.assertIn(r"\textbf{Slice 10: } uncompute AND and remove ancilla $a_{4}$", output)
+        self.assertIn(r"\paragraph{Slice 2: } compute AND into ancilla $a_{4}$", output)
+        self.assertIn(r"\paragraph{Slice 6: } uncompute AND and remove ancilla $a_{4}$", output)
+        self.assertIn(r"\paragraph{Slice 7: } uncompute AND and remove ancilla $a_{2}$", output)
+        self.assertIn(r"\paragraph{Slice 8: } compute AND into ancilla $a_{4}$", output)
+        self.assertIn(r"\paragraph{Slice 10: } uncompute AND and remove ancilla $a_{4}$", output)
         self.assertIn(r"\ket{11101} \otimes \ket{\psi_0} \otimes A\ket{\psi_1}", output)
         self.assertIn(r"\ket{101} \otimes \ket{\psi_0} \otimes \ket{\psi_1} \otimes A\ket{\psi_2}", output)
 
@@ -543,11 +551,11 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
             )
 
         output = result.stdout
-        self.assertIn(r"\ket{\Psi_{7}} &= \left\{\begin{array}{ll}", output)
+        self.assertIn(r"\ket{\Psi_{7}} = \begin{cases}", output)
         self.assertIn(r"\Pr(0=0)=\frac{3}{4}", output)
         self.assertIn(r"\Pr(0=1)=\frac{1}{4}", output)
         self.assertNotIn(r"\underbrace{", output)
-        self.assertIn(r"\textbf{Slice 7: } measure $0$", output)
+        self.assertIn(r"\paragraph{Slice 7: } measure $0$", output)
 
     def test_applies_hadamard_to_basis_states_and_recombines_duplicate_terms(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -562,19 +570,20 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
             )
 
         output = result.stdout
-        self.assertIn(r"\ket{\Psi_{1}} &= \left(\frac{1}{\sqrt{2}} \ket{0} + \frac{1}{\sqrt{2}} \ket{1}\right)", output)
-        self.assertIn(r"\ket{\Psi_{2}} &= \ket{0}", output)
+        self.assertIn(r"\ket{\Psi_{1}} = \left(\frac{1}{\sqrt{2}} \ket{0} + \frac{1}{\sqrt{2}} \ket{1}\right)", output)
+        self.assertIn(r"\ket{\Psi_{2}} = \ket{0}", output)
 
     def test_applies_named_pauli_and_phase_gates_to_basis_states(self) -> None:
         circuits = [
-            ("xz.tex", XZ_CIRCUIT, [r"\ket{\Psi_{1}} &= \ket{1}", r"\ket{\Psi_{2}} &= -\ket{1}"]),
-            ("s.tex", S_CIRCUIT, [r"\ket{\Psi_{1}} &= i \ket{1}"]),
-            ("t.tex", T_CIRCUIT, [r"\ket{\Psi_{1}} &= \frac{1 + i}{\sqrt{2}} \ket{1}", r"\Pr(q_{0}=1)=1"]),
-            ("y.tex", Y_CIRCUIT, [r"\ket{\Psi_{1}} &= i \ket{1}"]),
+            ("xz.tex", XZ_CIRCUIT, [r"\ket{\Psi_{1}} = \ket{1}", r"\ket{\Psi_{2}} = -\ket{1}"]),
+            ("s.tex", S_CIRCUIT, [r"\ket{\Psi_{1}} = i \ket{1}"]),
+            ("sdg.tex", SDG_CIRCUIT, [r"\ket{\Psi_{1}} = -i \ket{1}"]),
+            ("t.tex", T_CIRCUIT, [r"\ket{\Psi_{1}} = \frac{1 + i}{\sqrt{2}} \ket{1}", r"\Pr(q_{0}=1)=1"]),
+            ("y.tex", Y_CIRCUIT, [r"\ket{\Psi_{1}} = i \ket{1}"]),
             (
                 "z_plus.tex",
                 Z_PLUS_CIRCUIT,
-                [r"\ket{\Psi_{1}} &= \left(\frac{1}{\sqrt{2}} \ket{0} - \frac{1}{\sqrt{2}} \ket{1}\right)"],
+                [r"\ket{\Psi_{1}} = \left(\frac{1}{\sqrt{2}} \ket{0} - \frac{1}{\sqrt{2}} \ket{1}\right)"],
             ),
         ]
 
@@ -601,8 +610,8 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
                 "pauli_rotation.tex",
                 PAULI_ROTATION_CIRCUIT,
                 [
-                    r"\ket{\Psi_{1}} &= \left(\cos\left(\frac{\theta}{2}\right) \ket{0} - i \sin\left(\frac{\theta}{2}\right) \ket{1}\right) \otimes \ket{1}",
-                    r"\ket{\Psi_{2}} &= \left(\cos\left(\frac{\theta}{2}\right) \ket{0} - i \sin\left(\frac{\theta}{2}\right) \ket{1}\right) \otimes \left(-\sin\left(\frac{\arccos(t)}{2}\right) \ket{0} + \cos\left(\frac{\arccos(t)}{2}\right) \ket{1}\right)",
+                    r"\ket{\Psi_{1}} = \left(\cos\left(\frac{\theta}{2}\right) \ket{0} - i \sin\left(\frac{\theta}{2}\right) \ket{1}\right) \otimes \ket{1}",
+                    r"\ket{\Psi_{2}} = \left(\cos\left(\frac{\theta}{2}\right) \ket{0} - i \sin\left(\frac{\theta}{2}\right) \ket{1}\right) \otimes \left(-\sin\left(\frac{\arccos(t)}{2}\right) \ket{0} + \cos\left(\frac{\arccos(t)}{2}\right) \ket{1}\right)",
                 ],
             ),
             (
@@ -642,13 +651,13 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
             )
 
         output = result.stdout
-        self.assertIn(r"\ket{\Psi_{1}} &= \ket{0} \otimes \left(\sqrt{a} \ket{0} + \sqrt{1 - a} \ket{1}\right)", output)
+        self.assertIn(r"\ket{\Psi_{1}} = \ket{0} \otimes \left(\sqrt{a} \ket{0} + \sqrt{1 - a} \ket{1}\right)", output)
         self.assertIn(
-            r"\ket{\Psi_{2}} &= \sqrt{a} \ket{00} + \sqrt{(1 - a) b} \ket{01} + \sqrt{(1 - a) (1 - b)} \ket{11}",
+            r"\ket{\Psi_{2}} = \sqrt{a} \ket{00} + \sqrt{(1 - a) b} \ket{01} + \sqrt{(1 - a) (1 - b)} \ket{11}",
             output,
         )
         self.assertIn(
-            r"\ket{\Psi_{3}} &= \sqrt{a} \ket{00} + \sqrt{(1 - a) b} \ket{01} + \sqrt{(1 - a) (1 - b)} \ket{10}",
+            r"\ket{\Psi_{3}} = \sqrt{a} \ket{00} + \sqrt{(1 - a) b} \ket{01} + \sqrt{(1 - a) (1 - b)} \ket{10}",
             output,
         )
 
@@ -665,13 +674,13 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
             )
 
         output = result.stdout
-        self.assertIn(r"\ket{\Psi_{0}} &= \ket{0}_{c_0} \otimes \ket{0}_{c_1}", output)
+        self.assertIn(r"\ket{\Psi_{0}} = \ket{0}_{c_0} \otimes \ket{0}_{c_1}", output)
         self.assertIn(
-            r"\ket{\Psi_{1}} &= \ket{0}_{c_0} \otimes \left(\sqrt{a} \ket{0} + \sqrt{1 - a} \ket{1}\right)_{c_1}",
+            r"\ket{\Psi_{1}} = \ket{0}_{c_0} \otimes \left(\sqrt{a} \ket{0} + \sqrt{1 - a} \ket{1}\right)_{c_1}",
             output,
         )
-        self.assertIn(r"\textbf{Slice 3: } controlled $X$ on $c_1$", output)
-        self.assertNotIn(r"\textbf{Slice 3: } controlled $X$ on $a_{1}$", output)
+        self.assertIn(r"\paragraph{Slice 3: } controlled $X$ on $c_1$", output)
+        self.assertNotIn(r"\paragraph{Slice 3: } controlled $X$ on $a_{1}$", output)
 
     def test_simplifies_fractional_rotation_coefficients_with_symbolic_parser(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -687,11 +696,11 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
 
         output = result.stdout
         self.assertIn(
-            r"\ket{\Psi_{1}} &= \ket{0}_{c_0} \otimes \left(\sqrt{\frac{tN}{\lambda}} \ket{0} + \sqrt{1 - \frac{tN}{\lambda}} \ket{1}\right)_{c_1}",
+            r"\ket{\Psi_{1}} = \ket{0}_{c_0} \otimes \left(\sqrt{\frac{tN}{\lambda}} \ket{0} + \sqrt{1 - \frac{tN}{\lambda}} \ket{1}\right)_{c_1}",
             output,
         )
         self.assertIn(
-            r"\ket{\Psi_{2}} &= \sqrt{\frac{tN}{\lambda}} \ket{00} + \sqrt{\frac{1}{5} (1 - \frac{tN}{\lambda})} \ket{01} + \sqrt{\frac{4}{5} (1 - \frac{tN}{\lambda})} \ket{11}",
+            r"\ket{\Psi_{2}} = \sqrt{\frac{tN}{\lambda}} \ket{00} + \sqrt{\frac{1}{5} (1 - \frac{tN}{\lambda})} \ket{01} + \sqrt{\frac{4}{5} (1 - \frac{tN}{\lambda})} \ket{11}",
             output,
         )
 
@@ -722,7 +731,7 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
             )
 
         output = result.stdout
-        self.assertIn(r"\textbf{Slice 1: } measure $c_0$", output)
+        self.assertIn(r"\paragraph{Slice 1: } measure $c_0$", output)
         self.assertIn(r"\Pr(c_0=1)=1", output)
 
     def test_expands_counted_uniform_into_a_normalized_symbolic_sum(self) -> None:
@@ -738,7 +747,7 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
             )
 
         output = result.stdout
-        self.assertIn(r"\ket{\Psi_{1}} &= \frac{1}{\sqrt{L}} \sum_{l=0}^{L-1} \ket{l}", output)
+        self.assertIn(r"\ket{\Psi_{1}} = \frac{1}{\sqrt{L}} \sum_{l=0}^{L-1} \ket{l}", output)
 
     def test_wraps_counted_uniform_sums_when_used_as_tensor_factors(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -754,7 +763,7 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
 
         output = result.stdout
         self.assertIn(
-            r"\ket{\Psi_{1}} &= \left(\frac{1}{\sqrt{L}} \sum_{l=0}^{L-1} \ket{l}\right) \otimes \ket{0}",
+            r"\ket{\Psi_{1}} = \left(\frac{1}{\sqrt{L}} \sum_{l=0}^{L-1} \ket{l}\right) \otimes \ket{0}",
             output,
         )
 
@@ -771,9 +780,9 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
             )
 
         output = result.stdout
-        self.assertIn(r"\ket{\Psi_{1}} &= \ket{a}_{a} \otimes \ket{0}_{b}", output)
-        self.assertIn(r"\textbf{Slice 2: } controlled $X$ on $b$", output)
-        self.assertIn(r"\ket{\Psi_{2}} &= \ket{a}_{a} \otimes \ket{a}_{b}", output)
+        self.assertIn(r"\ket{\Psi_{1}} = \ket{a}_{a} \otimes \ket{0}_{b}", output)
+        self.assertIn(r"\paragraph{Slice 2: } controlled $X$ on $b$", output)
+        self.assertIn(r"\ket{\Psi_{2}} = \ket{a}_{a} \otimes \ket{a}_{b}", output)
 
     def test_propagates_symbolic_uniform_labels_through_mixed_multi_controlled_x(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -788,9 +797,9 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
             )
 
         output = result.stdout
-        self.assertIn(r"\ket{\Psi_{1}} &= \ket{1}_{r} \otimes \ket{p}_{p} \otimes \ket{0}_{q}", output)
-        self.assertIn(r"\textbf{Slice 2: } controlled $X$ on $q$", output)
-        self.assertIn(r"\ket{\Psi_{2}} &= \ket{1}_{r} \otimes \ket{p}_{p} \otimes \ket{p}_{q}", output)
+        self.assertIn(r"\ket{\Psi_{1}} = \ket{1}_{r} \otimes \ket{p}_{p} \otimes \ket{0}_{q}", output)
+        self.assertIn(r"\paragraph{Slice 2: } controlled $X$ on $q$", output)
+        self.assertIn(r"\ket{\Psi_{2}} = \ket{1}_{r} \otimes \ket{p}_{p} \otimes \ket{p}_{q}", output)
 
     def test_derives_measurement_probabilities_after_rotations(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -844,7 +853,7 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
 
         output = result.stdout
         self.assertIn(
-            r"\ket{\Psi_{1}} &= \left\{\begin{array}{ll}\frac{1}{\sqrt{2}} \ket{\psi}, & \Pr(q_{0}=0)=\frac{1}{2} \\ \frac{1}{\sqrt{2}} \ket{\psi}, & \Pr(q_{0}=1)=\frac{1}{2}\end{array}\right.",
+            r"\ket{\Psi_{1}} = \begin{cases}\frac{1}{\sqrt{2}} \ket{\psi}, & \Pr(q_{0}=0)=\frac{1}{2} \\ \frac{1}{\sqrt{2}} \ket{\psi}, & \Pr(q_{0}=1)=\frac{1}{2}\end{cases}",
             output,
         )
         self.assertNotIn(r"\ket{0} \otimes \ket{\psi}", output)
@@ -863,7 +872,7 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
             )
 
         output = result.stdout
-        self.assertIn(r"\textbf{Slice 1: } measure $q_{0}$, $q_{1}$", output)
+        self.assertIn(r"\paragraph{Slice 1: } measure $q_{0}$, $q_{1}$", output)
         self.assertIn(r"\Pr(q_{0}=0, q_{1}=0)=\frac{1}{2}", output)
         self.assertIn(r"\Pr(q_{0}=1, q_{1}=0)=\frac{1}{2}", output)
 
@@ -880,9 +889,9 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
             )
 
         output = result.stdout
-        self.assertIn(r"\textbf{Slice 1: } measure $q_{0}$", output)
-        self.assertIn(r"\textbf{Slice 2: } apply $H$", output)
-        self.assertIn(r"\ket{\Psi_{2}} &= \left\{\begin{array}{ll}", output)
+        self.assertIn(r"\paragraph{Slice 1: } measure $q_{0}$", output)
+        self.assertIn(r"\paragraph{Slice 2: } apply $H$", output)
+        self.assertIn(r"\ket{\Psi_{2}} = \begin{cases}", output)
         self.assertIn(r"\Pr(q_{0}=0)=\frac{1}{2}", output)
         self.assertIn(r"\Pr(q_{0}=1)=\frac{1}{2}", output)
 
@@ -899,11 +908,11 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
             )
 
         output = result.stdout
-        self.assertIn(r"\textbf{Slice 1: } measure $c$", output)
-        self.assertIn(r"\textbf{Slice 2: } controlled $A$", output)
+        self.assertIn(r"\paragraph{Slice 1: } measure $c$", output)
+        self.assertIn(r"\paragraph{Slice 2: } controlled $A$", output)
         self.assertIn(r"\Pr(c=0)=\frac{1}{2}", output)
         self.assertIn(r"\Pr(c=1)=\frac{1}{2}", output)
-        self.assertIn(r"\ket{\Psi_{2}} &= \left\{\begin{array}{ll}", output)
+        self.assertIn(r"\ket{\Psi_{2}} = \begin{cases}", output)
         self.assertIn(r"\frac{1}{\sqrt{2}} \ket{0}, & \Pr(c=0)=\frac{1}{2}", output)
         self.assertIn(r"\frac{1}{\sqrt{2}} A\ket{0}, & \Pr(c=1)=\frac{1}{2}", output)
 
@@ -920,10 +929,10 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
             )
 
         output = result.stdout
-        self.assertIn(r"\ket{\Psi_{0}} &= \ket{00} \otimes \ket{1}", output)
-        self.assertIn(r"\textbf{Slice 1: } controlled $YY$", output)
-        self.assertIn(r"\ket{\Psi_{1}} &= i \ket{1} \otimes i \ket{1} \otimes \ket{1}", output)
-        self.assertIn(r"\ket{\Psi_{2}} &= i \ket{1} \otimes i \ket{0} \otimes \ket{1}", output)
+        self.assertIn(r"\ket{\Psi_{0}} = \ket{00} \otimes \ket{1}", output)
+        self.assertIn(r"\paragraph{Slice 1: } controlled $YY$", output)
+        self.assertIn(r"\ket{\Psi_{1}} = i \ket{1} \otimes i \ket{1} \otimes \ket{1}", output)
+        self.assertIn(r"\ket{\Psi_{2}} = i \ket{1} \otimes i \ket{0} \otimes \ket{1}", output)
 
     def test_supports_i_basis_state(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -938,7 +947,7 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
             )
 
         output = result.stdout
-        self.assertIn(r"\ket{\Psi_{1}} &= \left(\frac{1}{\sqrt{2}} \ket{0} - \frac{i}{\sqrt{2}} \ket{1}\right)", output)
+        self.assertIn(r"\ket{\Psi_{1}} = \left(\frac{1}{\sqrt{2}} \ket{0} - \frac{i}{\sqrt{2}} \ket{1}\right)", output)
 
     def test_supports_minus_i_basis_state(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -953,7 +962,7 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
             )
 
         output = result.stdout
-        self.assertIn(r"\ket{\Psi_{1}} &= \left(\frac{1}{\sqrt{2}} \ket{0} + \frac{i}{\sqrt{2}} \ket{1}\right)", output)
+        self.assertIn(r"\ket{\Psi_{1}} = \left(\frac{1}{\sqrt{2}} \ket{0} + \frac{i}{\sqrt{2}} \ket{1}\right)", output)
 
     def test_supports_t_magic_state(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -968,7 +977,7 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
             )
 
         output = result.stdout
-        self.assertIn(r"\ket{\Psi_{0}} &= \ket{T}", output)
+        self.assertIn(r"\ket{\Psi_{0}} = \ket{T}", output)
         self.assertIn(r"\frac{1}{\sqrt{2}}, & \Pr(q_{0}=0)=\frac{1}{2}", output)
         self.assertIn(r"\frac{1 + i}{2}, & \Pr(q_{0}=1)=\frac{1}{2}", output)
         self.assertIn(r"\Pr(q_{0}=0)=\frac{1}{2}", output)
@@ -987,9 +996,9 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
             )
 
         output = result.stdout
-        self.assertIn(r"\textbf{Slice 1: } apply $H$", output)
+        self.assertIn(r"\paragraph{Slice 1: } apply $H$", output)
         self.assertIn(
-            r"\ket{\Psi_{1}} &= \left(\frac{1}{\sqrt{2}} \ket{0} + \frac{1}{\sqrt{2}} \ket{1}\right) \otimes \left(\frac{1}{\sqrt{2}} \ket{0} + \frac{1}{\sqrt{2}} \ket{1}\right)",
+            r"\ket{\Psi_{1}} = \left(\frac{1}{\sqrt{2}} \ket{0} + \frac{1}{\sqrt{2}} \ket{1}\right) \otimes \left(\frac{1}{\sqrt{2}} \ket{0} + \frac{1}{\sqrt{2}} \ket{1}\right)",
             output,
         )
 
@@ -1006,12 +1015,12 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
             )
 
         output = result.stdout
-        self.assertIn(r"\textbf{Slice 1, step 1: } apply $H$", output)
-        self.assertIn(r"\textbf{Slice 1, step 2: } apply $X$", output)
-        self.assertIn(r"\textbf{Slice 2: } apply $Z$", output)
-        self.assertIn(r"\ket{\Psi_{1}} &= \left(\frac{1}{\sqrt{2}} \ket{0} + \frac{1}{\sqrt{2}} \ket{1}\right) \otimes \ket{1}", output)
-        self.assertIn(r"\ket{\Psi_{2}} &= \left(\frac{1}{\sqrt{2}} \ket{0} + \frac{1}{\sqrt{2}} \ket{1}\right) \otimes \ket{0}", output)
-        self.assertIn(r"\ket{\Psi_{3}} &= \left(\frac{1}{\sqrt{2}} \ket{0} - \frac{1}{\sqrt{2}} \ket{1}\right) \otimes \ket{0}", output)
+        self.assertIn(r"\paragraph{Slice 1, step 1: } apply $H$", output)
+        self.assertIn(r"\paragraph{Slice 1, step 2: } apply $X$", output)
+        self.assertIn(r"\paragraph{Slice 2: } apply $Z$", output)
+        self.assertIn(r"\ket{\Psi_{1}} = \left(\frac{1}{\sqrt{2}} \ket{0} + \frac{1}{\sqrt{2}} \ket{1}\right) \otimes \ket{1}", output)
+        self.assertIn(r"\ket{\Psi_{2}} = \left(\frac{1}{\sqrt{2}} \ket{0} + \frac{1}{\sqrt{2}} \ket{1}\right) \otimes \ket{0}", output)
+        self.assertIn(r"\ket{\Psi_{3}} = \left(\frac{1}{\sqrt{2}} \ket{0} - \frac{1}{\sqrt{2}} \ket{1}\right) \otimes \ket{0}", output)
 
     def test_requires_the_full_mixed_control_bitstring_for_controlled_gates(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1026,13 +1035,13 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
             )
 
         output = result.stdout
-        self.assertIn(r"\textbf{Slice 1: } controlled $X$", output)
+        self.assertIn(r"\paragraph{Slice 1: } controlled $X$", output)
         self.assertIn(
-            r"\ket{\Psi_{1}} &= \ket{1}_{c_0} \otimes \ket{1}_{c_1} \otimes \ket{0}_{t}",
+            r"\ket{\Psi_{1}} = \ket{1}_{c_0} \otimes \ket{1}_{c_1} \otimes \ket{0}_{t}",
             output,
         )
         self.assertNotIn(
-            r"\ket{\Psi_{1}} &= \ket{1}_{c_0} \otimes \ket{1}_{c_1} \otimes \ket{1}_{t}",
+            r"\ket{\Psi_{1}} = \ket{1}_{c_0} \otimes \ket{1}_{c_1} \otimes \ket{1}_{t}",
             output,
         )
 
@@ -1049,9 +1058,9 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
             )
 
         output = result.stdout
-        self.assertIn(r"\textbf{Slice 2: } controlled $A$", output)
+        self.assertIn(r"\paragraph{Slice 2: } controlled $A$", output)
         self.assertIn(
-            r"\ket{\Psi_{3}} &= \frac{1}{2} ((\ket{00} + \ket{01} + \ket{10}) \otimes \ket{\psi}_{t} + \ket{11} \otimes A\ket{\psi}_{t})",
+            r"\ket{\Psi_{3}} = \frac{1}{2} ((\ket{00} + \ket{01} + \ket{10}) \otimes \ket{\psi}_{t} + \ket{11} \otimes A\ket{\psi}_{t})",
             output,
         )
 
@@ -1068,13 +1077,13 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
             )
 
         output = result.stdout
-        self.assertIn(r"\textbf{Slice 1: } controlled $X$ on $t$", output)
+        self.assertIn(r"\paragraph{Slice 1: } controlled $X$ on $t$", output)
         self.assertIn(
-            r"\ket{\Psi_{1}} &= \ket{1}_{c_0} \otimes \ket{1}_{c_1} \otimes \ket{0}_{t}",
+            r"\ket{\Psi_{1}} = \ket{1}_{c_0} \otimes \ket{1}_{c_1} \otimes \ket{0}_{t}",
             output,
         )
         self.assertNotIn(
-            r"\ket{\Psi_{1}} &= \ket{1}_{c_0} \otimes \ket{1}_{c_1} \otimes \ket{1}_{t}",
+            r"\ket{\Psi_{1}} = \ket{1}_{c_0} \otimes \ket{1}_{c_1} \otimes \ket{1}_{t}",
             output,
         )
 
@@ -1091,9 +1100,9 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
             )
 
         output = result.stdout
-        self.assertIn(r"\ket{\Psi_{0}} &= \ket{0} \otimes \ket{0} \otimes \ket{0}", output)
-        self.assertIn(r"\textbf{Slice 1: } controlled $X$ on $a_{2}$", output)
-        self.assertIn(r"\ket{\Psi_{1}} &= \ket{0} \otimes \ket{0} \otimes \ket{0}", output)
+        self.assertIn(r"\ket{\Psi_{0}} = \ket{0} \otimes \ket{0} \otimes \ket{0}", output)
+        self.assertIn(r"\paragraph{Slice 1: } controlled $X$ on $a_{2}$", output)
+        self.assertIn(r"\ket{\Psi_{1}} = \ket{0} \otimes \ket{0} \otimes \ket{0}", output)
 
     def test_handles_unlabeled_mixed_c0_c1_multi_controlled_gates_generally(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1108,8 +1117,8 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
             )
 
         output = result.stdout
-        self.assertIn(r"\textbf{Slice 1: } controlled $A$", output)
-        self.assertIn(r"\ket{\Psi_{1}} &= \ket{0} \otimes \ket{0} \otimes \ket{0}", output)
+        self.assertIn(r"\paragraph{Slice 1: } controlled $A$", output)
+        self.assertIn(r"\ket{\Psi_{1}} = \ket{0} \otimes \ket{0} \otimes \ket{0}", output)
         self.assertNotIn(r"A\ket{0}", output)
 
     def test_handles_unlabeled_all_open_multi_controlled_x_slices_generally(self) -> None:
@@ -1125,8 +1134,8 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
             )
 
         output = result.stdout
-        self.assertIn(r"\textbf{Slice 1: } controlled $X$ on $a_{2}$", output)
-        self.assertIn(r"\ket{\Psi_{1}} &= \ket{0} \otimes \ket{0} \otimes \ket{1}", output)
+        self.assertIn(r"\paragraph{Slice 1: } controlled $X$ on $a_{2}$", output)
+        self.assertIn(r"\ket{\Psi_{1}} = \ket{0} \otimes \ket{0} \otimes \ket{1}", output)
 
     def test_applies_varied_order_connected_targets_gates_swaps_and_measurements_generally(self) -> None:
         cases = [
@@ -1134,8 +1143,8 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
                 "varied_target_top.tex",
                 VARIED_ORDER_TARGET_TOP_OPEN_CONTROLS_CIRCUIT,
                 [
-                    r"\textbf{Slice 1: } controlled $X$ on $a_{0}$",
-                    r"\ket{\Psi_{1}} &= \ket{1} \otimes \ket{0} \otimes \ket{0}",
+                    r"\paragraph{Slice 1: } controlled $X$ on $a_{0}$",
+                    r"\ket{\Psi_{1}} = \ket{1} \otimes \ket{0} \otimes \ket{0}",
                 ],
                 [],
             ),
@@ -1143,8 +1152,8 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
                 "varied_gate_middle.tex",
                 VARIED_ORDER_GATE_MIDDLE_OPEN_CONTROLS_CIRCUIT,
                 [
-                    r"\textbf{Slice 1: } controlled $A$",
-                    r"\ket{\Psi_{1}} &= \ket{0} \otimes A\ket{0} \otimes \ket{0}",
+                    r"\paragraph{Slice 1: } controlled $A$",
+                    r"\ket{\Psi_{1}} = \ket{0} \otimes A\ket{0} \otimes \ket{0}",
                 ],
                 [],
             ),
@@ -1152,8 +1161,8 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
                 "varied_swap_below.tex",
                 VARIED_ORDER_SWAP_WITH_CONTROL_BELOW_CIRCUIT,
                 [
-                    r"\textbf{Slice 1: } controlled swap between $q_{0}$ and $q_{1}$",
-                    r"\ket{\Psi_{1}} &= \ket{1} \otimes \ket{0} \otimes \ket{0}",
+                    r"\paragraph{Slice 1: } controlled swap between $q_{0}$ and $q_{1}$",
+                    r"\ket{\Psi_{1}} = \ket{1} \otimes \ket{0} \otimes \ket{0}",
                 ],
                 [],
             ),
@@ -1161,7 +1170,7 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
                 "varied_measure_match.tex",
                 VARIED_ORDER_CONTROLLED_MEASURE_MATCH_CIRCUIT,
                 [
-                    r"\textbf{Slice 1: } controlled measure $q_{1}$",
+                    r"\paragraph{Slice 1: } controlled measure $q_{1}$",
                     r"\Pr(q_{1}=1)=1",
                 ],
                 [],
@@ -1170,8 +1179,8 @@ class QuantikzSymbolicLatexTests(unittest.TestCase):
                 "varied_measure_mismatch.tex",
                 VARIED_ORDER_CONTROLLED_MEASURE_MISMATCH_CIRCUIT,
                 [
-                    r"\textbf{Slice 1: } controlled measure $q_{1}$",
-                    r"\ket{\Psi_{1}} &= \ket{1} \otimes \ket{0} \otimes \ket{0}",
+                    r"\paragraph{Slice 1: } controlled measure $q_{1}$",
+                    r"\ket{\Psi_{1}} = \ket{1} \otimes \ket{0} \otimes \ket{0}",
                 ],
                 [r"\Pr(q_{1}=0)"],
             ),

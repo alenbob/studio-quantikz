@@ -1,11 +1,17 @@
 import { buildStandaloneQuantikzDocument } from "./document";
 import { renderPdfBlobToPngBlob } from "./pdfRaster";
 
-export type DownloadFormat = "tex" | "pdf";
+export type DownloadFormat = "tex" | "pdf" | "svg";
 
 export interface ExportAssetSource {
   code: string;
   preamble: string;
+}
+
+interface SvgRenderResponse {
+  success?: boolean;
+  svg?: string;
+  error?: string;
 }
 
 export function getDownloadFilename(baseName: string, format: DownloadFormat): string {
@@ -83,13 +89,39 @@ export async function copyQuantikzImageToClipboard(code: string, preamble: strin
 
 export async function buildDownloadBlob(
   format: DownloadFormat,
-  source: ExportAssetSource
+  source: ExportAssetSource,
+  options: { svgMarkup?: string } = {}
 ): Promise<Blob> {
   if (format === "tex") {
     return new Blob(
       [buildStandaloneQuantikzDocument(source.preamble, source.code)],
       { type: "text/x-tex;charset=utf-8" }
     );
+  }
+
+  if (format === "svg") {
+    if (options.svgMarkup?.trim()) {
+      return new Blob([options.svgMarkup], { type: "image/svg+xml;charset=utf-8" });
+    }
+
+    const response = await fetch("/api/render-svg", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        code: source.code,
+        preamble: source.preamble
+      })
+    });
+
+    const parsed = await response.json() as SvgRenderResponse;
+
+    if (!response.ok || !parsed.success || !parsed.svg?.trim()) {
+      throw new Error(parsed.error?.trim() || "SVG rendering is unavailable on this machine.");
+    }
+
+    return new Blob([parsed.svg], { type: "image/svg+xml;charset=utf-8" });
   }
 
   return fetchQuantikzPdf(source.code, source.preamble);

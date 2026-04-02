@@ -38,6 +38,7 @@ import {
   type BugReportRestorePayload
 } from "./bugReportRestore";
 import { useRenderedPdf } from "./useRenderedPdf";
+import { useRenderedSvg } from "./useRenderedSvg";
 import { useSymbolicLatex } from "./useSymbolicLatex";
 import { editorReducer, initialState, type EditorAction } from "./reducer";
 import { getWireLabelGroup, type WireLabelSide } from "./wireLabels";
@@ -70,7 +71,7 @@ type HelpSheetMode = "shortcuts" | "symbolic";
 
 const TOAST_DURATION_MS = 4000;
 const WORKBENCH_LAYOUT_TOLERANCE_PX = 1;
-const DOWNLOAD_FORMATS: DownloadFormat[] = ["tex", "pdf"];
+const DEFAULT_DOWNLOAD_FORMATS: DownloadFormat[] = ["tex", "pdf"];
 const REPOSITORY_URL = import.meta.env.VITE_REPOSITORY_URL?.trim() || "https://github.com/alenbob";
 const REPOSITORY_LABEL = import.meta.env.VITE_REPOSITORY_LABEL?.trim() || "github/alenbob";
 
@@ -121,7 +122,7 @@ const SYMBOLIC_HELP_SECTIONS: Array<{
     title: "Exact basis rules",
     items: [
       {
-        label: String.raw`H, X, Y, Z, S, T, T^\dagger`,
+        label: String.raw`H, X, Y, Z, S, S^\dagger, T, T^\dagger`,
         description: "Applied exactly on computational-basis inputs and preserved through supported symbolic evolution."
       },
       {
@@ -192,6 +193,10 @@ const SYMBOLIC_HELP_SECTIONS: Array<{
         description: "Measurement probabilities are also derived after symbolic R_X, R_Y, and R_Z rotations; when rotated branches interfere, the result is kept as an exact |...|^2 expression instead of being over-simplified."
       },
       {
+        label: "Post-measurement branch form",
+        description: "After each measurement, branch outputs are rendered as normalized post-measurement states with explicit outcome probabilities in a cases block. If later classically controlled corrections make all branches identical, the repeated branches are collapsed to one final state expression."
+      },
+      {
         label: "Controls through symbolism",
         description: "Supported rotations expand into basis-state branches so later supported controls keep working term by term. Arbitrary opaque symbolic payloads are not fully analyzed as controls, except the named-register form introduced by bare \textsc{UNIFORM} on \ket{0}_{name}."
       }
@@ -254,10 +259,12 @@ function resolveWorkbenchLayoutMode(leftPanelHeight: number, workspaceHeight: nu
 
 function DownloadMenu({
   isOpen,
+  formats,
   onToggle,
   onSelect
 }: {
   isOpen: boolean;
+  formats: DownloadFormat[];
   onToggle: () => void;
   onSelect: (format: DownloadFormat) => void;
 }): JSX.Element {
@@ -279,7 +286,7 @@ function DownloadMenu({
           className="download-menu-popover"
           onClick={(event) => event.stopPropagation()}
         >
-          {DOWNLOAD_FORMATS.map((format) => (
+          {formats.map((format) => (
             <button
               key={format}
               type="button"
@@ -469,8 +476,13 @@ export default function App(): JSX.Element {
     resolvedExportSource.code,
     resolvedExportSource.preamble
   );
-  const symbolicLatexResult = useSymbolicLatex(resolvedExportSource.code, symbolicRefreshVersion);
   const isSymbolicMode = exportPanelMode === "symbolic";
+  const figureSvgPreviewResult = useRenderedSvg(
+    resolvedExportSource.code,
+    resolvedExportSource.preamble,
+    !isSymbolicMode
+  );
+  const symbolicLatexResult = useSymbolicLatex(resolvedExportSource.code, symbolicRefreshVersion);
   const normalizedSymbolicPreamble = useMemo(
     () => normalizeSymbolicPreamble(state.exportSymbolicPreamble),
     [state.exportSymbolicPreamble]
@@ -490,6 +502,24 @@ export default function App(): JSX.Element {
   const pdfPreviewError = activePreviewResult.error;
   const figurePdfPreviewState = figurePreviewResult.state;
   const figurePreviewImageUrl = figurePreviewResult.previewImageUrl;
+  const svgPreviewUrl = figureSvgPreviewResult.svgUrl;
+  const svgPreviewMarkup = figureSvgPreviewResult.svgMarkup;
+  const svgStatusText = !isSymbolicMode ? figureSvgPreviewResult.availabilityMessage : null;
+  const previewFormat = !isSymbolicMode && svgPreviewUrl ? "svg" : "pdf";
+  const mainDownloadFormats = useMemo<DownloadFormat[]>(() => {
+    if (isSymbolicMode) {
+      return DEFAULT_DOWNLOAD_FORMATS;
+    }
+
+    return figureSvgPreviewResult.isAvailable
+      ? [...DEFAULT_DOWNLOAD_FORMATS, "svg"]
+      : DEFAULT_DOWNLOAD_FORMATS;
+  }, [figureSvgPreviewResult.isAvailable, isSymbolicMode]);
+  const historyDownloadFormats = useMemo<DownloadFormat[]>(() => {
+    return figureSvgPreviewResult.isAvailable
+      ? [...DEFAULT_DOWNLOAD_FORMATS, "svg"]
+      : DEFAULT_DOWNLOAD_FORMATS;
+  }, [figureSvgPreviewResult.isAvailable]);
   const appBodyClassName = ["app-body", hasSelection ? "has-context-sidebar" : "", `layout-${workbenchLayoutMode}`]
     .filter(Boolean)
     .join(" ");
@@ -1150,7 +1180,9 @@ export default function App(): JSX.Element {
 
     try {
       const resolvedBaseName = baseName ?? (isSymbolicMode ? "symbolic-evolution" : "quantikz-circuit");
-      const blob = await buildDownloadBlob(format, source);
+      const blob = await buildDownloadBlob(format, source, {
+        svgMarkup: !isSymbolicMode ? svgPreviewMarkup ?? undefined : undefined
+      });
       downloadBlob(blob, getDownloadFilename(resolvedBaseName, format));
       setOpenDownloadMenuTarget(null);
       dispatch({
@@ -1166,11 +1198,15 @@ export default function App(): JSX.Element {
   }
 
   function handleOpenPdfPreview(): void {
-    if (!pdfPreviewUrl) {
+    const previewDocumentUrl = previewFormat === "svg" ? svgPreviewUrl : pdfPreviewUrl;
+    if (!previewDocumentUrl) {
       return;
     }
 
-    window.open(getPdfViewerSrc(pdfPreviewUrl), "_blank", "noopener,noreferrer");
+    const targetUrl = previewFormat === "svg"
+      ? previewDocumentUrl
+      : getPdfViewerSrc(previewDocumentUrl);
+    window.open(targetUrl, "_blank", "noopener,noreferrer");
   }
 
   async function handleCopyPreviewImage(): Promise<void> {
@@ -1838,6 +1874,7 @@ export default function App(): JSX.Element {
                       <div className="history-card-actions">
                         <DownloadMenu
                           isOpen={openDownloadMenuTarget === `history:${entry.id}`}
+                          formats={historyDownloadFormats}
                           onToggle={() =>
                             setOpenDownloadMenuTarget((current) => current === `history:${entry.id}` ? null : `history:${entry.id}`)
                           }
@@ -2201,7 +2238,12 @@ export default function App(): JSX.Element {
               </div>
               <div className="export-pane pdf-preview-panel" aria-live="polite">
                 <div className="export-pane-header export-pane-header-preview">
-                  <span className="export-field-label">{previewHeadingLabel}</span>
+                  <div className="preview-heading-block">
+                    <span className="export-field-label">{previewHeadingLabel}</span>
+                    {svgStatusText && (
+                      <span className="preview-svg-status">{svgStatusText}</span>
+                    )}
+                  </div>
                   <div className="pdf-preview-actions">
                     <button
                       type="button"
@@ -2217,12 +2259,13 @@ export default function App(): JSX.Element {
                       type="button"
                       className="secondary-button"
                       onClick={handleOpenPdfPreview}
-                      disabled={!pdfPreviewUrl}
+                      disabled={previewFormat === "svg" ? !svgPreviewUrl : !pdfPreviewUrl}
                     >
-                      Open PDF
+                      {previewFormat === "svg" ? "Open SVG" : "Open PDF"}
                     </button>
                     <DownloadMenu
                       isOpen={openDownloadMenuTarget === "main"}
+                      formats={mainDownloadFormats}
                       onToggle={() => setOpenDownloadMenuTarget((current) => current === "main" ? null : "main")}
                       onSelect={(format) => void handleDownload(format, currentExportAssetSource)}
                     />

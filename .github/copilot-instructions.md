@@ -21,10 +21,11 @@
 - When editing Quantikz parsing or export, verify both directions: importer behavior in `test/importer.test.ts` and exporter behavior in `test/exporter.test.ts`.
 - Multi-column gates are represented visually in editor state and exported as a real `\gate{...}` plus contiguous `\ghost{...}` cells. Preserve that mapping.
 - When changing user-visible symbolic interpretation or website-visible guidance, update both `QUANTIKZ_GUIDE.md` and the in-app symbolic help in `src/renderer/App.tsx` in the same change.
+- Before considering a user-visible feature change complete, run the Feature Change Checklist agent or perform the same checks manually: affected docs, in-app help, focused tests, and validation.
 
 ## Rendering Constraints
 
-- The active preview path is PDF-only. `src/renderer/useRenderedPdf.ts` calls `/api/render-pdf`, and `/api/render-svg` is intentionally unavailable until a real deployable SVG backend exists.
-- Keep local development and deployed behavior aligned. Do not introduce a local-only rendering path that differs from Vercel behavior.
+- The active preview path is PDF-only. `src/renderer/useRenderedPdf.ts` calls `/api/render-pdf`.
+- Keep local development and deployed behavior aligned. Do not introduce local-only rendering paths that differ from Vercel behavior.
 - For Quantikz documents, preserve the server-side preamble normalization in `src/server/renderQuantikz.ts` and the requirements documented in `QUANTIKZ_GUIDE.md`.
-- Before changing rendering behavior, review `SVG_RENDER_REQUIREMENTS.md` and the server entry points in `src/server/renderQuantikz.ts`, `api/render-pdf.ts`, and `api/render-svg.ts`.
+- Before changing rendering behavior, review the server entry points in `src/server/renderQuantikz.ts` and `api/render-pdf.ts`.

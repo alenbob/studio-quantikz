@@ -5,9 +5,11 @@ import { renderQuantikzSvg } from "../src/server/renderQuantikz";
 describe("renderQuantikzSvg", () => {
   const originalFetch = globalThis.fetch;
   const originalRendererUrl = process.env.FULL_TEX_RENDERER_URL;
+  const originalLocalSvgMode = process.env.LOCAL_SVG_RENDERER_MODE;
 
   beforeEach(() => {
     process.env.FULL_TEX_RENDERER_URL = "https://renderer.example.test";
+    process.env.LOCAL_SVG_RENDERER_MODE = "off";
   });
 
   afterEach(() => {
@@ -21,10 +23,16 @@ describe("renderQuantikzSvg", () => {
 
     if (originalRendererUrl === undefined) {
       delete process.env.FULL_TEX_RENDERER_URL;
+    } else {
+      process.env.FULL_TEX_RENDERER_URL = originalRendererUrl;
+    }
+
+    if (originalLocalSvgMode === undefined) {
+      delete process.env.LOCAL_SVG_RENDERER_MODE;
       return;
     }
 
-    process.env.FULL_TEX_RENDERER_URL = originalRendererUrl;
+    process.env.LOCAL_SVG_RENDERER_MODE = originalLocalSvgMode;
   });
 
   it("renders plain tikz through the full tex svg backend", async () => {

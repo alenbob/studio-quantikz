@@ -681,10 +681,34 @@ export function exportToQuantikz(state: EditorState): string {
         used.add(itemKey(target));
       }
 
+
+      // Emit all verticalConnector segments (quantum or classical) at each row/col
       for (let index = 0; index < anchorRows.length - 1; index += 1) {
         const currentRow = anchorRows[index];
         const nextRow = anchorRows[index + 1];
-        cells[currentRow][column].push(explicitVerticalWireCommand(nextRow - currentRow, connector));
+        // Find all verticalConnector segments at this row/col
+        const segments = connectors.filter(
+          (c) => c.type === "verticalConnector" && c.point.row === currentRow && c.point.col === column
+        );
+        if (segments.length > 0) {
+          for (const segment of segments) {
+            const wireType = segment.wireType;
+            const wireOptions = wireStyleOption(segment.color ?? connector.color);
+            cells[currentRow][column].push(
+              wireOptions
+                ? `\\wire[d][${nextRow - currentRow}][${wireOptions}]{${toQuantikzWireType(wireType)}}`
+                : `\\wire[d][${nextRow - currentRow}]{${toQuantikzWireType(wireType)}}`
+            );
+          }
+        } else {
+          // fallback to connector's wireType if no explicit segment
+          const wireOptions = wireStyleOption(connector.color);
+          cells[currentRow][column].push(
+            wireOptions
+              ? `\\wire[d][${nextRow - currentRow}][${wireOptions}]{${toQuantikzWireType(connector.wireType)}}`
+              : `\\wire[d][${nextRow - currentRow}]{${toQuantikzWireType(connector.wireType)}}`
+          );
+        }
       }
 
       connector.members.forEach((member) => used.add(itemKey(member)));
@@ -756,25 +780,26 @@ export function exportToQuantikz(state: EditorState): string {
         return prependToken(tokens, "\\setwiretype{n}");
       }
 
+
       if (explicitAbsent) {
         if (sourceCommand === "wireoverride") {
           return prependToken(tokens, "\\wireoverride{n}");
         }
-
         if (persistentWireType !== "none") {
           persistentWireType = "none";
           return prependToken(tokens, "\\setwiretype{n}");
         }
-
         return tokens;
       }
 
+
       const isLocalOverride = Boolean(
         sourceCommand === "wireoverride" ||
-          wireOptions ||
-          explicitHorizontal?.bundled === true ||
-          wireType !== rowDefaultWireType
+        wireOptions ||
+        explicitHorizontal?.bundled === true ||
+        wireType !== rowDefaultWireType
       );
+
 
       if (!isLocalOverride && persistentWireType !== rowDefaultWireType) {
         persistentWireType = rowDefaultWireType;

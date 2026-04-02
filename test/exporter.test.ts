@@ -1,3 +1,22 @@
+  it("exports both quantum and classical vertical wires in the same column", () => {
+    const code = exportToQuantikz(
+      makeState({
+        qubits: 3,
+        steps: 2,
+        items: [
+          { id: "dot-1", type: "controlDot", point: { row: 0, col: 1 } },
+          { id: "line-q", type: "verticalConnector", point: { row: 0, col: 1 }, length: 1, wireType: "quantum" },
+          { id: "plus-1", type: "targetPlus", point: { row: 1, col: 1 } },
+          { id: "line-c", type: "verticalConnector", point: { row: 1, col: 1 }, length: 1, wireType: "classical" },
+          { id: "plus-2", type: "targetPlus", point: { row: 2, col: 1 } }
+        ]
+      })
+    );
+
+    // Should emit a control with classical vertical wire and a classical vertical wire
+    expect(code).toContain("\\ctrl[vertical wire=c]{1}");
+    expect(code).toContain("\\wire[d][1]{c}");
+  });
 import { describe, expect, it } from "vitest";
 import { exportToQuantikz } from "../src/renderer/exporter";
 import { importFromQuantikz } from "../src/renderer/importer";

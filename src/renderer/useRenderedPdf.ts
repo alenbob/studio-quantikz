@@ -82,8 +82,13 @@ export function useRenderedPdf(code: string, preamble: string): RenderedPdfResul
     setState("loading");
     setError(null);
 
-    void renderWithApi(code, preamble, controller.signal)
-      .then(async (pdfBlob) => {
+    void (async () => {
+      try {
+        const pdfBlob = await renderWithApi(code, preamble, controller.signal);
+        if (controller.signal.aborted) {
+          return;
+        }
+
         const pngBlob = await renderPdfBlobToPngBlob(pdfBlob);
         const nextPdfUrl = URL.createObjectURL(pdfBlob);
         const nextPreviewImageUrl = URL.createObjectURL(pngBlob);
@@ -102,8 +107,7 @@ export function useRenderedPdf(code: string, preamble: string): RenderedPdfResul
         });
         setError(null);
         setState("ready");
-      })
-      .catch((err: unknown) => {
+      } catch (err: unknown) {
         if (controller.signal.aborted || isAbortError(err)) {
           return;
         }
@@ -111,22 +115,13 @@ export function useRenderedPdf(code: string, preamble: string): RenderedPdfResul
         clearPreviewUrls();
         setError(err instanceof Error ? err.message : "Failed to render preview.");
         setState("error");
-      });
+      }
+    })();
 
     return () => {
       controller.abort();
     };
   }, [code, preamble]);
-
-  useEffect(() => () => {
-    if (abortRef.current) {
-      abortRef.current.abort();
-    }
-  }, []);
-
-  useEffect(() => () => {
-    clearPreviewUrls();
-  }, []);
 
   return { pdfUrl, previewImageUrl, state, error };
 }

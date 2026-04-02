@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { renderQuantikzSvgMock } = vi.hoisted(() => ({
+const { getLocalSvgRuntimeStatusMock, renderQuantikzSvgMock } = vi.hoisted(() => ({
+  getLocalSvgRuntimeStatusMock: vi.fn(),
   renderQuantikzSvgMock: vi.fn()
 }));
 
 vi.mock("../src/server/renderQuantikz.js", () => ({
+  getLocalSvgRuntimeStatus: getLocalSvgRuntimeStatusMock,
   renderQuantikzSvg: renderQuantikzSvgMock
 }));
 
@@ -12,7 +14,41 @@ import handler from "../api/render-svg";
 
 describe("render-svg api", () => {
   beforeEach(() => {
+    getLocalSvgRuntimeStatusMock.mockReset();
     renderQuantikzSvgMock.mockReset();
+  });
+
+  it("returns local svg runtime status on GET", async () => {
+    getLocalSvgRuntimeStatusMock.mockResolvedValue({
+      enabled: true,
+      message: "SVG enabled: local Python converter detected."
+    });
+
+    const request = {
+      method: "GET",
+      on: () => request
+    };
+
+    const responseState: { statusCode?: number; payload?: unknown } = {};
+    const response = {
+      status(code: number) {
+        responseState.statusCode = code;
+        return this;
+      },
+      json(payload: unknown) {
+        responseState.payload = payload;
+        return this;
+      }
+    };
+
+    await handler(request, response);
+
+    expect(responseState.statusCode).toBe(200);
+    expect(responseState.payload).toMatchObject({
+      success: true,
+      localSvgEnabled: true,
+      message: "SVG enabled: local Python converter detected."
+    });
   });
 
   it("returns svg output from the renderer", async () => {

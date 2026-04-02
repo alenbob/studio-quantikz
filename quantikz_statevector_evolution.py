@@ -756,6 +756,9 @@ def canonical_gate_label(label: str) -> str:
     normalized = label.strip()
     normalized = re.sub(r"\\mathrm\{([^{}]+)\}", r"\1", normalized)
     normalized = normalized.replace(" ", "")
+    normalized = normalized.replace(r"S^{\dagger}", "Sdg")
+    normalized = normalized.replace(r"S^\dagger", "Sdg")
+    normalized = normalized.replace(r"S^{\\dagger}", "Sdg")
     normalized = normalized.replace(r"T^{\dagger}", "Tdg")
     normalized = normalized.replace(r"T^\dagger", "Tdg")
     normalized = normalized.replace(r"T^{\\dagger}", "Tdg")
@@ -794,10 +797,11 @@ def apply_single_qubit_gate(
     visited: set[int] = set()
     result: dict[int, str] = {}
 
-    if canonical in {"Z", "S", "T", "Tdg"} or parse_rz_parameter(canonical) is not None:
+    if canonical in {"Z", "S", "Sdg", "T", "Tdg"} or parse_rz_parameter(canonical) is not None:
         phase_for_one = {
             "Z": "-1",
             "S": "i",
+            "Sdg": "exp(-i*pi/2)",
             "T": "exp(i*pi/4)",
             "Tdg": "exp(-i*pi/4)",
         }.get(canonical)

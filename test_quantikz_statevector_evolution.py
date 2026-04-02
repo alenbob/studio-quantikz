@@ -66,6 +66,12 @@ SPECIAL_STATE_CIRCUITS = {
     ),
 }
 
+SDG_CIRCUIT = r"""
+\begin{quantikz}
+\lstick{$\ket{1}$} & \gate{S^\dagger}
+\end{quantikz}
+"""
+
 
 class QuantikzStatevectorEvolutionTests(unittest.TestCase):
     def test_parses_all_example_circuits(self) -> None:
@@ -161,6 +167,10 @@ class QuantikzStatevectorEvolutionTests(unittest.TestCase):
             with self.subTest(name=name):
                 evolution_result = evolution.symbolic_evolution_for_source(source)[0]
                 self.assertEqual(evolution_result.slices[0].expanded_state, expected_state)
+
+    def test_supports_s_dagger_phase_gate(self) -> None:
+        evolution_result = evolution.symbolic_evolution_for_source(SDG_CIRCUIT)[0]
+        self.assertEqual(evolution_result.slices[0].expanded_state, "exp(-i*pi/2)|1>")
 
     def test_interprets_wide_h_as_hadamard_on_each_qubit(self) -> None:
         evolution_result = evolution.symbolic_evolution_for_source(WIDE_HADAMARD_CIRCUIT)[0]
