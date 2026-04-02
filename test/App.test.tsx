@@ -1,17 +1,26 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../src/renderer/App";
 import { BUG_REPORT_RESTORE_SEARCH_PARAM, buildBugReportRestoreStorageKey } from "../src/renderer/bugReportRestore";
 import { BUG_REPORT_DESCRIPTION_MAX_LENGTH } from "../src/shared/bugReport";
 import { DEFAULT_CIRCUIT_LAYOUT, getCellCenterX, getGridHeight, getGridWidth, getIncomingSegmentRange, getRowY, getWireStartX } from "../src/renderer/layout";
 import { initialState } from "../src/renderer/reducer";
+import { SHARE_CODE_SEARCH_PARAM } from "../src/renderer/shareUrl";
 import * as renderedPdfModule from "../src/renderer/useRenderedPdf";
 import * as symbolicLatexModule from "../src/renderer/useSymbolicLatex";
 
 vi.mock("../src/renderer/pdfRaster", () => ({
   renderPdfBlobToPngBlob: vi.fn(async () => new Blob(["png-preview"], { type: "image/png" }))
 }));
+
+beforeEach(() => {
+  window.history.replaceState({}, "", "/");
+});
+
+afterEach(() => {
+  window.history.replaceState({}, "", "/");
+});
 
 function mockBoardRect(board: HTMLDivElement, steps = 5, qubits = 3): void {
   const width = getGridWidth(steps, DEFAULT_CIRCUIT_LAYOUT);
@@ -94,6 +103,8 @@ describe("App smoke tests", () => {
     const user = userEvent.setup();
     render(<App />);
 
+    window.history.replaceState({}, "", "/?q=stale-circuit&qp=stale-preamble#fragment");
+
     await user.click(screen.getByLabelText(/edit left wire label q1/i));
     fireEvent.change(screen.getByLabelText(/inline left wire label q1/i), {
       target: { value: "\\ket{0}" }
@@ -107,6 +118,8 @@ describe("App smoke tests", () => {
 
     expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toBe("");
     expect(screen.getByLabelText(/edit left wire label q1/i)).toBeInTheDocument();
+    expect(window.location.search).toBe("");
+    expect(window.location.hash).toBe("");
   });
 
   it("exports spacing set from the visual sliders", async () => {
@@ -1018,10 +1031,135 @@ describe("App smoke tests", () => {
       await waitFor(() => expect(screen.getByLabelText(/^steps$/i)).toHaveValue("6"));
       expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain("\\gate{R}");
       expect(screen.getByText(/circuit restored from bug report\./i)).toBeInTheDocument();
-      expect(window.location.search).toBe("");
+      const restoredSearchParams = new URLSearchParams(window.location.search);
+      expect(restoredSearchParams.has(BUG_REPORT_RESTORE_SEARCH_PARAM)).toBe(false);
+      expect(restoredSearchParams.get(SHARE_CODE_SEARCH_PARAM)).toContain("\\gate{R}");
       expect(window.localStorage.getItem(restoreStorageKey)).toBeNull();
     } finally {
       window.localStorage.removeItem(restoreStorageKey);
+      window.history.replaceState({}, "", previousPath || "/");
+    }
+  });
+
+  it("loads a shared circuit from the URL", async () => {
+    const previousPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    const sharedCode = String.raw`\begin{quantikz}
+& \gate{H}
+\end{quantikz}`;
+
+    window.history.replaceState({}, "", `/?${SHARE_CODE_SEARCH_PARAM}=${encodeURIComponent(sharedCode)}`);
+
+    try {
+      render(<App />);
+
+      await waitFor(() => {
+        expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toContain("\\gate{H}");
+      });
+      expect(screen.getByText(/quantikz code loaded into the visual editor\./i)).toBeInTheDocument();
+    } finally {
+      window.history.replaceState({}, "", previousPath || "/");
+    }
+  });
+
+  it("keeps malformed shared code in the editor and URL", async () => {
+    const previousPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    const invalidSharedCode = String.raw`\begin{quantikz}
+& \gate{H
+\end{quantikz}`;
+
+    window.history.replaceState({}, "", `/?${SHARE_CODE_SEARCH_PARAM}=${encodeURIComponent(invalidSharedCode)}`);
+
+    try {
+      render(<App />);
+
+      await waitFor(() => {
+        expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toBe(invalidSharedCode);
+      });
+      expect(screen.getByText(/left in the editor so you can fix it\./i)).toBeInTheDocument();
+      expect(new URLSearchParams(window.location.search).get(SHARE_CODE_SEARCH_PARAM)).toBe(invalidSharedCode);
+    } finally {
+      window.history.replaceState({}, "", previousPath || "/");
+    }
+  });
+
+  it("writes generated quantikz code into the URL", async () => {
+    const user = userEvent.setup();
+    const previousPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+
+    window.history.replaceState({}, "", "/");
+
+    try {
+      render(<App />);
+
+      await user.click(screen.getByRole("button", { name: /^gate$/i }));
+      await user.click(screen.getByTestId("grid-cell-0-0"));
+      await user.click(screen.getByRole("button", { name: /convert to quantikz/i }));
+
+      await waitFor(() => {
+        expect(new URLSearchParams(window.location.search).get(SHARE_CODE_SEARCH_PARAM)).toContain("\\gate{U}");
+      });
+    } finally {
+      window.history.replaceState({}, "", previousPath || "/");
+    }
+  });
+
+  it("copies the shared URL to the clipboard", async () => {
+    const user = userEvent.setup();
+    const previousPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    const writeText = vi.fn(async () => undefined);
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : String(input.url);
+
+      if (url.endsWith("/api/render-pdf")) {
+        return new Response(new Blob(["%PDF"], { type: "application/pdf" }), {
+          status: 200,
+          headers: { "Content-Type": "application/pdf" }
+        });
+      }
+
+      if (url.endsWith("/api/share-preview-image")) {
+        return new Response(JSON.stringify({ success: true, imageId: "preview-1.png" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+
+      return new Response(JSON.stringify({ success: false, error: "Unexpected request" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" }
+      });
+    });
+
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText
+      }
+    });
+
+    window.history.replaceState({}, "", "/");
+
+    try {
+      render(<App />);
+
+      fireEvent.change(screen.getByLabelText(/quantikz output/i), {
+        target: {
+          value: String.raw`\begin{quantikz}
+& \gate{H}
+\end{quantikz}`
+        }
+      });
+
+      await user.click(screen.getByRole("button", { name: /copy share url/i }));
+
+      await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+      const copiedUrl = writeText.mock.calls.at(0)?.at(0);
+      expect(copiedUrl).toContain("/api/share?");
+      expect(copiedUrl).toContain(`${SHARE_CODE_SEARCH_PARAM}=`);
+      expect(copiedUrl).toContain("img=preview-1.png");
+      expect(screen.getByText(/share URL copied with a rendered preview image\./i)).toBeInTheDocument();
+    } finally {
+      fetchMock.mockRestore();
       window.history.replaceState({}, "", previousPath || "/");
     }
   });

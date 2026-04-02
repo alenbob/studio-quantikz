@@ -87,6 +87,29 @@ export async function copyQuantikzImageToClipboard(code: string, preamble: strin
   await navigator.clipboard.write([item]);
 }
 
+export async function copyQuantikzSvgToClipboard(
+  source: ExportAssetSource,
+  options: { svgMarkup?: string } = {}
+): Promise<void> {
+  if (!source.code.trim()) {
+    throw new Error("Add Quantikz code before copying the figure.");
+  }
+
+  if (!navigator.clipboard || typeof navigator.clipboard.write !== "function") {
+    throw new Error("Clipboard access is unavailable in this browser.");
+  }
+
+  if (!supportsClipboardMimeType("image/svg+xml")) {
+    throw new Error("This browser cannot write SVG images to the clipboard.");
+  }
+
+  const svgBlob = await buildDownloadBlob("svg", source, options);
+  const item = new ClipboardItem({
+    "image/svg+xml": svgBlob
+  });
+  await navigator.clipboard.write([item]);
+}
+
 export async function buildDownloadBlob(
   format: DownloadFormat,
   source: ExportAssetSource,

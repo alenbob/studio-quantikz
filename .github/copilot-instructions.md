@@ -29,3 +29,23 @@
 - Keep local development and deployed behavior aligned. Do not introduce local-only rendering paths that differ from Vercel behavior.
 - For Quantikz documents, preserve the server-side preamble normalization in `src/server/renderQuantikz.ts` and the requirements documented in `QUANTIKZ_GUIDE.md`.
 - Before changing rendering behavior, review the server entry points in `src/server/renderQuantikz.ts` and `api/render-pdf.ts`.
+
+## Python Backend Scripts
+
+- `quantikz_symbolic_latex.py` is the production Vercel Python handler for `/api/symbolic-latex`. Do not delete or rename it.
+- `quantikz_statevector_evolution.py` is imported by `quantikz_symbolic_latex.py` and is included in the Vercel function bundle via `vercel.json`. Do not delete or rename it.
+- `pdf2svg.py` is used by `src/server/renderQuantikz.ts` for local SVG conversion. Do not delete or rename it.
+- `api/symbolic-latex-dev.ts` is a dev-only TypeScript mirror of the Python handler; it is active only when running `npm run dev`.
+
+## Codebase Boundaries
+
+- The Electron runtime (`src/main/`, `tsconfig.electron.json`, `scripts/launch-electron.cjs`) has been removed. Do not introduce Electron dependencies or revive those paths.
+- `api/render-svg.ts` intentionally returns HTTP 501. Do not restore SVG rendering until a deployable full-LaTeX backend exists on Vercel.
+- There is no `.gitlab-ci.yml` in this repo; CI runs on GitHub Actions if needed.
+
+## Available Agents
+
+- **Docs Sync** (`.github/agents/docs-sync.agent.md`): use when updating `QUANTIKZ_GUIDE.md` or in-app help to keep them aligned with shipped behavior.
+- **Feature Change Checklist** (`.github/agents/feature-change-checklist.agent.md`): use before marking a user-visible feature complete; it validates docs, tests, and in-app help.
+- **Quantikz Round-Trip** (`.github/agents/quantikz-roundtrip.agent.md`): use when modifying `importer.ts` or `exporter.ts` to verify both parse and emit directions stay consistent.
+- **Reducer Change** (`.github/agents/reducer-change.agent.md`): use when modifying `reducer.ts` to confirm normalization invariants, derived state, and reducer tests are all updated together.

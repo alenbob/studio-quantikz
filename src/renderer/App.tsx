@@ -14,6 +14,12 @@ import {
   splitStandaloneQuantikzSource
 } from "./document";
 import {
+  buildShareLandingUrl,
+  buildSharedCircuitUrl,
+  readSharedCircuitFromSearch
+} from "./shareUrl";
+import { uploadSharePreviewImage } from "./sharePreview";
+import {
   getExportHistorySnippet,
   loadExportHistory,
   persistExportHistory,
@@ -21,13 +27,16 @@ import {
   type ExportHistoryEntry
 } from "./exportHistory";
 import {
+  fetchQuantikzPdf,
   buildDownloadBlob,
   copyQuantikzImageToClipboard,
+  copyQuantikzSvgToClipboard,
   downloadBlob,
   getDownloadFilename,
   type DownloadFormat,
   type ExportAssetSource
 } from "./exportAssets";
+import { renderPdfBlobToPngBlob } from "./pdfRaster";
 import { isVisibleHorizontalSegment } from "./horizontalWires";
 import { importFromQuantikz } from "./importer";
 import { resolveVisualPreambleDefinitions } from "../shared/tikzPreamble";
@@ -65,6 +74,7 @@ interface HistoryState {
 type HistoryAction = EditorAction | { type: "undo" } | { type: "redo" };
 type ExportPanelMode = "quantikz" | "symbolic";
 type ExportPaneView = "content" | "preamble";
+type CopyFormat = "png" | "svg";
 type DownloadMenuTarget = "main" | `history:${string}` | null;
 type WorkbenchLayoutMode = "left-rail-tall" | "workspace-tall";
 type HelpSheetMode = "shortcuts" | "symbolic";
@@ -302,6 +312,54 @@ function DownloadMenu({
   );
 }
 
+function CopyMenu({
+  isOpen,
+  formats,
+  disabled,
+  onToggle,
+  onSelect
+}: {
+  isOpen: boolean;
+  formats: CopyFormat[];
+  disabled: boolean;
+  onToggle: () => void;
+  onSelect: (format: CopyFormat) => void;
+}): JSX.Element {
+  return (
+    <div className="download-menu">
+      <button
+        type="button"
+        className="secondary-button download-menu-trigger"
+        disabled={disabled}
+        aria-expanded={isOpen}
+        onClick={(event) => {
+          event.stopPropagation();
+          onToggle();
+        }}
+      >
+        Copy image
+      </button>
+      {isOpen && (
+        <div
+          className="download-menu-popover"
+          onClick={(event) => event.stopPropagation()}
+        >
+          {formats.map((format) => (
+            <button
+              key={format}
+              type="button"
+              className="download-menu-option"
+              onClick={() => onSelect(format)}
+            >
+              {format.toUpperCase()}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TextToggleSwitch({
   leftLabel,
   rightLabel,
@@ -424,6 +482,8 @@ export default function App(): JSX.Element {
   const [quantikzPaneView, setQuantikzPaneView] = useState<ExportPaneView>("content");
   const [symbolicPaneView, setSymbolicPaneView] = useState<ExportPaneView>("content");
   const [openDownloadMenuTarget, setOpenDownloadMenuTarget] = useState<DownloadMenuTarget>(null);
+  const [isCopyMenuOpen, setCopyMenuOpen] = useState(false);
+  const [isPreparingShareUrl, setPreparingShareUrl] = useState(false);
   const [pendingHistoryCapture, setPendingHistoryCapture] = useState(false);
   const [toastAnimationKey, setToastAnimationKey] = useState(0);
   const [selectedWireLabel, setSelectedWireLabel] = useState<{ row: number; side: WireLabelSide } | null>(null);
@@ -444,6 +504,7 @@ export default function App(): JSX.Element {
   const selectedStructureRef = useRef(selectedStructure);
   const exportPanelModeRef = useRef<ExportPanelMode>(exportPanelMode);
   const lastGeneratedSymbolicLatexRef = useRef("");
+  const hasInitializedShareUrlRef = useRef(false);
   const appShellRef = useRef<HTMLDivElement | null>(null);
   const leftPanelRef = useRef<HTMLDivElement | null>(null);
   const workspacePanelRef = useRef<HTMLElement | null>(null);
@@ -530,11 +591,42 @@ export default function App(): JSX.Element {
 
   useEffect(() => {
     if (typeof window === "undefined") {
+      hasInitializedShareUrlRef.current = true;
       return;
     }
 
     const hasRestoreParam = new URLSearchParams(window.location.search).has(BUG_REPORT_RESTORE_SEARCH_PARAM);
     if (!hasRestoreParam) {
+      const sharedCircuit = readSharedCircuitFromSearch(window.location.search);
+
+      if (!sharedCircuit) {
+        hasInitializedShareUrlRef.current = true;
+        return;
+      }
+
+      try {
+        const imported = importFromQuantikz(sharedCircuit.code, { preamble: sharedCircuit.preamble });
+        dispatch({
+          type: "loadQuantikz",
+          imported,
+          code: sharedCircuit.code,
+          preamble: sharedCircuit.preamble
+        });
+        setExportPanelMode("quantikz");
+        setQuantikzPaneView("content");
+      } catch (error) {
+        dispatch({ type: "setExportCode", code: sharedCircuit.code });
+        dispatch({ type: "setExportPreamble", preamble: sharedCircuit.preamble });
+        dispatch({
+          type: "setMessage",
+          message: error instanceof Error
+            ? `${error.message} The shared code was left in the editor so you can fix it.`
+            : "Unable to load the shared Quantikz circuit. The shared code was left in the editor so you can fix it."
+        });
+      } finally {
+        hasInitializedShareUrlRef.current = true;
+      }
+
       return;
     }
 
@@ -542,6 +634,7 @@ export default function App(): JSX.Element {
     const nextUrl = new URL(window.location.href);
     nextUrl.searchParams.delete(BUG_REPORT_RESTORE_SEARCH_PARAM);
     window.history.replaceState(null, "", nextUrl.toString());
+    hasInitializedShareUrlRef.current = true;
 
     if (!restorePayload) {
       dispatch({ type: "setMessage", message: "Unable to restore the selected bug report." });
@@ -550,6 +643,17 @@ export default function App(): JSX.Element {
 
     applyBugReportRestore(restorePayload);
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !hasInitializedShareUrlRef.current) {
+      return;
+    }
+
+    const nextUrl = buildSharedCircuitUrl(window.location.href, state.exportCode, state.exportPreamble);
+    if (nextUrl !== window.location.href) {
+      window.history.replaceState(null, "", nextUrl);
+    }
+  }, [state.exportCode, state.exportPreamble]);
 
   useEffect(() => {
     const previousMode = exportPanelModeRef.current;
@@ -712,7 +816,7 @@ export default function App(): JSX.Element {
   }, [state.uiMessage]);
 
   useEffect(() => {
-    if (!openDownloadMenuTarget) {
+    if (!openDownloadMenuTarget && !isCopyMenuOpen) {
       return;
     }
 
@@ -723,11 +827,12 @@ export default function App(): JSX.Element {
       }
 
       setOpenDownloadMenuTarget(null);
+      setCopyMenuOpen(false);
     }
 
     window.addEventListener("pointerdown", handlePointerDown);
     return () => window.removeEventListener("pointerdown", handlePointerDown);
-  }, [openDownloadMenuTarget]);
+  }, [isCopyMenuOpen, openDownloadMenuTarget]);
 
   useEffect(() => {
     if (!isBugReportOpen) {
@@ -1209,11 +1314,24 @@ export default function App(): JSX.Element {
     window.open(targetUrl, "_blank", "noopener,noreferrer");
   }
 
-  async function handleCopyPreviewImage(): Promise<void> {
+  async function handleCopyPreviewImage(format: CopyFormat = "png"): Promise<void> {
     const source = getCurrentExportAssetSource();
 
     try {
+      if (format === "svg") {
+        await copyQuantikzSvgToClipboard(source, {
+          svgMarkup: svgPreviewMarkup ?? undefined
+        });
+        setCopyMenuOpen(false);
+        dispatch({
+          type: "setMessage",
+          message: "Copied the rendered figure as an SVG to the clipboard."
+        });
+        return;
+      }
+
       await copyQuantikzImageToClipboard(source.code, source.preamble);
+      setCopyMenuOpen(false);
       dispatch({
         type: "setMessage",
         message: isSymbolicMode
@@ -1232,23 +1350,51 @@ export default function App(): JSX.Element {
     }
   }
 
+  async function handleCopyShareUrl(): Promise<void> {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (!state.exportCode.trim()) {
+      dispatch({ type: "setMessage", message: "Generate or paste Quantikz code before copying a share URL." });
+      return;
+    }
+
+    try {
+      setPreparingShareUrl(true);
+      dispatch({ type: "setMessage", message: "Preparing share link preview..." });
+
+      const pdfBlob = await fetchQuantikzPdf(state.exportCode, state.exportPreamble);
+      const pngBlob = await renderPdfBlobToPngBlob(pdfBlob);
+      const imageId = await uploadSharePreviewImage(pngBlob);
+      const shareUrl = buildShareLandingUrl(window.location.href, state.exportCode, state.exportPreamble, imageId);
+
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+        await navigator.clipboard.writeText(shareUrl);
+      } else if (window.quantikzDesktop?.copyText) {
+        await window.quantikzDesktop.copyText(shareUrl);
+      } else {
+        throw new Error("Clipboard access is unavailable in this browser.");
+      }
+
+      dispatch({ type: "setMessage", message: "Share URL copied with a rendered preview image." });
+    } catch (error) {
+      dispatch({
+        type: "setMessage",
+        message: error instanceof Error ? error.message : "Unable to copy the share URL."
+      });
+    } finally {
+      setPreparingShareUrl(false);
+    }
+  }
+
   function handlePreviewDragStart(event: DragEvent<HTMLImageElement>): void {
     if (!previewImageUrl) {
       return;
     }
 
+    // Keep native image drag payload so drops insert image content instead of a blob URL string.
     event.dataTransfer.effectAllowed = "copy";
-    event.dataTransfer.setData("text/uri-list", previewImageUrl);
-    event.dataTransfer.setData("text/plain", previewImageUrl);
-
-    try {
-      event.dataTransfer.setData(
-        "DownloadURL",
-        `image/png:${isSymbolicMode ? "symbolic-evolution" : "quantikz-circuit"}.png:${previewImageUrl}`
-      );
-    } catch {
-      // Some browsers ignore custom drag payload types; native image dragging still works.
-    }
   }
 
   function handleLoadFromCode(): void {
@@ -1682,6 +1828,12 @@ export default function App(): JSX.Element {
               setPasteMode(false);
               clearContextSelection();
               dispatch({ type: "resetCircuit" });
+              if (typeof window !== "undefined") {
+                const cleanUrl = new URL(window.location.href);
+                cleanUrl.search = "";
+                cleanUrl.hash = "";
+                window.history.replaceState({}, "", cleanUrl.toString());
+              }
             }}
           >
             Reset
@@ -2177,9 +2329,20 @@ export default function App(): JSX.Element {
                     />
                   </div>
                   {!isSymbolicMode ? (
-                    <button type="button" className="secondary-button" onClick={handleLoadFromCode}>
-                      Convert to visual
-                    </button>
+                    <div className="export-generated-actions">
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        title="Copy a share URL that includes an Open Graph preview image rendered from this circuit."
+                        disabled={isPreparingShareUrl}
+                        onClick={handleCopyShareUrl}
+                      >
+                        {isPreparingShareUrl ? "Preparing share URL..." : "Copy share URL"}
+                      </button>
+                      <button type="button" className="secondary-button" onClick={handleLoadFromCode}>
+                        Convert to visual
+                      </button>
+                    </div>
                   ) : (
                     <div className="export-generated-actions">
                       <span className={`export-generated-status ${symbolicLatexResult.state === "error" ? "is-error" : ""}`}>
@@ -2245,16 +2408,31 @@ export default function App(): JSX.Element {
                     )}
                   </div>
                   <div className="pdf-preview-actions">
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      onClick={() => {
-                        void handleCopyPreviewImage();
-                      }}
-                      disabled={!currentExportAssetSource.code.trim()}
-                    >
-                      Copy image
-                    </button>
+                    {!isSymbolicMode && figureSvgPreviewResult.isAvailable ? (
+                      <CopyMenu
+                        isOpen={isCopyMenuOpen}
+                        formats={["png", "svg"]}
+                        disabled={!currentExportAssetSource.code.trim()}
+                        onToggle={() => {
+                          setOpenDownloadMenuTarget(null);
+                          setCopyMenuOpen((current) => !current);
+                        }}
+                        onSelect={(format) => {
+                          void handleCopyPreviewImage(format);
+                        }}
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => {
+                          void handleCopyPreviewImage();
+                        }}
+                        disabled={!currentExportAssetSource.code.trim()}
+                      >
+                        Copy image
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="secondary-button"
@@ -2266,7 +2444,10 @@ export default function App(): JSX.Element {
                     <DownloadMenu
                       isOpen={openDownloadMenuTarget === "main"}
                       formats={mainDownloadFormats}
-                      onToggle={() => setOpenDownloadMenuTarget((current) => current === "main" ? null : "main")}
+                      onToggle={() => {
+                        setCopyMenuOpen(false);
+                        setOpenDownloadMenuTarget((current) => current === "main" ? null : "main");
+                      }}
                       onSelect={(format) => void handleDownload(format, currentExportAssetSource)}
                     />
                   </div>

@@ -58,10 +58,8 @@
 - No evidence that Electron is the active primary runtime, even though some Electron-era files remain in the repo.
 
 ## Key source files
-
 - `package.json`
 - `QUANTIKZ_GUIDE.md`
-- `SVG_RENDER_REQUIREMENTS.md`
 - `src/renderer/App.tsx`
 - `src/renderer/types.ts`
 - `src/renderer/reducer.ts`
