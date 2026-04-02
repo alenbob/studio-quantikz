@@ -1,4 +1,4 @@
-import { put } from "@vercel/blob";
+import { get, put } from "@vercel/blob";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -45,12 +45,12 @@ export async function storeSharePreviewImage(imageDataUrl: string): Promise<stri
   const imageId = buildImageId();
 
   if (process.env.BLOB_READ_WRITE_TOKEN?.trim()) {
-    const blob = await put(`${BLOB_SHARE_PREVIEW_PREFIX}${imageId}`, bytes, {
-      access: "public",
+    await put(`${BLOB_SHARE_PREVIEW_PREFIX}${imageId}`, bytes, {
+      access: "private",
       addRandomSuffix: false,
       contentType: "image/png"
     });
-    return blob.url;
+    return imageId;
   }
 
   if (process.env.VERCEL === "1") {
@@ -65,7 +65,7 @@ export async function storeSharePreviewImage(imageDataUrl: string): Promise<stri
 export async function readSharePreviewImage(imageId: string): Promise<Buffer | null> {
   const normalized = imageId.trim();
 
-  // Public Vercel Blob URLs are returned by storeSharePreviewImage when BLOB_READ_WRITE_TOKEN is set.
+  // Legacy support for previously stored public Blob URLs.
   if (normalized.startsWith("https://")) {
     try {
       const url = new URL(normalized);
@@ -80,8 +80,24 @@ export async function readSharePreviewImage(imageId: string): Promise<Buffer | n
     }
   }
 
-  // Local filename fallback (local dev without BLOB_READ_WRITE_TOKEN)
   const normalizedId = assertValidImageId(normalized);
+
+  if (process.env.BLOB_READ_WRITE_TOKEN?.trim()) {
+    const result = await get(`${BLOB_SHARE_PREVIEW_PREFIX}${normalizedId}`, {
+      access: "private"
+    });
+    if (!result || result.statusCode === 404) {
+      return null;
+    }
+    if (result.statusCode !== 200) {
+      throw new Error(`Unable to read share preview image ${normalizedId}.`);
+    }
+
+    const arrayBuffer = await new Response(result.stream).arrayBuffer();
+    return Buffer.from(arrayBuffer);
+  }
+
+  // Local filename fallback (local dev without BLOB_READ_WRITE_TOKEN)
 
   if (process.env.VERCEL === "1") {
     throw new Error("Share preview storage is not configured. Set BLOB_READ_WRITE_TOKEN on Vercel.");
