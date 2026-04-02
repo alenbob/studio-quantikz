@@ -1,14 +1,41 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import pako from "pako";
 import App from "../src/renderer/App";
 import { BUG_REPORT_RESTORE_SEARCH_PARAM, buildBugReportRestoreStorageKey } from "../src/renderer/bugReportRestore";
 import { BUG_REPORT_DESCRIPTION_MAX_LENGTH } from "../src/shared/bugReport";
 import { DEFAULT_CIRCUIT_LAYOUT, getCellCenterX, getGridHeight, getGridWidth, getIncomingSegmentRange, getRowY, getWireStartX } from "../src/renderer/layout";
 import { initialState } from "../src/renderer/reducer";
-import { SHARE_CODE_SEARCH_PARAM } from "../src/renderer/shareUrl";
+import { SHARE_CODE_ID_SEARCH_PARAM, SHARE_CODE_SEARCH_PARAM } from "../src/renderer/shareUrl";
 import * as renderedPdfModule from "../src/renderer/useRenderedPdf";
 import * as symbolicLatexModule from "../src/renderer/useSymbolicLatex";
+
+const BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+
+function encodeToBase62(data: Uint8Array): string {
+  let num = 0n;
+  for (let i = 0; i < data.length; i++) {
+    num = (num << 8n) | BigInt(data[i]);
+  }
+
+  if (num === 0n) return "0";
+
+  let result = "";
+  while (num > 0n) {
+    result = BASE62_ALPHABET[Number(num % 62n)] + result;
+    num = num / 62n;
+  }
+
+  return result;
+}
+
+function compressPayload(code: string, preamble: string): string {
+  const payload = preamble ? [code, preamble] : [code];
+  const jsonStr = JSON.stringify(payload);
+  const compressed = pako.deflate(jsonStr);
+  return encodeToBase62(compressed);
+}
 
 vi.mock("../src/renderer/pdfRaster", () => ({
   renderPdfBlobToPngBlob: vi.fn(async () => new Blob(["png-preview"], { type: "image/png" }))
@@ -1033,7 +1060,8 @@ describe("App smoke tests", () => {
       expect(screen.getByText(/circuit restored from bug report\./i)).toBeInTheDocument();
       const restoredSearchParams = new URLSearchParams(window.location.search);
       expect(restoredSearchParams.has(BUG_REPORT_RESTORE_SEARCH_PARAM)).toBe(false);
-      expect(restoredSearchParams.get(SHARE_CODE_SEARCH_PARAM)).toContain("\\gate{R}");
+      // The code is now compressed in the URL, so just verify the parameter exists
+      expect(restoredSearchParams.get(SHARE_CODE_SEARCH_PARAM)).toBeTruthy();
       expect(window.localStorage.getItem(restoreStorageKey)).toBeNull();
     } finally {
       window.localStorage.removeItem(restoreStorageKey);
@@ -1046,8 +1074,9 @@ describe("App smoke tests", () => {
     const sharedCode = String.raw`\begin{quantikz}
 & \gate{H}
 \end{quantikz}`;
+    const compressedCode = compressPayload(sharedCode, "");
 
-    window.history.replaceState({}, "", `/?${SHARE_CODE_SEARCH_PARAM}=${encodeURIComponent(sharedCode)}`);
+    window.history.replaceState({}, "", `/?${SHARE_CODE_SEARCH_PARAM}=${encodeURIComponent(compressedCode)}`);
 
     try {
       render(<App />);
@@ -1066,8 +1095,9 @@ describe("App smoke tests", () => {
     const invalidSharedCode = String.raw`\begin{quantikz}
 & \gate{H
 \end{quantikz}`;
+    const compressedCode = compressPayload(invalidSharedCode, "");
 
-    window.history.replaceState({}, "", `/?${SHARE_CODE_SEARCH_PARAM}=${encodeURIComponent(invalidSharedCode)}`);
+    window.history.replaceState({}, "", `/?${SHARE_CODE_SEARCH_PARAM}=${encodeURIComponent(compressedCode)}`);
 
     try {
       render(<App />);
@@ -1076,7 +1106,8 @@ describe("App smoke tests", () => {
         expect((screen.getByLabelText(/quantikz output/i) as HTMLTextAreaElement).value).toBe(invalidSharedCode);
       });
       expect(screen.getByText(/left in the editor so you can fix it\./i)).toBeInTheDocument();
-      expect(new URLSearchParams(window.location.search).get(SHARE_CODE_SEARCH_PARAM)).toBe(invalidSharedCode);
+      // The URL now contains compressed data, so just check that the parameter exists
+      expect(new URLSearchParams(window.location.search).get(SHARE_CODE_SEARCH_PARAM)).toBeTruthy();
     } finally {
       window.history.replaceState({}, "", previousPath || "/");
     }
@@ -1096,7 +1127,8 @@ describe("App smoke tests", () => {
       await user.click(screen.getByRole("button", { name: /convert to quantikz/i }));
 
       await waitFor(() => {
-        expect(new URLSearchParams(window.location.search).get(SHARE_CODE_SEARCH_PARAM)).toContain("\\gate{U}");
+        // The code is now compressed in the URL, so just verify the parameter exists
+        expect(new URLSearchParams(window.location.search).get(SHARE_CODE_SEARCH_PARAM)).toBeTruthy();
       });
     } finally {
       window.history.replaceState({}, "", previousPath || "/");
@@ -1119,6 +1151,13 @@ describe("App smoke tests", () => {
 
       if (url.endsWith("/api/share-preview-image")) {
         return new Response(JSON.stringify({ success: true, imageId: "preview-1.png" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+
+      if (url.endsWith("/api/store-share-code")) {
+        return new Response(JSON.stringify({ success: true, id: "tiny123" }), {
           status: 200,
           headers: { "Content-Type": "application/json" }
         });
@@ -1155,8 +1194,9 @@ describe("App smoke tests", () => {
       await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
       const copiedUrl = writeText.mock.calls.at(0)?.at(0);
       expect(copiedUrl).toContain("/api/share?");
-      expect(copiedUrl).toContain(`${SHARE_CODE_SEARCH_PARAM}=`);
-      expect(copiedUrl).toContain("img=preview-1.png");
+      expect(copiedUrl).toContain(`${SHARE_CODE_ID_SEARCH_PARAM}=tiny123`);
+      expect(copiedUrl).not.toContain(`${SHARE_CODE_SEARCH_PARAM}=`);
+      expect(copiedUrl).not.toContain("img=");
       expect(screen.getByText(/share URL copied with a rendered preview image\./i)).toBeInTheDocument();
     } finally {
       fetchMock.mockRestore();

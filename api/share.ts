@@ -1,6 +1,49 @@
+import { logTinyShareUsage } from "../src/server/shareUsage.js";
+
 const SHARE_CODE_SEARCH_PARAM = "q";
+const SHARE_CODE_ID_SEARCH_PARAM = "s";
 const SHARE_PREAMBLE_SEARCH_PARAM = "qp";
 const SHARE_PREVIEW_IMAGE_ID_SEARCH_PARAM = "img";
+
+const BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+
+function decodeFromBase62(str: string): Uint8Array {
+  let num = 0n;
+  for (let i = 0; i < str.length; i++) {
+    const digit = BASE62_ALPHABET.indexOf(str[i]);
+    if (digit === -1) throw new Error(`Invalid Base62 character: ${str[i]}`);
+    num = num * 62n + BigInt(digit);
+  }
+
+  const bytes: number[] = [];
+  while (num > 0n) {
+    bytes.unshift(Number(num & 0xffn));
+    num = num >> 8n;
+  }
+
+  return new Uint8Array(bytes);
+}
+
+async function decompressPayload(compressed: string): Promise<{ code?: string; preamble?: string } | null> {
+  try {
+    // Dynamic import for Node.js
+    const pako = (await import("pako")).default;
+    const decoded = decodeFromBase62(compressed);
+    const decompressed = pako.inflate(decoded, { to: "string" });
+    const payload = JSON.parse(decompressed);
+    
+    if (!Array.isArray(payload) || !payload[0]) {
+      return null;
+    }
+
+    return {
+      code: payload[0],
+      preamble: payload[1] || ""
+    };
+  } catch {
+    return null;
+  }
+}
 
 function buildSharedCircuitUrl(origin: string, code: string, preamble: string): string {
   const appUrl = new URL("/", origin);
@@ -44,12 +87,50 @@ export default async function handler(request: any, response: any): Promise<void
     return;
   }
 
-  const code = readQueryString(request.query?.[SHARE_CODE_SEARCH_PARAM]);
-  const preamble = readQueryString(request.query?.[SHARE_PREAMBLE_SEARCH_PARAM]);
-  const imageId = readQueryString(request.query?.[SHARE_PREVIEW_IMAGE_ID_SEARCH_PARAM]);
+  const compressedPayload = readQueryString(request.query?.[SHARE_CODE_SEARCH_PARAM]);
+  const shortId = readQueryString(request.query?.[SHARE_CODE_ID_SEARCH_PARAM]);
+  const imageIdFromQuery = readQueryString(request.query?.[SHARE_PREVIEW_IMAGE_ID_SEARCH_PARAM]);
+
+  let code = "";
+  let preamble = "";
+  let imageIdFromStore = "";
+  let resolvedShortId = false;
+
+  // Try short ID first (new format)
+  if (shortId) {
+    try {
+      const { retrieveShareCode } = await import("../src/server/shareCodeStore.js");
+      const stored = await retrieveShareCode(shortId);
+      if (stored) {
+        code = stored.code ?? "";
+        preamble = stored.preamble ?? "";
+        imageIdFromStore = stored.previewImageId ?? "";
+        resolvedShortId = true;
+      }
+    } catch (error) {
+      // Fall through to try compressed payload
+    }
+
+    // Logging is non-blocking for user flow. Failures should not break redirects.
+    try {
+      await logTinyShareUsage(shortId, resolvedShortId, request);
+    } catch {
+      // Ignore logging errors
+    }
+  }
+
+  // Fall back to compressed payload (old format, for backward compatibility)
+  if (!code && compressedPayload) {
+    const payload = await decompressPayload(compressedPayload);
+    if (payload) {
+      code = payload.code ?? "";
+      preamble = payload.preamble ?? "";
+    }
+  }
 
   const origin = resolveOrigin(request);
   const appUrl = buildSharedCircuitUrl(origin, code, preamble);
+  const imageId = imageIdFromQuery || imageIdFromStore;
   // imageId is either a full Vercel Blob CDN URL (production) or a filename (local dev).
   const imageUrl = imageId
     ? (imageId.startsWith("https://") ? imageId : `${origin}/api/share-preview-image?id=${encodeURIComponent(imageId)}`)

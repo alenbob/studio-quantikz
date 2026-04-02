@@ -15,6 +15,7 @@ import {
 } from "./document";
 import {
   buildShareLandingUrl,
+  buildShareLandingUrlWithServerStorage,
   buildSharedCircuitUrl,
   readSharedCircuitFromSearch
 } from "./shareUrl";
@@ -1367,7 +1368,7 @@ export default function App(): JSX.Element {
       const pdfBlob = await fetchQuantikzPdf(state.exportCode, state.exportPreamble);
       const pngBlob = await renderPdfBlobToPngBlob(pdfBlob);
       const imageId = await uploadSharePreviewImage(pngBlob);
-      const shareUrl = buildShareLandingUrl(window.location.href, state.exportCode, state.exportPreamble, imageId);
+      const shareUrl = await buildShareLandingUrlWithServerStorage(window.location.href, state.exportCode, state.exportPreamble, imageId);
 
       if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
         await navigator.clipboard.writeText(shareUrl);

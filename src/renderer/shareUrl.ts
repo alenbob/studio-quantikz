@@ -1,6 +1,8 @@
+import pako from "pako";
 import { DEFAULT_EXPORT_PREAMBLE } from "./document";
 
 export const SHARE_CODE_SEARCH_PARAM = "q";
+export const SHARE_CODE_ID_SEARCH_PARAM = "s";
 export const SHARE_PREAMBLE_SEARCH_PARAM = "qp";
 export const SHARE_PREVIEW_IMAGE_ID_SEARCH_PARAM = "img";
 
@@ -9,20 +11,98 @@ export interface SharedCircuitPayload {
   preamble: string;
 }
 
+const BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+
+function encodeToBase62(data: Uint8Array): string {
+  let num = 0n;
+  for (let i = 0; i < data.length; i++) {
+    num = (num << 8n) | BigInt(data[i]);
+  }
+
+  if (num === 0n) return "0";
+
+  let result = "";
+  while (num > 0n) {
+    result = BASE62_ALPHABET[Number(num % 62n)] + result;
+    num = num / 62n;
+  }
+
+  return result;
+}
+
+function decodeFromBase62(str: string): Uint8Array {
+  let num = 0n;
+  for (let i = 0; i < str.length; i++) {
+    const digit = BASE62_ALPHABET.indexOf(str[i]);
+    if (digit === -1) throw new Error(`Invalid Base62 character: ${str[i]}`);
+    num = num * 62n + BigInt(digit);
+  }
+
+  const bytes: number[] = [];
+  while (num > 0n) {
+    bytes.unshift(Number(num & 0xffn));
+    num = num >> 8n;
+  }
+
+  return new Uint8Array(bytes);
+}
+
+function compressPayload(code: string, preamble: string): string {
+  // Use array format: [code, preamble] - shorter than object notation
+  // Only include preamble if it's non-empty, using null as marker for default
+  const payload = preamble ? [code, preamble] : [code];
+  const jsonStr = JSON.stringify(payload);
+  const compressed = pako.deflate(jsonStr);
+  return encodeToBase62(compressed);
+}
+
+function decompressPayload(compressed: string): { code: string; preamble: string } | null {
+  try {
+    const decoded = decodeFromBase62(compressed);
+    const decompressed = pako.inflate(decoded, { to: "string" });
+    const payload = JSON.parse(decompressed);
+    
+    if (!Array.isArray(payload) || !payload[0]) {
+      return null;
+    }
+
+    return {
+      code: payload[0],
+      preamble: payload[1] || ""
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function readSharedCircuitFromSearch(
   locationSearch: string,
   fallbackPreamble = DEFAULT_EXPORT_PREAMBLE
 ): SharedCircuitPayload | null {
   const params = new URLSearchParams(locationSearch);
-  const code = params.get(SHARE_CODE_SEARCH_PARAM);
+  
+  // Try short ID first (new format - just a tiny string stored server-side)
+  const shortId = params.get(SHARE_CODE_ID_SEARCH_PARAM);
+  if (shortId) {
+    // Don't decompress - the app will fetch from server when needed
+    // For now, we return null and let the App component handle fetching
+    return null;
+  }
 
-  if (!code) {
+  // Fall back to compressed payload (old format)
+  const compressed = params.get(SHARE_CODE_SEARCH_PARAM);
+  if (!compressed) {
+    return null;
+  }
+
+  const payload = decompressPayload(compressed);
+  if (!payload) {
     return null;
   }
 
   return {
-    code,
-    preamble: params.get(SHARE_PREAMBLE_SEARCH_PARAM) ?? fallbackPreamble
+    code: payload.code,
+    preamble: payload.preamble || fallbackPreamble
   };
 }
 
@@ -41,41 +121,39 @@ export function buildSharedCircuitUrl(
     return nextUrl.toString();
   }
 
-  nextUrl.searchParams.set(SHARE_CODE_SEARCH_PARAM, code);
-
-  if (preamble.trim() && preamble !== fallbackPreamble) {
-    nextUrl.searchParams.set(SHARE_PREAMBLE_SEARCH_PARAM, preamble);
-  } else {
-    nextUrl.searchParams.delete(SHARE_PREAMBLE_SEARCH_PARAM);
-  }
+  const compressedPayload = compressPayload(code, preamble !== fallbackPreamble ? preamble : "");
+  nextUrl.searchParams.set(SHARE_CODE_SEARCH_PARAM, compressedPayload);
+  nextUrl.searchParams.delete(SHARE_PREAMBLE_SEARCH_PARAM);
 
   return nextUrl.toString();
 }
 
-export function buildShareLandingUrl(
+export async function buildShareLandingUrlWithServerStorage(
   currentUrl: string,
   code: string,
   preamble: string,
   previewImageId?: string
-): string {
+): Promise<string> {
   const current = new URL(currentUrl);
-  const appUrl = buildSharedCircuitUrl(`${current.origin}/`, code, preamble);
-  const appUrlParams = new URL(appUrl).searchParams;
+  
+  // Store code server-side and get short ID.
+  // We no longer generate legacy long q= share links.
+  const response = await fetch("/api/store-share-code", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      code,
+      preamble,
+      previewImageId: previewImageId?.trim() || ""
+    })
+  });
+
+  const data = await response.json();
+  if (!response.ok || !data?.success || typeof data.id !== "string" || !data.id.trim()) {
+    throw new Error("Unable to create tiny share link.");
+  }
+
   const shareUrl = new URL("/api/share", current.origin);
-
-  const codeValue = appUrlParams.get(SHARE_CODE_SEARCH_PARAM);
-  if (codeValue) {
-    shareUrl.searchParams.set(SHARE_CODE_SEARCH_PARAM, codeValue);
-  }
-
-  const preambleValue = appUrlParams.get(SHARE_PREAMBLE_SEARCH_PARAM);
-  if (preambleValue) {
-    shareUrl.searchParams.set(SHARE_PREAMBLE_SEARCH_PARAM, preambleValue);
-  }
-
-  if (previewImageId?.trim()) {
-    shareUrl.searchParams.set(SHARE_PREVIEW_IMAGE_ID_SEARCH_PARAM, previewImageId.trim());
-  }
-
+  shareUrl.searchParams.set(SHARE_CODE_ID_SEARCH_PARAM, data.id.trim());
   return shareUrl.toString();
 }
