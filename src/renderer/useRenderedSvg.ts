@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { buildApiUrl } from "./api";
 
 type SvgAvailabilityState = "checking" | "enabled" | "disabled";
 type RenderedSvgState = "idle" | "loading" | "ready" | "error";
@@ -30,7 +31,7 @@ function isAbortError(error: unknown): boolean {
 }
 
 async function fetchSvgStatus(signal: AbortSignal): Promise<SvgStatusResponse> {
-  const response = await fetch("/api/render-svg", {
+  const response = await fetch(buildApiUrl("/api/render-svg"), {
     method: "GET",
     signal
   });
@@ -43,7 +44,7 @@ async function fetchSvgStatus(signal: AbortSignal): Promise<SvgStatusResponse> {
 }
 
 async function fetchSvgMarkup(code: string, preamble: string, signal: AbortSignal): Promise<string> {
-  const response = await fetch("/api/render-svg", {
+  const response = await fetch(buildApiUrl("/api/render-svg"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json"

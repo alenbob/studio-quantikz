@@ -1,4 +1,5 @@
 import { buildStandaloneQuantikzDocument } from "./document";
+import { buildApiUrl } from "./api";
 import { renderPdfBlobToPngBlob } from "./pdfRaster";
 
 export type DownloadFormat = "tex" | "pdf" | "svg";
@@ -28,7 +29,7 @@ export function downloadBlob(blob: Blob, filename: string): void {
 }
 
 export async function fetchQuantikzPdf(code: string, preamble: string): Promise<Blob> {
-  const response = await fetch("/api/render-pdf", {
+  const response = await fetch(buildApiUrl("/api/render-pdf"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
@@ -127,7 +128,7 @@ export async function buildDownloadBlob(
       return new Blob([options.svgMarkup], { type: "image/svg+xml;charset=utf-8" });
     }
 
-    const response = await fetch("/api/render-svg", {
+    const response = await fetch(buildApiUrl("/api/render-svg"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json"

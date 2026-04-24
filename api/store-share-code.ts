@@ -1,3 +1,4 @@
+import { handleCors } from "./_cors.js";
 import { storeShareCode } from "../src/server/shareCodeStore.js";
 
 function readQueryString(value: unknown): string {
@@ -17,6 +18,10 @@ function jsonResponse(response: any, statusCode: number, payload: unknown): void
  * Response: { success: true, id: string } or { success: false, error: string }
  */
 export default async function handler(request: any, response: any): Promise<void> {
+  if (handleCors(request, response)) {
+    return;
+  }
+
   if (request.method !== "POST") {
     jsonResponse(response, 405, { success: false, error: "Method not allowed." });
     return;

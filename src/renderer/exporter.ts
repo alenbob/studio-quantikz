@@ -865,27 +865,6 @@ export function exportToQuantikz(state: EditorState): string {
       break;
     }
 
-    const trailingBoundaryCol = lastIncludedCol + 1;
-    const trailingBoundaryKey = wireKey(rowIndex, trailingBoundaryCol);
-    const trailingBoundaryHorizontal = horizontalSegmentsByKey.get(trailingBoundaryKey);
-    const rowEndsWithWire = lastIncludedCol >= 0 && trailingBoundaryCol <= state.steps && !suppressedCells.has(trailingBoundaryKey) && !(
-      trailingBoundaryHorizontal
-        ? isAbsentHorizontalSegment(trailingBoundaryHorizontal)
-        : implicitlyAbsentHorizontalKeys.has(trailingBoundaryKey)
-    );
-
-    const compactedCells = renderedCells;
-    const renderedParts = lastIncludedCol >= 0
-      ? compactedCells
-        .slice(0, Math.min(lastIncludedCol, compactedCells.length - 1) + 1)
-        .map((tokens) => orderCellCommands(tokens).join(" ").trim())
-      : [];
-
-    if (rowEndsWithWire) {
-      renderedParts.push("");
-    }
-
-    const rendered = renderedParts.join(" & ");
     const leftSpan = getWireLabelSpan(state.wireLabels[rowIndex], "left");
     const rightSpan = getWireLabelSpan(state.wireLabels[rowIndex], "right");
     const leftBracket = getWireLabelBracket(state.wireLabels[rowIndex], "left");
@@ -900,11 +879,17 @@ export function exportToQuantikz(state: EditorState): string {
         : formatLabelForQuantikz(state.wireLabels[rowIndex]?.right ?? "");
     const leftOptions =
       leftSpan > 1
-        ? `wires=${leftSpan},braces=${leftBracket === "brace" ? "right" : "none"}`
+        ? wrapOptionBlock([
+            String(leftSpan),
+            leftBracket === "brace" ? "" : "brackets=none"
+          ])
         : "";
     const rightOptions =
       rightSpan > 1
-        ? `wires=${rightSpan},braces=${rightBracket === "brace" ? "left" : "none"}`
+        ? wrapOptionBlock([
+            String(rightSpan),
+            rightBracket === "brace" ? "" : "brackets=none"
+          ])
         : "";
     const leftCell =
       isWireLabelGroupStart(state.wireLabels, rowIndex, "left") && leftLabel
@@ -918,6 +903,40 @@ export function exportToQuantikz(state: EditorState): string {
           ? `\\rstick[${rightOptions}]{${rightLabel}}`
           : `\\rstick{${rightLabel}}`
         : "";
+
+    const trailingBoundaryCol = lastIncludedCol + 1;
+    const trailingBoundaryKey = wireKey(rowIndex, trailingBoundaryCol);
+    const trailingBoundaryHorizontal = horizontalSegmentsByKey.get(trailingBoundaryKey);
+    const rowEndsWithWire =
+      !rightCell &&
+      lastIncludedCol >= 0 &&
+      trailingBoundaryCol <= state.steps &&
+      !suppressedCells.has(trailingBoundaryKey) &&
+      !(
+        trailingBoundaryHorizontal
+          ? isAbsentHorizontalSegment(trailingBoundaryHorizontal)
+          : implicitlyAbsentHorizontalKeys.has(trailingBoundaryKey)
+      );
+
+    const compactedCells = renderedCells;
+    const renderedParts = lastIncludedCol >= 0
+      ? compactedCells
+        .slice(0, Math.min(lastIncludedCol, compactedCells.length - 1) + 1)
+        .map((tokens) => orderCellCommands(tokens).join(" ").trim())
+      : [];
+
+    if (rowEndsWithWire) {
+      renderedParts.push("");
+    }
+
+    const rendered = renderedParts.join(" & ");
+
+    if (rightCell && !rendered) {
+      if (leftCell) {
+        return `${leftCell} & ${rightCell}`;
+      }
+      return rightCell;
+    }
 
     if (rightCell) {
       return `${leftCell} & ${rendered} & ${rightCell}`;

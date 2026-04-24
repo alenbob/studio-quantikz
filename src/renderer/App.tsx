@@ -138,7 +138,15 @@ const SYMBOLIC_HELP_SECTIONS: Array<{
       },
       {
         label: String.raw`\textsc{UNIFORM}_M, \textsc{UNIFORM}`,
-        description: "On a zero input, \textsc{UNIFORM}_M expands to a normalized symbolic sum \sum_{m=0}^{M-1}\ket{m}/\sqrt{M}. Bare \textsc{UNIFORM} on a named wire such as \ket{0}_a promotes that row to \ket{a}_a."
+        description: "On a zero input, \textsc{UNIFORM}_M expands to a normalized symbolic sum \sum_{m=0}^{M-1}\ket{m}/\sqrt{M}. When the wire has a named subscript such as \ket{0}_\ell, that subscript becomes the sum index, giving \sum_{\ell=0}^{M-1}\ket{\ell}/\sqrt{M}. Bare \textsc{UNIFORM} on a named wire such as \ket{0}_a promotes that row to \ket{a}_a."
+      },
+      {
+        label: String.raw`In, In_a, \text{In}, \mathrm{In}`,
+        description: "Treated as a transparent read gate: acts as the identity on its row, leaving the qubit state unchanged regardless of any subscript parameter."
+      },
+      {
+        label: String.raw`data:add_a, \text{data:add}_a`,
+        description: "When connected to another row via \\wire[d][n]{q}, infers the symbolic value a from the connected row's state and writes \ket{a} to the target if it is \ket{0} (since 0 ⊕ a = a), or \ket{k ⊕ a} if the target holds \ket{k}. With no connector, the gate uses the subscript from the label directly as a. Bare data:add with no connector and no subscript falls back to opaque operator application."
       },
       {
         label: String.raw`\ctrl{...}, \targ{}, \swap{...}`,

@@ -1,3 +1,4 @@
+import { handleCors } from "./_cors.js";
 import { archiveBugReport, listBugReports, readBugReportImage, validateBugReportAdminToken } from "../src/server/bugReports.js";
 import type { BugReportArchiveResponse, BugReportListResponse, BugReportStatus } from "../src/shared/bugReport.js";
 
@@ -50,6 +51,10 @@ function readAdminToken(request: any): string | null {
 }
 
 export default async function handler(request: any, response: any): Promise<void> {
+  if (handleCors(request, response)) {
+    return;
+  }
+
   if (request.method !== "GET" && request.method !== "POST") {
     response.status(405).json({ success: false, error: "Method not allowed." } satisfies BugReportListResponse);
     return;

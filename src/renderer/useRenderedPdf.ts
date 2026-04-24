@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { buildApiUrl } from "./api";
 import { renderPdfBlobToPngBlob } from "./pdfRaster";
 
 type RenderedPdfState = "idle" | "loading" | "ready" | "error";
@@ -15,7 +16,7 @@ function isAbortError(error: unknown): boolean {
 }
 
 async function renderWithApi(code: string, preamble: string, signal: AbortSignal): Promise<Blob> {
-  const response = await fetch("/api/render-pdf", {
+  const response = await fetch(buildApiUrl("/api/render-pdf"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json"

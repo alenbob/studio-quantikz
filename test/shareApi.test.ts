@@ -152,4 +152,52 @@ describe("share api", () => {
     expect(responseState.statusCode).toBe(200);
     expect(responseState.body).toContain('property="og:image" content="https://example.com/api/share-preview-image?id=preview-1.png"');
   });
+
+  it("redirects tiny links to the configured public app url", async () => {
+    const shortId = await storeShareCode(
+      String.raw`\begin{quantikz}& \gate{H}\end{quantikz}`,
+      ""
+    );
+    const previousPublicAppUrl = process.env.PUBLIC_APP_URL;
+    process.env.PUBLIC_APP_URL = "https://alice.github.io/quantikzz/";
+
+    const request = {
+      method: "GET",
+      headers: {
+        host: "example.com",
+        "x-forwarded-proto": "https"
+      },
+      query: {
+        s: shortId
+      }
+    };
+
+    const responseState: { statusCode?: number; body?: string } = {};
+    const response = {
+      setHeader() {
+        return this;
+      },
+      status(code: number) {
+        responseState.statusCode = code;
+        return this;
+      },
+      send(body: string) {
+        responseState.body = body;
+        return this;
+      }
+    };
+
+    try {
+      await handler(request, response);
+    } finally {
+      if (previousPublicAppUrl === undefined) {
+        delete process.env.PUBLIC_APP_URL;
+      } else {
+        process.env.PUBLIC_APP_URL = previousPublicAppUrl;
+      }
+    }
+
+    expect(responseState.statusCode).toBe(200);
+    expect(responseState.body).toContain('window.location.replace("https://alice.github.io/quantikzz/?q=');
+  });
 });

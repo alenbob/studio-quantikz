@@ -1,3 +1,4 @@
+import { handleCors } from "./_cors.js";
 import { storeBugReport } from "../src/server/bugReports.js";
 import type { BugReportPayload, BugReportResponse } from "../src/shared/bugReport.js";
 
@@ -23,6 +24,10 @@ async function readRequestBody(request: { body?: unknown; on: (event: string, cb
 }
 
 export default async function handler(request: any, response: any): Promise<void> {
+  if (handleCors(request, response)) {
+    return;
+  }
+
   if (request.method !== "POST") {
     response.status(405).json({ success: false, error: "Method not allowed." } satisfies BugReportResponse);
     return;

@@ -763,3 +763,87 @@ describe("renderSymbolicLatex", () => {
     expect(result.latex).not.toContain(String.raw`\Pr(q_{1}=0)`);
   }, 15000);
 });
+
+  const UNIFORM_NAMED_WIRE_CIRCUIT = String.raw`\begin{quantikz}
+  \lstick{$\ket{0}_\ell$} & \gate{\textsc{UNIFORM}_{n_{\text{imp}}}}
+  \end{quantikz}`;
+
+  const IN_GATE_IDENTITY_CIRCUIT = String.raw`\begin{quantikz}
+  \lstick{$\ket{0}_{c_0}$} & \gate{In_a}
+  \end{quantikz}`;
+
+  const DATA_ADD_ZERO_TARGET_CIRCUIT = String.raw`\begin{quantikz}
+  \lstick{$\ket{0}_s$} & \gate{UNIFORM} & \wire[d][1]{q} & \\
+  \lstick{$\ket{0}_t$} &  & \gate{data:add} &
+  \end{quantikz}`;
+
+  const DATA_ADD_NONZERO_TARGET_CIRCUIT = String.raw`\begin{quantikz}
+  \lstick{$\ket{0}_s$} & \gate{UNIFORM} & \wire[d][1]{q} & \\
+  \lstick{$\ket{0}_t$} & \gate{X} & \gate{data:add} &
+  \end{quantikz}`;
+
+  const DATA_ADD_STANDALONE_CIRCUIT = String.raw`\begin{quantikz}
+  \lstick{$\ket{0}_t$} & \gate{data:add_k} &
+  \end{quantikz}`;
+
+  const DATA_ADD_CORRELATED_SUM_CIRCUIT = String.raw`\begin{quantikz}[row sep={0.9cm,between origins}, column sep=0.4cm]
+  \lstick{$\ket{0}_\ell$} & \gate{\textsc{UNIFORM}_{n_{\text{imp}}}} & \gate{\text{In}_\ell} \wire[d][1]{q} &  \\
+  \lstick{$\ket{0}_{add_i}$} &  & \gate{\text{data:add}_\ell} &
+  \end{quantikz}`;
+
+  describe("symbolic interpreter special gate labels", () => {
+    it("uses the wire subscript as the UNIFORM sum index when the wire has a named subscript", async () => {
+      const result = await renderSymbolicLatex(UNIFORM_NAMED_WIRE_CIRCUIT);
+
+      expect(result).toMatchObject({ success: true, envIndex: 0 });
+      if (!result.success) throw new Error(result.error);
+
+      expect(result.latex).toContain(String.raw`\sum_{\ell=0}^{n_{\text{imp}}-1} \ket{\ell}`);
+      expect(result.latex).not.toContain(String.raw`\sum_{n=0}`);
+    }, 15000);
+
+    it("treats In_a as identity — source row state is unchanged", async () => {
+      const result = await renderSymbolicLatex(IN_GATE_IDENTITY_CIRCUIT);
+
+      expect(result).toMatchObject({ success: true, envIndex: 0 });
+      if (!result.success) throw new Error(result.error);
+
+      expect(result.latex).toContain(String.raw`\ket{\Psi_{1}} = \ket{0}_{c_0}`);
+    }, 15000);
+
+    it("data:add on a zero target copies the connected row value (0 ⊕ s = s)", async () => {
+      const result = await renderSymbolicLatex(DATA_ADD_ZERO_TARGET_CIRCUIT);
+
+      expect(result).toMatchObject({ success: true, envIndex: 0 });
+      if (!result.success) throw new Error(result.error);
+
+      expect(result.latex).toContain(String.raw`\ket{s}_{s} \otimes \ket{s}_{t}`);
+    }, 15000);
+
+    it("data:add on a non-zero target writes k ⊕ s to the target row", async () => {
+      const result = await renderSymbolicLatex(DATA_ADD_NONZERO_TARGET_CIRCUIT);
+
+      expect(result).toMatchObject({ success: true, envIndex: 0 });
+      if (!result.success) throw new Error(result.error);
+
+      expect(result.latex).toContain(String.raw`\ket{1 \oplus s}_{t}`);
+    }, 15000);
+
+    it("standalone data:add_k (no connected wire) writes |k⟩ to a zero target", async () => {
+      const result = await renderSymbolicLatex(DATA_ADD_STANDALONE_CIRCUIT);
+
+      expect(result).toMatchObject({ success: true, envIndex: 0 });
+      if (!result.success) throw new Error(result.error);
+
+      expect(result.latex).toContain(String.raw`\ket{k}_{t}`);
+    }, 15000);
+
+    it("renders the connected UNIFORM/In/data:add result as a correlated shared-index sum", async () => {
+      const result = await renderSymbolicLatex(DATA_ADD_CORRELATED_SUM_CIRCUIT);
+
+      expect(result).toMatchObject({ success: true, envIndex: 0 });
+      if (!result.success) throw new Error(result.error);
+
+      expect(result.latex).toContain(String.raw`\frac{1}{\sqrt{n_{\text{imp}}}} \sum_{\ell=0}^{n_{\text{imp}}-1} \ket{\ell}_{\ell} \otimes \ket{\ell}_{add_i}`);
+    }, 15000);
+  });

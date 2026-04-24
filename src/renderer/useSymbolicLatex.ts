@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { buildApiUrl, hasConfiguredApiBaseUrl } from "./api";
 import type { SymbolicLatexResponse } from "../shared/symbolicLatex";
 
 type SymbolicLatexState = "idle" | "loading" | "ready" | "error";
@@ -27,7 +28,11 @@ function summarizeResponseBody(body: string): string {
 }
 
 async function generateWithApi(code: string, signal: AbortSignal): Promise<string> {
-  const endpoint = import.meta.env.DEV ? "/api/symbolic-latex-dev" : "/api/symbolic-latex";
+  const endpoint = buildApiUrl(
+    hasConfiguredApiBaseUrl() || !import.meta.env.DEV
+      ? "/api/symbolic-latex"
+      : "/api/symbolic-latex-dev"
+  );
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {

@@ -1,3 +1,4 @@
+import { handleCors } from "./_cors.js";
 import { getLocalSvgRuntimeStatus, renderQuantikzSvg } from "../src/server/renderQuantikz.js";
 
 async function readRequestBody(request: { body?: unknown; on: (event: string, cb: (chunk: Buffer | string) => void) => void }): Promise<string> {
@@ -22,6 +23,10 @@ async function readRequestBody(request: { body?: unknown; on: (event: string, cb
 }
 
 export default async function handler(request: any, response: any): Promise<void> {
+  if (handleCors(request, response)) {
+    return;
+  }
+
   if (request.method === "GET") {
     const runtimeStatus = await getLocalSvgRuntimeStatus();
     response.status(200).json({

@@ -467,8 +467,8 @@ describe("importFromQuantikz", () => {
 
   it("imports merged wire labels with their span metadata", () => {
     const code = String.raw`% quantikzz-wirelabel:left:0:2:brace
-\begin{quantikz}
-\lstick[wires=2,braces=right]{input} & \gate{H} \\
+  \begin{quantikz}
+  \lstick[2]{input} & \gate{H} \\
  & \qw
 \end{quantikz}`;
 
@@ -481,7 +481,7 @@ describe("importFromQuantikz", () => {
 
   it("imports a right label that shares its last cell with a qw command", () => {
     const code = String.raw`\begin{quantikz}
-\lstick{$\ket{0}$} & \gate{H} & \rstick[wires=2]{$out$}\qw \\
+  \lstick{$\ket{0}$} & \gate{H} & \rstick[2]{$out$}\qw \\
 \lstick{$\ket{0}$} & \qw & \qw
 \end{quantikz}`;
 
@@ -494,8 +494,8 @@ describe("importFromQuantikz", () => {
   });
 
   it("imports a right label with a matrix phantom and math delimiters", () => {
-    const code = String.raw`\begin{quantikz}[row sep={0.9cm,between origins}, column sep=0.7cm]
- & \qw & \qw & \qw & \qw & \qw & \rstick[wires=2,braces=none]{$\left[\vphantom{\begin{matrix}.\\.\end{matrix}}\right.$} \\
+     const code = String.raw`\begin{quantikz}[row sep={0.9cm,between origins}, column sep=0.7cm]
+   & \qw & \qw & \qw & \qw & \qw & \rstick[2,brackets=none]{$\left[\vphantom{\begin{matrix}.\\.\end{matrix}}\right.$} \\
  & \qw & \qw & \qw & \qw & \qw & \\
  & \qw & \qw & \qw & \qw & \qw &
 \end{quantikz}`;

@@ -5,6 +5,16 @@ import { archiveBugReport, listBugReports, readBugReportImage, validateBugReport
 import { renderQuantikzPdf, renderQuantikzSvg } from "./src/server/renderQuantikz";
 import { renderSymbolicLatex } from "./src/server/renderSymbolicLatex";
 
+function normalizeBasePath(value: string | undefined): string {
+  const trimmed = value?.trim();
+  if (!trimmed || trimmed === "/") {
+    return "/";
+  }
+
+  const withLeadingSlash = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  return withLeadingSlash.endsWith("/") ? withLeadingSlash : `${withLeadingSlash}/`;
+}
+
 async function readJsonBody(request: IncomingMessage): Promise<{ code?: string; preamble?: string; envIndex?: number }> {
   return new Promise((resolve, reject) => {
     let data = "";
@@ -66,6 +76,7 @@ function readBugReportAdminToken(headers: IncomingMessage["headers"]): string | 
 }
 
 export default defineConfig({
+  base: normalizeBasePath(process.env.VITE_BASE_PATH),
   plugins: [
     react(),
     {

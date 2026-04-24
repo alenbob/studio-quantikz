@@ -460,10 +460,52 @@
       const reportsNode = document.getElementById("reports");
 
       const SESSION_KEY = "quantikzz_bug_report_admin_token";
+      const API_BASE_SEARCH_PARAM = "apiBase";
+      const API_BASE_STORAGE_KEY = "quantikzz_bug_report_api_base";
       const RESTORE_SEARCH_PARAM = "bugReportRestore";
       const RESTORE_STORAGE_PREFIX = "quantikzz_bug_report_restore_";
       let currentView = "active";
       let reports = [];
+
+      function normalizeApiBaseUrl(value) {
+        if (typeof value !== "string" || !value.trim()) {
+          return "";
+        }
+
+        try {
+          const parsed = new URL(value.trim());
+          parsed.search = "";
+          parsed.hash = "";
+          if (!parsed.pathname.endsWith("/")) {
+            parsed.pathname = `${parsed.pathname}/`;
+          }
+          return parsed.toString();
+        } catch {
+          return "";
+        }
+      }
+
+      function resolveApiBaseUrl() {
+        const params = new URLSearchParams(window.location.search);
+        const fromQuery = normalizeApiBaseUrl(params.get(API_BASE_SEARCH_PARAM));
+        if (fromQuery) {
+          localStorage.setItem(API_BASE_STORAGE_KEY, fromQuery);
+          return fromQuery;
+        }
+
+        return normalizeApiBaseUrl(localStorage.getItem(API_BASE_STORAGE_KEY));
+      }
+
+      const apiBaseUrl = resolveApiBaseUrl();
+
+      function buildApiUrl(path) {
+        const normalizedPath = String(path || "").replace(/^\/+/, "");
+        if (!apiBaseUrl) {
+          return `/${normalizedPath}`;
+        }
+
+        return new URL(normalizedPath, apiBaseUrl).toString();
+      }
 
       function getReportComment(report) {
         if (typeof report.description === "string" && report.description.trim()) {
@@ -858,7 +900,7 @@
           }
 
           try {
-            const response = await fetch(`/api/bug-reports?storageKey=${encodeURIComponent(storageKey)}`, {
+            const response = await fetch(`${buildApiUrl("/api/bug-reports")}?storageKey=${encodeURIComponent(storageKey)}`, {
               headers: {
                 Authorization: `Bearer ${token}`
               }
@@ -889,7 +931,7 @@
 
         try {
           const limit = Math.max(1, Math.min(200, Number.parseInt(limitInput.value || "50", 10) || 50));
-          const response = await fetch(`/api/bug-reports?limit=${limit}&status=${encodeURIComponent(currentView)}`, {
+          const response = await fetch(`${buildApiUrl("/api/bug-reports")}?limit=${limit}&status=${encodeURIComponent(currentView)}`, {
             headers: {
               Authorization: `Bearer ${token}`
             }
@@ -920,7 +962,7 @@
         setStatus("Archiving report...");
 
         try {
-          const response = await fetch("/api/bug-reports", {
+          const response = await fetch(buildApiUrl("/api/bug-reports"), {
             method: "POST",
             headers: {
               "Content-Type": "application/json",

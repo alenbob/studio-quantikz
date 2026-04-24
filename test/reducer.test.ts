@@ -570,6 +570,56 @@ describe("editorReducer selection workflows", () => {
     });
   });
 
+  it("draws a classical vertical wire when drawing downward directly from a meter cell", () => {
+    const withMeter = editorReducer(initialState, {
+      type: "addMeterFromArea",
+      start: { row: 0, col: 0 },
+      endRow: 0
+    });
+
+    const next = editorReducer(withMeter, {
+      type: "drawWire",
+      start: { row: 0, col: 0 },
+      end: { row: 1, col: 0 }
+    });
+
+    expect(
+      next.items.find(
+        (item) => item.type === "verticalConnector" && item.point.row === 0 && item.point.col === 0
+      )
+    ).toMatchObject({
+      type: "verticalConnector",
+      point: { row: 0, col: 0 },
+      length: 1,
+      wireType: "classical"
+    });
+  });
+
+  it("draws a classical vertical wire when drawing upward directly from a meter cell", () => {
+    const withMeter = editorReducer(initialState, {
+      type: "addMeterFromArea",
+      start: { row: 1, col: 0 },
+      endRow: 1
+    });
+
+    const next = editorReducer(withMeter, {
+      type: "drawWire",
+      start: { row: 1, col: 0 },
+      end: { row: 0, col: 0 }
+    });
+
+    expect(
+      next.items.find(
+        (item) => item.type === "verticalConnector" && item.point.row === 0 && item.point.col === 0
+      )
+    ).toMatchObject({
+      type: "verticalConnector",
+      point: { row: 0, col: 0 },
+      length: 1,
+      wireType: "classical"
+    });
+  });
+
   it("draws a vertical wire between two snapped grid points", () => {
     const next = editorReducer(initialState, {
       type: "drawWire",

@@ -1,11 +1,34 @@
 import { logTinyShareUsage } from "../src/server/shareUsage.js";
 
+import { handleCors } from "./_cors.js";
+
 const SHARE_CODE_SEARCH_PARAM = "q";
 const SHARE_CODE_ID_SEARCH_PARAM = "s";
-const SHARE_PREAMBLE_SEARCH_PARAM = "qp";
 const SHARE_PREVIEW_IMAGE_ID_SEARCH_PARAM = "img";
+const PUBLIC_APP_URL_ENV = "PUBLIC_APP_URL";
 
 const BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+
+async function loadPako() {
+  return (await import("pako")).default;
+}
+
+function encodeToBase62(data: Uint8Array): string {
+  let num = 0n;
+  for (let i = 0; i < data.length; i++) {
+    num = (num << 8n) | BigInt(data[i]);
+  }
+
+  if (num === 0n) return "0";
+
+  let result = "";
+  while (num > 0n) {
+    result = BASE62_ALPHABET[Number(num % 62n)] + result;
+    num = num / 62n;
+  }
+
+  return result;
+}
 
 function decodeFromBase62(str: string): Uint8Array {
   let num = 0n;
@@ -26,8 +49,7 @@ function decodeFromBase62(str: string): Uint8Array {
 
 async function decompressPayload(compressed: string): Promise<{ code?: string; preamble?: string } | null> {
   try {
-    // Dynamic import for Node.js
-    const pako = (await import("pako")).default;
+    const pako = await loadPako();
     const decoded = decodeFromBase62(compressed);
     const decompressed = pako.inflate(decoded, { to: "string" });
     const payload = JSON.parse(decompressed);
@@ -45,19 +67,37 @@ async function decompressPayload(compressed: string): Promise<{ code?: string; p
   }
 }
 
-function buildSharedCircuitUrl(origin: string, code: string, preamble: string): string {
-  const appUrl = new URL("/", origin);
-  const trimmedCode = code.trim();
+async function compressPayload(code: string, preamble: string): Promise<string> {
+  const pako = await loadPako();
+  const payload = preamble ? [code, preamble] : [code];
+  const json = JSON.stringify(payload);
+  return encodeToBase62(pako.deflate(json));
+}
 
-  if (!trimmedCode) {
-    return appUrl.toString();
+function normalizeBaseUrl(value: string): string {
+  const parsed = new URL(value);
+  parsed.search = "";
+  parsed.hash = "";
+  if (!parsed.pathname.endsWith("/")) {
+    parsed.pathname = `${parsed.pathname}/`;
+  }
+  return parsed.toString();
+}
+
+function resolveAppBaseUrl(request: any): string {
+  const configured = process.env[PUBLIC_APP_URL_ENV]?.trim();
+  if (configured) {
+    return normalizeBaseUrl(configured);
   }
 
-  appUrl.searchParams.set(SHARE_CODE_SEARCH_PARAM, code);
-  if (preamble.trim()) {
-    appUrl.searchParams.set(SHARE_PREAMBLE_SEARCH_PARAM, preamble);
-  }
+  return normalizeBaseUrl(resolveOrigin(request));
+}
 
+function buildSharedCircuitUrl(appBaseUrl: string, compressedPayload: string): string {
+  const appUrl = new URL(appBaseUrl);
+  if (compressedPayload.trim()) {
+    appUrl.searchParams.set(SHARE_CODE_SEARCH_PARAM, compressedPayload);
+  }
   return appUrl.toString();
 }
 
@@ -82,17 +122,22 @@ function resolveOrigin(request: any): string {
 }
 
 export default async function handler(request: any, response: any): Promise<void> {
+  if (handleCors(request, response)) {
+    return;
+  }
+
   if (request.method !== "GET") {
     response.status(405).send("Method not allowed.");
     return;
   }
 
-  const compressedPayload = readQueryString(request.query?.[SHARE_CODE_SEARCH_PARAM]);
+  const compressedPayloadFromQuery = readQueryString(request.query?.[SHARE_CODE_SEARCH_PARAM]);
   const shortId = readQueryString(request.query?.[SHARE_CODE_ID_SEARCH_PARAM]);
   const imageIdFromQuery = readQueryString(request.query?.[SHARE_PREVIEW_IMAGE_ID_SEARCH_PARAM]);
 
   let code = "";
   let preamble = "";
+  let compressedPayload = "";
   let imageIdFromStore = "";
   let resolvedShortId = false;
 
@@ -104,6 +149,7 @@ export default async function handler(request: any, response: any): Promise<void
       if (stored) {
         code = stored.code ?? "";
         preamble = stored.preamble ?? "";
+        compressedPayload = await compressPayload(code, preamble);
         imageIdFromStore = stored.previewImageId ?? "";
         resolvedShortId = true;
       }
@@ -120,16 +166,17 @@ export default async function handler(request: any, response: any): Promise<void
   }
 
   // Fall back to compressed payload (old format, for backward compatibility)
-  if (!code && compressedPayload) {
-    const payload = await decompressPayload(compressedPayload);
+  if (!compressedPayload && compressedPayloadFromQuery) {
+    const payload = await decompressPayload(compressedPayloadFromQuery);
     if (payload) {
       code = payload.code ?? "";
       preamble = payload.preamble ?? "";
+      compressedPayload = compressedPayloadFromQuery;
     }
   }
 
   const origin = resolveOrigin(request);
-  const appUrl = buildSharedCircuitUrl(origin, code, preamble);
+  const appUrl = buildSharedCircuitUrl(resolveAppBaseUrl(request), compressedPayload);
   const imageId = imageIdFromQuery || imageIdFromStore;
   // imageId is either a full Vercel Blob CDN URL (production) or a filename (local dev).
   const imageUrl = imageId

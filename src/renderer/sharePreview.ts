@@ -1,3 +1,5 @@
+import { buildApiUrl } from "./api";
+
 interface SharePreviewUploadResponse {
   success?: boolean;
   imageId?: string;
@@ -20,7 +22,7 @@ export async function uploadSharePreviewImage(pngBlob: Blob): Promise<string> {
     throw new Error("Unable to prepare the share preview image.");
   }
 
-  const response = await fetch("/api/share-preview-image", {
+  const response = await fetch(buildApiUrl("/api/share-preview-image"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json"

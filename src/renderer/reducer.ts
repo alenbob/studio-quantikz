@@ -216,6 +216,20 @@ function getVerticalConnectorWireType(
 ): WireType {
   const endpointRows = [topRow, bottomRow];
 
+  const touchesMeterEndpoint = endpointRows.some((row) =>
+    items.some(
+      (item) =>
+        item.type === "meter" &&
+        item.point.col === col &&
+        row >= item.point.row &&
+        row < item.point.row + (item.span.rows ?? 1)
+    )
+  );
+
+  if (touchesMeterEndpoint) {
+    return "classical";
+  }
+
   return endpointRows.some((row) => {
     const existingSegment = getHorizontalSegmentAt(items, row, col);
     if (existingSegment) {

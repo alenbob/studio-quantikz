@@ -153,6 +153,7 @@ class LogicalSlice:
     label: str
     description: str
     source_columns: list[int]
+    connected_rows: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -455,6 +456,101 @@ def parse_uniform_gate_label(label: str) -> tuple[bool, str | None]:
     return False, None
 
 
+def strip_outer_braces(value: str) -> str:
+    stripped = value.strip()
+    if stripped.startswith("{") and stripped.endswith("}") and len(stripped) >= 2:
+        return stripped[1:-1].strip()
+    return stripped
+
+
+def parse_parameterized_gate_label(label: str, prefixes: tuple[str, ...]) -> str | None:
+    """Return the subscript parameter if label matches a known prefix, empty string for bare match,
+    or None if label does not match any prefix at all."""
+    normalized = label.strip().replace(" ", "")
+    for prefix in prefixes:
+        if normalized == prefix:
+            return ""  # bare match — gate is recognised but has no subscript parameter
+        gate_prefix = prefix + "_"
+        if not normalized.startswith(gate_prefix):
+            continue
+        remainder = strip_outer_braces(normalized[len(gate_prefix) :])
+        return remainder if remainder else ""
+    return None
+
+
+def parse_in_gate_parameter(label: str) -> str | None:
+    return parse_parameterized_gate_label(
+        label,
+        (
+            "In",
+            r"\text{In}",
+            r"\mathrm{In}",
+            r"\operatorname{In}",
+        ),
+    )
+
+
+def parse_data_add_gate_parameter(label: str) -> str | None:
+    return parse_parameterized_gate_label(
+        label,
+        (
+            "data:add",
+            r"\text{data:add}",
+            r"\mathrm{data:add}",
+            r"\operatorname{data:add}",
+        ),
+    )
+
+
+def infer_symbolic_parameter_from_row(term: SymbolicTerm, row: int) -> str | None:
+    factor = get_row_factor(term, row)
+    if factor is None:
+        return None
+    kind, value = factor
+    if kind == "basis":
+        return str(value)
+
+    payload = str(value)
+    parsed = parse_ket_payload(payload)
+    if parsed is not None:
+        return parsed[0]
+
+    sum_match = re.search(r"\\sum_\{([^=]+)=", payload)
+    if sum_match is not None:
+        return sum_match.group(1).strip()
+
+    ket_match = re.search(r"\\ket\{([^{}]+)\}", payload)
+    if ket_match is not None:
+        return ket_match.group(1).strip()
+
+    return None
+
+
+def connected_rows_for_gate(column: dict[str, object], gate_row: int, gate_span: int) -> list[int]:
+    adjacency: dict[int, set[int]] = {}
+
+    def connect(left: int, right: int) -> None:
+        adjacency.setdefault(left, set()).add(right)
+        adjacency.setdefault(right, set()).add(left)
+
+    for source_row, endpoints in column["connectors_to_rows"].items():
+        for endpoint in endpoints:
+            connect(source_row, endpoint)
+
+    active_rows = set(range(gate_row, gate_row + gate_span))
+    reachable_rows = set(active_rows)
+    frontier = list(active_rows)
+    while frontier:
+        row = frontier.pop()
+        for neighbor in adjacency.get(row, set()):
+            if neighbor in reachable_rows:
+                continue
+            reachable_rows.add(neighbor)
+            frontier.append(neighbor)
+
+    return sorted(row for row in reachable_rows if row not in active_rows)
+
+
 def uniform_index_symbol(count_symbol: str) -> str:
     match = re.search(r"[A-Za-z]", count_symbol)
     if match is None:
@@ -512,7 +608,7 @@ def apply_uniform_gate_to_term(
         set_row_local_weight(updated, row, LocalWeight())
         return [updated]
 
-    index_symbol = uniform_index_symbol(count_symbol)
+    index_symbol = row_wire_name(row_labels, row) or uniform_index_symbol(count_symbol)
     expression = rf"\frac{{1}}{{\sqrt{{{count_symbol}}}}} \sum_{{{index_symbol}=0}}^{{{count_symbol}-1}} \ket{{{index_symbol}}}"
     suffix = row_wire_suffix(row_labels, row)
     if suffix is not None:
@@ -745,6 +841,7 @@ def build_logical_slices(row_labels: list[str], grid: list[list[str]]) -> list[L
 
         for gate_row, gate_span, gate_label in current["gates"]:
             controls = controls_for_gate_span(current, gate_row, gate_span)
+            connected_rows = connected_rows_for_gate(current, gate_row, gate_span)
             column_slices.append(
                 (
                     gate_row,
@@ -758,6 +855,7 @@ def build_logical_slices(row_labels: list[str], grid: list[list[str]]) -> list[L
                         label=gate_label,
                         description=controlled_gate_description(gate_label) if controls else gate_description(gate_label),
                         source_columns=[index],
+                        connected_rows=connected_rows,
                     ),
                 )
             )
@@ -1881,7 +1979,42 @@ def apply_gate_to_term(
     span: int,
     label: str,
     row_labels: list[str],
+    connected_rows: list[int] | None = None,
 ) -> list[SymbolicTerm]:
+    if span == 1:
+        in_parameter = parse_in_gate_parameter(label)
+        if in_parameter is not None:
+            return [term.clone()]
+
+        data_add_parameter = parse_data_add_gate_parameter(label)
+        if data_add_parameter is not None and (connected_rows or data_add_parameter):
+            input_symbol = None
+            for source_row in connected_rows:
+                input_symbol = infer_symbolic_parameter_from_row(term, source_row)
+                if input_symbol is not None:
+                    break
+            if input_symbol is None:
+                input_symbol = data_add_parameter
+
+            updated = term.clone()
+            target_factor = get_row_factor(updated, target_row)
+            if target_factor is None:
+                raise ValueError(f"Gate target row {target_row} has no symbolic factor to act on")
+
+            if row_factor_is_zero_state(target_factor):
+                set_row_factor(updated, target_row, ("payload", symbolic_ket_for_row(input_symbol, row_labels, target_row)))
+                return [updated]
+
+            target_expression = row_factor_expression(updated, target_row)
+            if target_expression is None:
+                raise ValueError(f"Gate target row {target_row} has no symbolic factor to act on")
+
+            parsed_target = parse_ket_payload(target_expression)
+            target_body = parsed_target[0] if parsed_target is not None else target_expression
+            xor_body = rf"{target_body} \oplus {input_symbol}"
+            set_row_factor(updated, target_row, ("payload", symbolic_ket_for_row(xor_body, row_labels, target_row)))
+            return [updated]
+
     components = decompose_tensor_product_gate_label(label, span)
     if components is not None:
         evolved_terms = [term.clone()]
@@ -1989,12 +2122,30 @@ def evolve_terms(
                 set_row_local_weight(updated, slice_info.secondary_row, left_weight)
         elif slice_info.kind == "gate":
             assert slice_info.target_row is not None
-            next_terms.extend(apply_gate_to_term(updated, slice_info.target_row, slice_info.span, slice_info.label, row_labels))
+            next_terms.extend(
+                apply_gate_to_term(
+                    updated,
+                    slice_info.target_row,
+                    slice_info.span,
+                    slice_info.label,
+                    row_labels,
+                    slice_info.connected_rows,
+                )
+            )
             continue
         elif slice_info.kind == "controlled_gate":
             assert slice_info.target_row is not None
             if controls_match(updated, slice_info.controls, classical_controls):
-                next_terms.extend(apply_gate_to_term(updated, slice_info.target_row, slice_info.span, slice_info.label, row_labels))
+                next_terms.extend(
+                    apply_gate_to_term(
+                        updated,
+                        slice_info.target_row,
+                        slice_info.span,
+                        slice_info.label,
+                        row_labels,
+                        slice_info.connected_rows,
+                    )
+                )
                 continue
         elif slice_info.kind == "measure":
             next_terms.append(updated)
@@ -2281,6 +2432,74 @@ def wrap_tensor_factor(factor: str, *, wrap_sums: bool = False) -> str:
     if wrap_sums and r"\sum" in stripped:
         return rf"\left({stripped}\right)"
     return stripped
+
+
+def parse_uniform_superposition_factor(factor: str) -> tuple[str, str, str] | None:
+    stripped = factor.strip()
+    outer_match = re.fullmatch(r"\\left\((.*)\\right\)(.*)", stripped)
+    if outer_match is None:
+        return None
+
+    inner_expression = outer_match.group(1).strip()
+    suffix = outer_match.group(2).strip()
+    uniform_match = re.fullmatch(
+        r"\\frac\{1\}\{\\sqrt\{(.+)\}\} \\sum_\{([^=]+)=0\}\^\{(.+)-1\} \\ket\{([^{}]+)\}",
+        inner_expression,
+    )
+    if uniform_match is None:
+        return None
+
+    count_symbol = uniform_match.group(1).strip()
+    sum_index = uniform_match.group(2).strip()
+    upper_symbol = uniform_match.group(3).strip()
+    ket_symbol = uniform_match.group(4).strip()
+    if sum_index != ket_symbol or upper_symbol != count_symbol:
+        return None
+    return count_symbol, sum_index, suffix
+
+
+def render_correlated_uniform_tensor(factors: list[str]) -> str | None:
+    uniform_position: int | None = None
+    uniform_count: str | None = None
+    shared_index: str | None = None
+    source_suffix: str | None = None
+
+    for position, factor in enumerate(factors):
+        parsed_uniform = parse_uniform_superposition_factor(factor)
+        if parsed_uniform is None:
+            continue
+        if uniform_position is not None:
+            return None
+        uniform_position = position
+        uniform_count, shared_index, source_suffix = parsed_uniform
+
+    if uniform_position is None or uniform_count is None or shared_index is None or source_suffix is None:
+        return None
+
+    tensor_factors: list[str] = []
+    has_additional_correlated_factor = False
+    for position, factor in enumerate(factors):
+        if position == uniform_position:
+            tensor_factors.append(rf"\ket{{{shared_index}}}{source_suffix}")
+            continue
+
+        parsed_ket = parse_ket_payload(factor.strip())
+        if parsed_ket is None:
+            tensor_factors.append(factor)
+            continue
+        body, suffix = parsed_ket
+        if body.strip() != shared_index:
+            tensor_factors.append(factor)
+            continue
+
+        has_additional_correlated_factor = True
+        tensor_factors.append(rf"\ket{{{shared_index}}}{suffix}")
+
+    if not has_additional_correlated_factor:
+        return None
+
+    tensor_expression = r" \otimes ".join(tensor_factors)
+    return rf"\frac{{1}}{{\sqrt{{{uniform_count}}}}} \sum_{{{shared_index}=0}}^{{{uniform_count}-1}} {tensor_expression}"
 
 
 def render_measurement_term(term: MeasurementRenderedTerm, row_order: list[int]) -> str:
@@ -2864,7 +3083,13 @@ def render_factorized_product_state(
             ]
             remainder = render_state_latex(reduced_terms, remaining_rows, row_labels)
             if row == active_rows[0]:
+                correlated = render_correlated_uniform_tensor([local_tensor_expression, remainder])
+                if correlated is not None:
+                    return correlated
                 return rf"{local_tensor_expression} \otimes {remainder}"
+            correlated = render_correlated_uniform_tensor([remainder, local_tensor_expression])
+            if correlated is not None:
+                return correlated
             return rf"{remainder} \otimes {local_tensor_expression}"
 
     return None
@@ -2887,7 +3112,7 @@ def render_term(term: SymbolicTerm, row_order: list[int]) -> str:
         factors.append(wrap_tensor_factor(term.payloads[row], wrap_sums=True))
         index += 1
 
-    factor_body = r" \otimes ".join(factors)
+    factor_body = render_correlated_uniform_tensor(factors) or r" \otimes ".join(factors)
     return render_scalar_weighted_expression(term.amplitude, term.scalar, factor_body)
 
 

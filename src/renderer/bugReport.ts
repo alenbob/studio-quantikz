@@ -1,3 +1,4 @@
+import { buildApiUrl } from "./api";
 import type { BugReportPayload, BugReportResponse } from "../shared/bugReport";
 
 function parseBugReportResponse(body: string): BugReportResponse | null {
@@ -9,7 +10,7 @@ function parseBugReportResponse(body: string): BugReportResponse | null {
 }
 
 export async function submitBugReport(payload: BugReportPayload): Promise<BugReportResponse & { success: true }> {
-  const response = await fetch("/api/bug-report", {
+  const response = await fetch(buildApiUrl("/api/bug-report"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json"

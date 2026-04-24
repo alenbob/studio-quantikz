@@ -250,7 +250,24 @@ describe("exportToQuantikz", () => {
     );
 
     expect(code).not.toContain("%");
-    expect(code).toContain("\\lstick[wires=2,braces=right]{input}");
+    expect(code).toContain("\\lstick[2]{input}");
+  });
+
+  it("exports merged right wire labels without inserting an extra empty cell", () => {
+    const code = exportToQuantikz(
+      makeState({
+        qubits: 3,
+        wireLabels: [
+          { left: "", right: "out", rightSpan: 2, rightBracket: "none" },
+          { left: "", right: "" },
+          { left: "", right: "" }
+        ]
+      })
+    );
+
+    expect(code).toContain("\\rstick[2,brackets=none]{out}");
+    expect(code).not.toMatch(/&\s*&\s*\\rstick\[/);
+    expect(code).not.toMatch(/^\s*&\s*\\rstick\[/m);
   });
 
   it("exports custom row and column spacing in the quantikz options", () => {

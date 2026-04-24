@@ -1,3 +1,4 @@
+import { handleCors } from "./_cors.js";
 import { readSharePreviewImage, storeSharePreviewImage } from "../src/server/sharePreviews.js";
 
 async function readRequestBody(request: { body?: unknown; on: (event: string, cb: (chunk: Buffer | string) => void) => void }): Promise<string> {
@@ -26,6 +27,10 @@ function readQueryString(value: unknown): string {
 }
 
 export default async function handler(request: any, response: any): Promise<void> {
+  if (handleCors(request, response)) {
+    return;
+  }
+
   if (request.method === "GET") {
     try {
       const imageId = readQueryString(request.query?.id);

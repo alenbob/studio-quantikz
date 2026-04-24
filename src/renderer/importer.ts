@@ -474,9 +474,9 @@ function decodeLabel(value: string): string {
 }
 
 function parseLabelBracket(optionText: string, command: "lstick" | "rstick"): WireLabelBracket {
-  const match = optionText.match(/braces\s*=\s*(none|left|right|both)/i);
+  const match = optionText.match(/(?:brackets|braces)\s*=\s*(none|left|right|both)/i);
   if (!match) {
-    return "none";
+    return parseWiresOption(optionText) > 1 ? "brace" : "none";
   }
 
   const value = match[1].toLowerCase();

@@ -1,4 +1,5 @@
 import pako from "pako";
+import { buildApiUrl } from "./api";
 import { DEFAULT_EXPORT_PREAMBLE } from "./document";
 
 export const SHARE_CODE_SEARCH_PARAM = "q";
@@ -138,7 +139,7 @@ export async function buildShareLandingUrlWithServerStorage(
   
   // Store code server-side and get short ID.
   // We no longer generate legacy long q= share links.
-  const response = await fetch("/api/store-share-code", {
+  const response = await fetch(buildApiUrl("/api/store-share-code"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -153,7 +154,7 @@ export async function buildShareLandingUrlWithServerStorage(
     throw new Error("Unable to create tiny share link.");
   }
 
-  const shareUrl = new URL("/api/share", current.origin);
+  const shareUrl = new URL(buildApiUrl("/api/share"), current.origin);
   shareUrl.searchParams.set(SHARE_CODE_ID_SEARCH_PARAM, data.id.trim());
   return shareUrl.toString();
 }

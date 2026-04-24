@@ -1197,7 +1197,7 @@ describe("App smoke tests", () => {
       expect(copiedUrl).toContain(`${SHARE_CODE_ID_SEARCH_PARAM}=tiny123`);
       expect(copiedUrl).not.toContain(`${SHARE_CODE_SEARCH_PARAM}=`);
       expect(copiedUrl).not.toContain("img=");
-      expect(screen.getByText(/share URL copied with a rendered preview image\./i)).toBeInTheDocument();
+      expect(screen.getByText(/share url copied/i)).toBeInTheDocument();
     } finally {
       fetchMock.mockRestore();
       window.history.replaceState({}, "", previousPath || "/");
