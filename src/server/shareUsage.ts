@@ -1,4 +1,3 @@
-import { put } from "@vercel/blob";
 import { appendFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 
@@ -14,7 +13,7 @@ export interface TinyShareUsageRecord {
   ipCountry: string | null;
   ipRegion: string | null;
   ipCity: string | null;
-  storage: "blob" | "file";
+  storage: "file";
   storageKey: string;
 }
 
@@ -37,7 +36,7 @@ function buildUsageRecord(
   shortId: string,
   resolved: boolean,
   request: any,
-  storage: "blob" | "file",
+  storage: "file",
   storageKey: string
 ): TinyShareUsageRecord {
   const forwardedForHeader = normalizeString(request.headers?.["x-forwarded-for"], 1024);
@@ -62,18 +61,6 @@ function buildUsageRecord(
   };
 }
 
-async function storeUsageInBlob(shortId: string, resolved: boolean, request: any): Promise<void> {
-  const now = new Date();
-  const key = `share-usage/${now.toISOString().replace(/[:.]/g, "-")}-${crypto.randomUUID()}-${normalizeString(shortId, 64)}.json`;
-  const record = buildUsageRecord(shortId, resolved, request, "blob", key);
-
-  await put(key, JSON.stringify(record, null, 2), {
-    access: "private",
-    addRandomSuffix: false,
-    contentType: "application/json"
-  });
-}
-
 async function storeUsageInFile(shortId: string, resolved: boolean, request: any): Promise<void> {
   const record = buildUsageRecord(shortId, resolved, request, "file", LOCAL_USAGE_LOG_PATH);
   await mkdir(path.dirname(LOCAL_USAGE_LOG_PATH), { recursive: true });
@@ -82,16 +69,6 @@ async function storeUsageInFile(shortId: string, resolved: boolean, request: any
 
 export async function logTinyShareUsage(shortId: string, resolved: boolean, request: any): Promise<void> {
   if (!normalizeString(shortId, 128)) {
-    return;
-  }
-
-  if (process.env.BLOB_READ_WRITE_TOKEN?.trim()) {
-    await storeUsageInBlob(shortId, resolved, request);
-    return;
-  }
-
-  if (process.env.VERCEL === "1") {
-    // In production on Vercel we only support Blob persistence for logs.
     return;
   }
 

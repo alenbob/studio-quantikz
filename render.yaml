@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: quantikzz-backend
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    autoDeployTrigger: commit
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: quantikzz-db
+          property: connectionString
+      - key: PUBLIC_APP_URL
+        sync: false
+      - key: BUG_REPORT_ADMIN_TOKEN
+        sync: false
+      - key: NODE_ENV
+        value: production
+      - key: PYTHON_BIN
+        value: python3
+      - key: LOCAL_SVG_RENDERER_MODE
+        value: off
+
+databases:
+  - name: quantikzz-db
+    plan: free

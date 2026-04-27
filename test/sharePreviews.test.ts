@@ -1,61 +1,40 @@
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import os from "node:os";
+import path from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
 
-vi.mock("@vercel/blob", () => ({
-  get: vi.fn(),
-  put: vi.fn()
-}));
+const originalPreviewDir = process.env.SHARE_PREVIEWS_DIR;
+const originalDatabaseUrl = process.env.DATABASE_URL;
 
-import { get, put } from "@vercel/blob";
-
-const originalBlobToken = process.env.BLOB_READ_WRITE_TOKEN;
-const originalVercel = process.env.VERCEL;
+let previewDir = "";
 
 describe("sharePreviews", () => {
-  beforeEach(() => {
-    vi.resetModules();
-    vi.clearAllMocks();
-    process.env.BLOB_READ_WRITE_TOKEN = undefined;
-    process.env.VERCEL = undefined;
+  beforeEach(async () => {
+    previewDir = await mkdtemp(path.join(os.tmpdir(), "quantikzz-share-previews-"));
+    process.env.SHARE_PREVIEWS_DIR = previewDir;
+    process.env.DATABASE_URL = undefined;
   });
 
-  afterAll(() => {
-    process.env.BLOB_READ_WRITE_TOKEN = originalBlobToken;
-    process.env.VERCEL = originalVercel;
+  afterAll(async () => {
+    if (previewDir) {
+      await rm(previewDir, { recursive: true, force: true });
+    }
+    process.env.SHARE_PREVIEWS_DIR = originalPreviewDir;
+    process.env.DATABASE_URL = originalDatabaseUrl;
   });
 
-  it("stores preview images in private Blob storage when token is configured", async () => {
-    process.env.BLOB_READ_WRITE_TOKEN = "token";
-    const putMock = vi.mocked(put);
-    putMock.mockResolvedValue({} as never);
-
+  it("stores preview images on the local filesystem when no database is configured", async () => {
     const { storeSharePreviewImage } = await import("../src/server/sharePreviews");
     const imageId = await storeSharePreviewImage("data:image/png;base64,QUJD");
 
     expect(imageId).toMatch(/\.png$/);
-    expect(putMock).toHaveBeenCalledTimes(1);
-    expect(putMock).toHaveBeenCalledWith(
-      expect.stringMatching(/^share-previews\/.+\.png$/),
-      expect.any(Buffer),
-      {
-        access: "private",
-        addRandomSuffix: false,
-        contentType: "image/png"
-      }
-    );
+    const { readSharePreviewImage } = await import("../src/server/sharePreviews");
+    const bytes = await readSharePreviewImage(imageId);
+    expect(bytes).toEqual(Buffer.from("ABC"));
   });
 
-  it("reads preview images from private Blob storage when token is configured", async () => {
-    process.env.BLOB_READ_WRITE_TOKEN = "token";
-    const getMock = vi.mocked(get);
-    getMock.mockResolvedValue({
-      statusCode: 200,
-      stream: new Response("png-bytes").body
-    } as never);
-
+  it("returns null for missing preview images on the local filesystem", async () => {
     const { readSharePreviewImage } = await import("../src/server/sharePreviews");
-    const image = await readSharePreviewImage("preview-1.png");
-
-    expect(getMock).toHaveBeenCalledWith("share-previews/preview-1.png", { access: "private" });
-    expect(image).toEqual(Buffer.from("png-bytes"));
+    await expect(readSharePreviewImage("preview-1.png")).resolves.toBeNull();
   });
 });

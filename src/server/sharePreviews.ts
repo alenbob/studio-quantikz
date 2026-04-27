@@ -1,9 +1,9 @@
-import { get, put } from "@vercel/blob";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { hasConfiguredDatabase, queryDatabase } from "./database";
 
 const BLOB_SHARE_PREVIEW_PREFIX = "share-previews/";
-const LOCAL_SHARE_PREVIEW_DIR = path.join(process.cwd(), "data", "share-previews");
+const LOCAL_SHARE_PREVIEW_DIR = process.env.SHARE_PREVIEWS_DIR?.trim() || path.join(process.cwd(), "data", "share-previews");
 const SHARE_PREVIEW_MAX_BYTES = 5 * 1024 * 1024;
 
 function parsePngDataUrl(value: string): Buffer {
@@ -44,17 +44,15 @@ export async function storeSharePreviewImage(imageDataUrl: string): Promise<stri
   const bytes = parsePngDataUrl(imageDataUrl);
   const imageId = buildImageId();
 
-  if (process.env.BLOB_READ_WRITE_TOKEN?.trim()) {
-    await put(`${BLOB_SHARE_PREVIEW_PREFIX}${imageId}`, bytes, {
-      access: "private",
-      addRandomSuffix: false,
-      contentType: "image/png"
-    });
+  if (hasConfiguredDatabase()) {
+    await queryDatabase(
+      `
+        INSERT INTO share_previews (image_id, content_type, image_bytes, created_at)
+        VALUES ($1, $2, $3, $4)
+      `,
+      [imageId, "image/png", bytes, Date.now()]
+    );
     return imageId;
-  }
-
-  if (process.env.VERCEL === "1") {
-    throw new Error("Share preview storage is not configured. Set BLOB_READ_WRITE_TOKEN on Vercel.");
   }
 
   await mkdir(LOCAL_SHARE_PREVIEW_DIR, { recursive: true });
@@ -82,25 +80,20 @@ export async function readSharePreviewImage(imageId: string): Promise<Buffer | n
 
   const normalizedId = assertValidImageId(normalized);
 
-  if (process.env.BLOB_READ_WRITE_TOKEN?.trim()) {
-    const result = await get(`${BLOB_SHARE_PREVIEW_PREFIX}${normalizedId}`, {
-      access: "private"
-    });
-    if (!result || result.statusCode === 404) {
+  if (hasConfiguredDatabase()) {
+    const result = await queryDatabase<{ imageBytes: Buffer }>(
+      `
+        SELECT image_bytes AS "imageBytes"
+        FROM share_previews
+        WHERE image_id = $1
+      `,
+      [normalizedId]
+    );
+    if (result.rowCount === 0) {
       return null;
     }
-    if (result.statusCode !== 200) {
-      throw new Error(`Unable to read share preview image ${normalizedId}.`);
-    }
 
-    const arrayBuffer = await new Response(result.stream).arrayBuffer();
-    return Buffer.from(arrayBuffer);
-  }
-
-  // Local filename fallback (local dev without BLOB_READ_WRITE_TOKEN)
-
-  if (process.env.VERCEL === "1") {
-    throw new Error("Share preview storage is not configured. Set BLOB_READ_WRITE_TOKEN on Vercel.");
+    return result.rows[0].imageBytes;
   }
 
   try {

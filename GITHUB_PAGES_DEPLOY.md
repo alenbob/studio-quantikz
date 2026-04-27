@@ -1,8 +1,11 @@
-# GitHub Pages Deployment
+# GitHub Pages Frontend + Render Backend
 
-This repo can now publish the Vite frontend to GitHub Pages, but GitHub Pages does not run the Node or Python API routes in `api/`.
+This repo is set up for a split deployment:
 
-What still needs a backend:
+- frontend on GitHub Pages
+- backend on Render
+
+GitHub Pages does not run the Node or Python API routes in `api/`, so the app still needs a real backend for:
 
 - `/api/render-pdf`
 - `/api/render-svg`
@@ -13,16 +16,36 @@ What still needs a backend:
 - `/api/bug-report`
 - `/api/bug-reports`
 
-The Pages deployment is therefore a split setup:
+The checked-in backend path is now a standalone Node server started with `npm run start:backend`, packaged by the root `Dockerfile`, and provisioned on Render with `render.yaml`.
 
-1. Host the static frontend on GitHub Pages.
-2. Host the `api/` routes on a separate platform that supports Node and Python.
-3. Set the GitHub repository variable `VITE_API_BASE_URL` to that backend base URL, for example `https://your-backend.example.com/`.
-4. Set `PUBLIC_APP_URL` on the backend to the final GitHub Pages app URL, for example `https://<user>.github.io/<repo>/`.
+## One-time setup
 
-Notes:
+1. In Render, create a new Blueprint from this repository.
+2. Render will provision the `quantikzz-backend` web service and the `quantikzz-db` Postgres database from `render.yaml`.
+3. During the Blueprint setup flow, provide these environment values for the backend service:
+	- `PUBLIC_APP_URL=https://<user>.github.io/<repo>/`
+	- `BUG_REPORT_ADMIN_TOKEN=<your-secret-token>`
+4. After the backend is live, copy its public URL, for example `https://quantikzz-backend.onrender.com`.
+5. In the GitHub repository, add this Actions variable:
+	- `VITE_API_BASE_URL=https://quantikzz-backend.onrender.com`
+6. Enable GitHub Pages for the repository if you have not already.
+
+## How Deploys Work
+
+- `.github/workflows/deploy-pages.yml` deploys the frontend to GitHub Pages.
+- Render auto-deploys the backend from this repository through its GitHub integration and `render.yaml`.
+- The Pages workflow fails fast if `VITE_API_BASE_URL` is missing, so it does not publish a frontend that points at nowhere.
+
+## Validation
+
+- Use `VITE_BASE_PATH=/quantikzz/ npm run build` to validate the Pages frontend build locally.
+- Use `npm run test:backend` to validate the backend API routes.
+- The backend exposes `/health`, which Render uses for health checks.
+
+## Notes
 
 - The workflow in `.github/workflows/deploy-pages.yml` automatically builds with `VITE_BASE_PATH=/<repo>/` so asset URLs work on project Pages sites.
-- Browser CORS support is enabled in the API routes so the Pages frontend can call a separate backend origin.
-- The static bug report admin page in `public/bug-reports.html` also supports a separate backend. Open it as `bug-reports.html?apiBase=https://your-backend.example.com/` once, and it will remember that API base in local storage.
-- If you keep using Vercel for the backend only, this setup works as a frontend-on-Pages plus backend-on-Vercel split deployment.
+- Browser CORS support is enabled in the API routes so the Pages frontend can call the Render backend directly.
+- The static bug report admin page in `public/bug-reports.html` also supports a separate backend. Open it as `bug-reports.html?apiBase=https://quantikzz-backend.onrender.com` once, and it will remember that API base in local storage.
+- No custom domain is required. GitHub Pages gives you `https://<user>.github.io/<repo>/` for the frontend, and Render gives you `https://<service>.onrender.com` for the backend.
+- Render free services can spin down when idle, so the first backend request after inactivity can be slower.

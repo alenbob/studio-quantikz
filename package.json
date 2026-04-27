@@ -8,21 +8,22 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "node scripts/preview-server.mjs",
+    "start:backend": "tsx src/server/backendServer.ts",
     "start": "node scripts/preview-server.mjs",
     "bug-reports": "node scripts/list-bug-reports.mjs",
+    "test:backend": "vitest run test/renderPdfApi.test.ts test/renderSvgApi.test.ts test/shareApi.test.ts test/sharePreviewImageApi.test.ts test/bugReportApi.test.ts test/bugReportsApi.test.ts test/symbolicLatexApi.test.ts test/symbolicLatexDevApi.test.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@vercel/analytics": "^2.0.1",
-    "@vercel/blob": "^2.3.1",
-    "@vercel/speed-insights": "^2.0.0",
     "html-to-image": "^1.11.13",
     "katex": "^0.16.38",
     "pako": "^2.1.0",
     "pdfjs-dist": "^5.5.207",
+    "pg": "^8.20.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "tsx": "^4.21.0"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.6.3",

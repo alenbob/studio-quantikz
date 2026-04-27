@@ -1,4 +1,6 @@
-import { put, get } from "@vercel/blob";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { hasConfiguredDatabase, queryDatabase } from "./database";
 
 export interface StoredShareCode {
   code: string;
@@ -8,6 +10,7 @@ export interface StoredShareCode {
 }
 
 const BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+const LOCAL_SHARE_CODE_DIR = path.join(process.cwd(), "data", "share-codes");
 
 /**
  * Generate a short ID using timestamp + random bytes, encoded as base62
@@ -41,19 +44,19 @@ export async function storeShareCode(code: string, preamble: string, previewImag
     createdAt: Date.now()
   };
 
-  try {
-    await put(`share-codes/${id}.json`, JSON.stringify(data), {
-      access: "private",
-      addRandomSuffix: false,
-      contentType: "application/json"
-    });
-  } catch (error) {
-    // Fallback for local development - use a simple in-memory store
-    if (!globalThis.__shareCodeStore) {
-      globalThis.__shareCodeStore = new Map<string, StoredShareCode>();
-    }
-    globalThis.__shareCodeStore.set(id, data);
+  if (hasConfiguredDatabase()) {
+    await queryDatabase(
+      `
+        INSERT INTO share_codes (id, code, preamble, preview_image_id, created_at)
+        VALUES ($1, $2, $3, $4, $5)
+      `,
+      [id, data.code, data.preamble, data.previewImageId, data.createdAt]
+    );
+    return id;
   }
+
+  await mkdir(LOCAL_SHARE_CODE_DIR, { recursive: true });
+  await writeFile(path.join(LOCAL_SHARE_CODE_DIR, `${id}.json`), JSON.stringify(data), "utf8");
 
   return id;
 }
@@ -62,19 +65,27 @@ export async function storeShareCode(code: string, preamble: string, previewImag
  * Retrieve circuit code and preamble by short ID
  */
 export async function retrieveShareCode(id: string): Promise<StoredShareCode | null> {
-  try {
-    const blob = await get(`share-codes/${id}.json`, { access: "private" });
-    if (!blob || blob.statusCode === 404) {
+  if (hasConfiguredDatabase()) {
+    const result = await queryDatabase<StoredShareCode>(
+      `
+        SELECT code, preamble, preview_image_id AS "previewImageId", created_at AS "createdAt"
+        FROM share_codes
+        WHERE id = $1
+      `,
+      [id]
+    );
+
+    if (result.rowCount === 0) {
       return null;
     }
-    if (blob.statusCode !== 200) {
-      throw new Error(`Unable to read tiny share payload ${id}.`);
-    }
 
-    const text = await new Response(blob.stream).text();
-    return JSON.parse(text);
-  } catch (error) {
-    // Fallback for local development
+    return result.rows[0];
+  }
+
+  try {
+    const text = await readFile(path.join(LOCAL_SHARE_CODE_DIR, `${id}.json`), "utf8");
+    return JSON.parse(text) as StoredShareCode;
+  } catch {
     if (globalThis.__shareCodeStore) {
       return globalThis.__shareCodeStore.get(id) || null;
     }
@@ -86,12 +97,18 @@ export async function retrieveShareCode(id: string): Promise<StoredShareCode | n
  * Clean up old share codes (optional, called manually or by cron)
  */
 export async function cleanupOldShareCodes(maxAgeMs = 30 * 24 * 60 * 60 * 1000): Promise<void> {
-  // Note: Vercel Blob doesn't have list() yet, so this is a placeholder
-  // In production, you'd implement this with a separate database
+  if (hasConfiguredDatabase()) {
+    await queryDatabase(
+      `DELETE FROM share_codes WHERE created_at < $1`,
+      [Date.now() - maxAgeMs]
+    );
+    return;
+  }
+
   try {
-    // TODO: Implement cleanup when Vercel Blob supports listing
-  } catch (error) {
-    // Ignore
+    await rm(LOCAL_SHARE_CODE_DIR, { recursive: true, force: true });
+  } catch {
+    // Ignore cleanup errors.
   }
 }
 

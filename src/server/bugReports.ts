@@ -1,4 +1,3 @@
-import { get, list, put } from "@vercel/blob";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -7,8 +6,9 @@ import {
   BUG_REPORT_TITLE_MAX_LENGTH,
   type BugReportStatus,
   type BugReportPayload,
-  type StoredBugReport
+  type StoredBugReport,
 } from "../shared/bugReport.js";
+import { hasConfiguredDatabase, queryDatabase } from "./database";
 
 const LOCAL_STORAGE_PATH = process.env.BUG_REPORTS_FILE_PATH?.trim() || path.join(process.cwd(), "data", "bug-reports.jsonl");
 const LOCAL_PREVIEW_IMAGE_DIR = path.join(path.dirname(LOCAL_STORAGE_PATH), "bug-report-images");
@@ -17,10 +17,34 @@ const BUG_REPORT_PREVIEW_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 const BUG_REPORT_INTERFACE_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
 const BUG_REPORT_VISUAL_CIRCUIT_MAX_LENGTH = 1_000_000;
 const BUG_REPORT_SESSION_SNAPSHOT_MAX_LENGTH = 1_000_000;
-const BLOB_PREVIEW_IMAGE_PREFIX = "bug-report-images/";
-const BLOB_INTERFACE_IMAGE_PREFIX = "bug-report-interface-images/";
+const DATABASE_REPORT_PREFIX = "db-report:";
+const DATABASE_PREVIEW_IMAGE_PREFIX = "db-preview:";
+const DATABASE_INTERFACE_IMAGE_PREFIX = "db-interface:";
 
 export const BUG_REPORT_ADMIN_TOKEN_ENV = "BUG_REPORT_ADMIN_TOKEN";
+
+interface DatabaseBugReportRow {
+  id: string;
+  submittedAt: string;
+  status: BugReportStatus;
+  archivedAt: string | null;
+  title: string;
+  description: string;
+  email: string | null;
+  code: string;
+  preamble: string;
+  pageUrl: string | null;
+  userAgent: string | null;
+  visualCircuitSnapshot: string;
+  sessionSnapshot: string;
+  previewImageContentType: string | null;
+  interfaceImageContentType: string | null;
+}
+
+interface DatabaseBugReportImageRow {
+  contentType: string;
+  body: Buffer;
+}
 
 function normalizeField(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
@@ -62,7 +86,7 @@ function buildStoredBugReport(payload: BugReportPayload, storage: StoredBugRepor
     interfaceImageStorageKey: null,
     interfaceImageContentType: null,
     storage,
-    storageKey
+    storageKey,
   };
 }
 
@@ -91,7 +115,7 @@ function parseImageDataUrl(value: unknown, maxBytes: number, fieldLabel: string)
 
   return {
     contentType: match[1].toLowerCase(),
-    bytes
+    bytes,
   };
 }
 
@@ -99,12 +123,102 @@ function extensionForPreviewContentType(contentType: string): string {
   return contentType === "image/jpeg" ? "jpg" : "png";
 }
 
-async function storePreviewImageInBlob(storageKey: string, contentType: string, bytes: Buffer): Promise<void> {
-  await put(storageKey, bytes, {
-    access: "private",
-    addRandomSuffix: false,
-    contentType
-  });
+function buildDatabaseReportStorageKey(reportId: string): string {
+  return `${DATABASE_REPORT_PREFIX}${reportId}`;
+}
+
+function buildDatabaseImageStorageKey(reportId: string, kind: "preview" | "interface"): string {
+  return `${kind === "preview" ? DATABASE_PREVIEW_IMAGE_PREFIX : DATABASE_INTERFACE_IMAGE_PREFIX}${reportId}`;
+}
+
+function parseDatabaseReportId(storageKey: string): string | null {
+  if (!storageKey.startsWith(DATABASE_REPORT_PREFIX)) {
+    return null;
+  }
+
+  const reportId = storageKey.slice(DATABASE_REPORT_PREFIX.length).trim();
+  return reportId || null;
+}
+
+function parseDatabaseImageStorageKey(storageKey: string): { reportId: string; kind: "preview" | "interface" } | null {
+  if (storageKey.startsWith(DATABASE_PREVIEW_IMAGE_PREFIX)) {
+    const reportId = storageKey.slice(DATABASE_PREVIEW_IMAGE_PREFIX.length).trim();
+    return reportId ? { reportId, kind: "preview" } : null;
+  }
+
+  if (storageKey.startsWith(DATABASE_INTERFACE_IMAGE_PREFIX)) {
+    const reportId = storageKey.slice(DATABASE_INTERFACE_IMAGE_PREFIX.length).trim();
+    return reportId ? { reportId, kind: "interface" } : null;
+  }
+
+  return null;
+}
+
+function parseStoredBugReport(raw: unknown): StoredBugReport {
+  if (!raw || typeof raw !== "object") {
+    throw new Error("Invalid bug report record.");
+  }
+
+  const candidate = raw as Partial<StoredBugReport>;
+  if (
+    typeof candidate.id !== "string"
+    || typeof candidate.submittedAt !== "string"
+    || (candidate.status !== undefined && candidate.status !== "active" && candidate.status !== "archived")
+    || typeof candidate.title !== "string"
+    || typeof candidate.description !== "string"
+    || typeof candidate.code !== "string"
+    || typeof candidate.preamble !== "string"
+    || typeof candidate.storageKey !== "string"
+    || (candidate.storage !== "blob" && candidate.storage !== "database" && candidate.storage !== "file")
+  ) {
+    throw new Error("Invalid bug report record.");
+  }
+
+  return {
+    id: candidate.id,
+    submittedAt: candidate.submittedAt,
+    status: candidate.status === "archived" ? "archived" : "active",
+    archivedAt: typeof candidate.archivedAt === "string" ? candidate.archivedAt : null,
+    title: candidate.title,
+    description: candidate.description,
+    email: typeof candidate.email === "string" ? candidate.email : null,
+    code: candidate.code,
+    preamble: candidate.preamble,
+    pageUrl: typeof candidate.pageUrl === "string" ? candidate.pageUrl : null,
+    userAgent: typeof candidate.userAgent === "string" ? candidate.userAgent : null,
+    visualCircuitSnapshot: typeof candidate.visualCircuitSnapshot === "string" ? candidate.visualCircuitSnapshot : "",
+    sessionSnapshot: typeof candidate.sessionSnapshot === "string" ? candidate.sessionSnapshot : "",
+    previewImageStorageKey: typeof candidate.previewImageStorageKey === "string" ? candidate.previewImageStorageKey : null,
+    previewImageContentType: typeof candidate.previewImageContentType === "string" ? candidate.previewImageContentType : null,
+    interfaceImageStorageKey: typeof candidate.interfaceImageStorageKey === "string" ? candidate.interfaceImageStorageKey : null,
+    interfaceImageContentType: typeof candidate.interfaceImageContentType === "string" ? candidate.interfaceImageContentType : null,
+    storage: candidate.storage,
+    storageKey: candidate.storageKey,
+  };
+}
+
+function mapDatabaseBugReport(row: DatabaseBugReportRow): StoredBugReport {
+  return {
+    id: row.id,
+    submittedAt: row.submittedAt,
+    status: row.status,
+    archivedAt: row.archivedAt,
+    title: row.title,
+    description: row.description,
+    email: row.email,
+    code: row.code,
+    preamble: row.preamble,
+    pageUrl: row.pageUrl,
+    userAgent: row.userAgent,
+    visualCircuitSnapshot: row.visualCircuitSnapshot,
+    sessionSnapshot: row.sessionSnapshot,
+    previewImageStorageKey: row.previewImageContentType ? buildDatabaseImageStorageKey(row.id, "preview") : null,
+    previewImageContentType: row.previewImageContentType,
+    interfaceImageStorageKey: row.interfaceImageContentType ? buildDatabaseImageStorageKey(row.id, "interface") : null,
+    interfaceImageContentType: row.interfaceImageContentType,
+    storage: "database",
+    storageKey: buildDatabaseReportStorageKey(row.id),
+  };
 }
 
 async function storePreviewImageInFile(storageKey: string, bytes: Buffer): Promise<void> {
@@ -112,52 +226,69 @@ async function storePreviewImageInFile(storageKey: string, bytes: Buffer): Promi
   await writeFile(storageKey, bytes);
 }
 
-async function storeBugReportInBlob(payload: BugReportPayload): Promise<StoredBugReport> {
-  const reportId = crypto.randomUUID();
-  const submittedAt = new Date().toISOString();
-  const storageKey = `bug-reports/${submittedAt.replace(/[:.]/g, "-")}-${reportId}.json`;
+async function storeBugReportInDatabase(payload: BugReportPayload): Promise<StoredBugReport> {
   const previewImage = parseImageDataUrl(payload.previewImageDataUrl, BUG_REPORT_PREVIEW_IMAGE_MAX_BYTES, "Preview image");
   const interfaceImage = parseImageDataUrl(payload.interfaceImageDataUrl, BUG_REPORT_INTERFACE_IMAGE_MAX_BYTES, "Interface image");
-  const previewImageStorageKey = previewImage
-    ? `bug-report-images/${submittedAt.replace(/[:.]/g, "-")}-${reportId}.${extensionForPreviewContentType(previewImage.contentType)}`
-    : null;
-  const interfaceImageStorageKey = interfaceImage
-    ? `bug-report-interface-images/${submittedAt.replace(/[:.]/g, "-")}-${reportId}.${extensionForPreviewContentType(interfaceImage.contentType)}`
-    : null;
-  const report = {
-    id: reportId,
-    submittedAt,
-    status: "active" as const,
-    archivedAt: null,
-    title: normalizeRequiredField("Title", payload.title, BUG_REPORT_TITLE_MAX_LENGTH),
-    description: normalizeRequiredField("Description", payload.description, BUG_REPORT_DESCRIPTION_MAX_LENGTH),
-    email: normalizeOptionalField(payload.email, BUG_REPORT_EMAIL_MAX_LENGTH),
-    code: normalizeField(payload.code),
-    preamble: normalizeField(payload.preamble),
-    pageUrl: normalizeOptionalField(payload.pageUrl, 2048),
-    userAgent: normalizeOptionalField(payload.userAgent, 1024),
-    visualCircuitSnapshot: normalizeField(payload.visualCircuitSnapshot).slice(0, BUG_REPORT_VISUAL_CIRCUIT_MAX_LENGTH),
-    sessionSnapshot: normalizeField(payload.sessionSnapshot).slice(0, BUG_REPORT_SESSION_SNAPSHOT_MAX_LENGTH),
-    previewImageStorageKey,
-    previewImageContentType: previewImage?.contentType ?? null,
-    interfaceImageStorageKey,
-    interfaceImageContentType: interfaceImage?.contentType ?? null,
-    storage: "blob" as const,
-    storageKey
-  };
+  const report = buildStoredBugReport(payload, "database", buildDatabaseReportStorageKey(crypto.randomUUID()));
+  const reportId = parseDatabaseReportId(report.storageKey);
 
-  if (previewImage && previewImageStorageKey) {
-    await storePreviewImageInBlob(previewImageStorageKey, previewImage.contentType, previewImage.bytes);
-  }
-  if (interfaceImage && interfaceImageStorageKey) {
-    await storePreviewImageInBlob(interfaceImageStorageKey, interfaceImage.contentType, interfaceImage.bytes);
+  if (!reportId) {
+    throw new Error("Unable to allocate a bug report id.");
   }
 
-  await put(storageKey, JSON.stringify(report, null, 2), {
-    access: "private",
-    addRandomSuffix: false,
-    contentType: "application/json"
-  });
+  report.id = reportId;
+  report.previewImageStorageKey = previewImage ? buildDatabaseImageStorageKey(reportId, "preview") : null;
+  report.previewImageContentType = previewImage?.contentType ?? null;
+  report.interfaceImageStorageKey = interfaceImage ? buildDatabaseImageStorageKey(reportId, "interface") : null;
+  report.interfaceImageContentType = interfaceImage?.contentType ?? null;
+
+  await queryDatabase(
+    `
+      INSERT INTO bug_reports (
+        id, submitted_at, status, archived_at, title, description, email, code, preamble,
+        page_url, user_agent, visual_circuit_snapshot, session_snapshot,
+        preview_image_content_type, interface_image_content_type
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+    `,
+    [
+      report.id,
+      report.submittedAt,
+      report.status,
+      report.archivedAt,
+      report.title,
+      report.description,
+      report.email,
+      report.code,
+      report.preamble,
+      report.pageUrl,
+      report.userAgent,
+      report.visualCircuitSnapshot,
+      report.sessionSnapshot,
+      report.previewImageContentType,
+      report.interfaceImageContentType,
+    ]
+  );
+
+  if (previewImage) {
+    await queryDatabase(
+      `
+        INSERT INTO bug_report_images (report_id, kind, content_type, image_bytes)
+        VALUES ($1, $2, $3, $4)
+      `,
+      [report.id, "preview", previewImage.contentType, previewImage.bytes]
+    );
+  }
+
+  if (interfaceImage) {
+    await queryDatabase(
+      `
+        INSERT INTO bug_report_images (report_id, kind, content_type, image_bytes)
+        VALUES ($1, $2, $3, $4)
+      `,
+      [report.id, "interface", interfaceImage.contentType, interfaceImage.bytes]
+    );
+  }
 
   return report;
 }
@@ -185,58 +316,11 @@ async function storeBugReportInFile(payload: BugReportPayload): Promise<StoredBu
 }
 
 export async function storeBugReport(payload: BugReportPayload): Promise<StoredBugReport> {
-  if (process.env.BLOB_READ_WRITE_TOKEN?.trim()) {
-    return storeBugReportInBlob(payload);
-  }
-
-  if (process.env.VERCEL === "1") {
-    throw new Error("Bug report storage is not configured. Set BLOB_READ_WRITE_TOKEN on Vercel.");
+  if (hasConfiguredDatabase()) {
+    return storeBugReportInDatabase(payload);
   }
 
   return storeBugReportInFile(payload);
-}
-
-function parseStoredBugReport(raw: unknown): StoredBugReport {
-  if (!raw || typeof raw !== "object") {
-    throw new Error("Invalid bug report record.");
-  }
-
-  const candidate = raw as Partial<StoredBugReport>;
-  if (
-    typeof candidate.id !== "string"
-    || typeof candidate.submittedAt !== "string"
-    || (candidate.status !== undefined && candidate.status !== "active" && candidate.status !== "archived")
-    || typeof candidate.title !== "string"
-    || typeof candidate.description !== "string"
-    || typeof candidate.code !== "string"
-    || typeof candidate.preamble !== "string"
-    || typeof candidate.storageKey !== "string"
-    || (candidate.storage !== "blob" && candidate.storage !== "file")
-  ) {
-    throw new Error("Invalid bug report record.");
-  }
-
-  return {
-    id: candidate.id,
-    submittedAt: candidate.submittedAt,
-    status: candidate.status === "archived" ? "archived" : "active",
-    archivedAt: typeof candidate.archivedAt === "string" ? candidate.archivedAt : null,
-    title: candidate.title,
-    description: candidate.description,
-    email: typeof candidate.email === "string" ? candidate.email : null,
-    code: candidate.code,
-    preamble: candidate.preamble,
-    pageUrl: typeof candidate.pageUrl === "string" ? candidate.pageUrl : null,
-    userAgent: typeof candidate.userAgent === "string" ? candidate.userAgent : null,
-    visualCircuitSnapshot: typeof candidate.visualCircuitSnapshot === "string" ? candidate.visualCircuitSnapshot : "",
-    sessionSnapshot: typeof candidate.sessionSnapshot === "string" ? candidate.sessionSnapshot : "",
-    previewImageStorageKey: typeof candidate.previewImageStorageKey === "string" ? candidate.previewImageStorageKey : null,
-    previewImageContentType: typeof candidate.previewImageContentType === "string" ? candidate.previewImageContentType : null,
-    interfaceImageStorageKey: typeof candidate.interfaceImageStorageKey === "string" ? candidate.interfaceImageStorageKey : null,
-    interfaceImageContentType: typeof candidate.interfaceImageContentType === "string" ? candidate.interfaceImageContentType : null,
-    storage: candidate.storage,
-    storageKey: candidate.storageKey
-  };
 }
 
 export async function readBugReportImage(storageKey: string): Promise<{ contentType: string; body: Buffer } | null> {
@@ -245,28 +329,25 @@ export async function readBugReportImage(storageKey: string): Promise<{ contentT
     throw new Error("Bug report image storage key is required.");
   }
 
-  if (process.env.BLOB_READ_WRITE_TOKEN?.trim()) {
-    if (!normalizedStorageKey.startsWith(BLOB_PREVIEW_IMAGE_PREFIX) && !normalizedStorageKey.startsWith(BLOB_INTERFACE_IMAGE_PREFIX)) {
+  if (hasConfiguredDatabase()) {
+    const parsed = parseDatabaseImageStorageKey(normalizedStorageKey);
+    if (!parsed) {
       throw new Error("Invalid bug report image storage key.");
     }
 
-    const result = await get(normalizedStorageKey, { access: "private" });
-    if (!result || result.statusCode === 404) {
+    const result = await queryDatabase<DatabaseBugReportImageRow>(
+      `
+        SELECT content_type AS "contentType", image_bytes AS body
+        FROM bug_report_images
+        WHERE report_id = $1 AND kind = $2
+      `,
+      [parsed.reportId, parsed.kind]
+    );
+    if (result.rowCount === 0) {
       return null;
     }
-    if (result.statusCode !== 200) {
-      throw new Error(`Unable to read bug report preview image ${normalizedStorageKey}.`);
-    }
 
-    const arrayBuffer = await new Response(result.stream).arrayBuffer();
-    return {
-      contentType: result.contentType || "image/png",
-      body: Buffer.from(arrayBuffer)
-    };
-  }
-
-  if (process.env.VERCEL === "1") {
-    throw new Error("Bug report storage is not configured. Set BLOB_READ_WRITE_TOKEN on Vercel.");
+    return result.rows[0];
   }
 
   const normalizedLocalPath = path.normalize(normalizedStorageKey);
@@ -278,25 +359,38 @@ export async function readBugReportImage(storageKey: string): Promise<{ contentT
 
   return {
     contentType: normalizedLocalPath.endsWith(".jpg") || normalizedLocalPath.endsWith(".jpeg") ? "image/jpeg" : "image/png",
-    body: await readFile(normalizedLocalPath)
+    body: await readFile(normalizedLocalPath),
   };
 }
 
-async function listBugReportsFromBlob(limit: number): Promise<StoredBugReport[]> {
-  const response = await list({ prefix: "bug-reports/", limit });
-  const reports = await Promise.all(
-    response.blobs.map(async (blob) => {
-      const result = await get(blob.pathname, { access: "private" });
-      if (!result || result.statusCode !== 200) {
-        throw new Error(`Unable to read bug report blob ${blob.pathname}.`);
-      }
-
-      const body = await new Response(result.stream).text();
-      return parseStoredBugReport(JSON.parse(body));
-    })
+async function listBugReportsFromDatabase(limit: number, status: BugReportStatus): Promise<StoredBugReport[]> {
+  const result = await queryDatabase<DatabaseBugReportRow>(
+    `
+      SELECT
+        id,
+        submitted_at AS "submittedAt",
+        status,
+        archived_at AS "archivedAt",
+        title,
+        description,
+        email,
+        code,
+        preamble,
+        page_url AS "pageUrl",
+        user_agent AS "userAgent",
+        visual_circuit_snapshot AS "visualCircuitSnapshot",
+        session_snapshot AS "sessionSnapshot",
+        preview_image_content_type AS "previewImageContentType",
+        interface_image_content_type AS "interfaceImageContentType"
+      FROM bug_reports
+      WHERE status = $1
+      ORDER BY submitted_at DESC
+      LIMIT $2
+    `,
+    [status, limit]
   );
 
-  return reports.sort((left, right) => right.submittedAt.localeCompare(left.submittedAt));
+  return result.rows.map(mapDatabaseBugReport);
 }
 
 async function listBugReportsFromFile(limit: number): Promise<StoredBugReport[]> {
@@ -319,14 +413,11 @@ export async function listBugReports(limit = 50, status: BugReportStatus = "acti
     throw new Error("Bug report status must be active or archived.");
   }
 
-  const reports = process.env.BLOB_READ_WRITE_TOKEN?.trim()
-    ? await listBugReportsFromBlob(Math.max(limit * 3, limit))
-    : process.env.VERCEL === "1"
-      ? (() => {
-        throw new Error("Bug report storage is not configured. Set BLOB_READ_WRITE_TOKEN on Vercel.");
-      })()
-      : await listBugReportsFromFile(Math.max(limit * 3, limit));
+  if (hasConfiguredDatabase()) {
+    return listBugReportsFromDatabase(limit, status);
+  }
 
+  const reports = await listBugReportsFromFile(Math.max(limit * 3, limit));
   return reports.filter((report) => report.status === status).slice(0, limit);
 }
 
@@ -336,25 +427,41 @@ async function readBugReportRecord(storageKey: string): Promise<StoredBugReport 
     throw new Error("Bug report storage key is required.");
   }
 
-  if (process.env.BLOB_READ_WRITE_TOKEN?.trim()) {
-    if (!normalizedStorageKey.startsWith("bug-reports/")) {
+  if (hasConfiguredDatabase()) {
+    const reportId = parseDatabaseReportId(normalizedStorageKey);
+    if (!reportId) {
       throw new Error("Invalid bug report storage key.");
     }
 
-    const result = await get(normalizedStorageKey, { access: "private" });
-    if (!result || result.statusCode === 404) {
+    const result = await queryDatabase<DatabaseBugReportRow>(
+      `
+        SELECT
+          id,
+          submitted_at AS "submittedAt",
+          status,
+          archived_at AS "archivedAt",
+          title,
+          description,
+          email,
+          code,
+          preamble,
+          page_url AS "pageUrl",
+          user_agent AS "userAgent",
+          visual_circuit_snapshot AS "visualCircuitSnapshot",
+          session_snapshot AS "sessionSnapshot",
+          preview_image_content_type AS "previewImageContentType",
+          interface_image_content_type AS "interfaceImageContentType"
+        FROM bug_reports
+        WHERE id = $1
+      `,
+      [reportId]
+    );
+
+    if (result.rowCount === 0) {
       return null;
     }
-    if (result.statusCode !== 200) {
-      throw new Error(`Unable to read bug report ${normalizedStorageKey}.`);
-    }
 
-    const body = await new Response(result.stream).text();
-    return parseStoredBugReport(JSON.parse(body));
-  }
-
-  if (process.env.VERCEL === "1") {
-    throw new Error("Bug report storage is not configured. Set BLOB_READ_WRITE_TOKEN on Vercel.");
+    return mapDatabaseBugReport(result.rows[0]);
   }
 
   const reports = await listBugReportsFromFile(Number.MAX_SAFE_INTEGER);
@@ -362,18 +469,16 @@ async function readBugReportRecord(storageKey: string): Promise<StoredBugReport 
 }
 
 async function writeBugReportRecord(report: StoredBugReport): Promise<void> {
-  if (process.env.BLOB_READ_WRITE_TOKEN?.trim()) {
-    await put(report.storageKey, JSON.stringify(report, null, 2), {
-      access: "private",
-      addRandomSuffix: false,
-      allowOverwrite: true,
-      contentType: "application/json"
-    });
+  if (hasConfiguredDatabase()) {
+    await queryDatabase(
+      `
+        UPDATE bug_reports
+        SET status = $2, archived_at = $3
+        WHERE id = $1
+      `,
+      [report.id, report.status, report.archivedAt]
+    );
     return;
-  }
-
-  if (process.env.VERCEL === "1") {
-    throw new Error("Bug report storage is not configured. Set BLOB_READ_WRITE_TOKEN on Vercel.");
   }
 
   const raw = await readFile(LOCAL_STORAGE_PATH, "utf8");
@@ -401,7 +506,7 @@ export async function archiveBugReport(storageKey: string): Promise<StoredBugRep
   const archivedReport: StoredBugReport = {
     ...report,
     status: "archived",
-    archivedAt: new Date().toISOString()
+    archivedAt: new Date().toISOString(),
   };
 
   await writeBugReportRecord(archivedReport);

@@ -178,7 +178,7 @@ export default async function handler(request: any, response: any): Promise<void
   const origin = resolveOrigin(request);
   const appUrl = buildSharedCircuitUrl(resolveAppBaseUrl(request), compressedPayload);
   const imageId = imageIdFromQuery || imageIdFromStore;
-  // imageId is either a full Vercel Blob CDN URL (production) or a filename (local dev).
+  // imageId is either a full external image URL, a database-backed image id, or a local filename.
   const imageUrl = imageId
     ? (imageId.startsWith("https://") ? imageId : `${origin}/api/share-preview-image?id=${encodeURIComponent(imageId)}`)
     : "";

@@ -36,7 +36,7 @@ export interface StoredBugReport {
   previewImageContentType: string | null;
   interfaceImageStorageKey: string | null;
   interfaceImageContentType: string | null;
-  storage: "blob" | "file";
+  storage: "blob" | "database" | "file";
   storageKey: string;
 }
 
